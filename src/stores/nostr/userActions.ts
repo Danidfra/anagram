@@ -28,6 +28,7 @@ import type {
   SendDirectMessageReactionOptions,
 } from 'src/stores/nostr/types';
 import type { MessageRelayStatus } from 'src/types/chat';
+import { resolveChatMessageRumorKind } from 'src/utils/messageAttachments';
 
 interface UserActionsDeps {
   appendRelayStatusesToGroupMemberTicketEvent: (
@@ -66,7 +67,8 @@ interface UserActionsDeps {
     message: string,
     createdAt?: number,
     replyToEventId?: string | null,
-    additionalTags?: string[][]
+    additionalTags?: string[][],
+    kind?: 14 | 15
   ) => NDKEvent;
   createEventDeletionRumorEvent: (
     senderPubkey: string,
@@ -303,11 +305,13 @@ export function createUserActions({
     }
 
     const replyTargetEventId = normalizeEventId(options.replyToEventId);
+    // NDK's giftWrap overwrites the rumor kind with rumorKind, so both must agree.
+    const rumorKind = resolveChatMessageRumorKind(options.rumorKind);
 
     const publishResult = await sendGiftWrappedRumor(
       recipientPublicKey,
       relays,
-      NDKKind.PrivateDirectMessage,
+      rumorKind,
       (senderPubkey, normalizedRecipientPubkey, createdAt) => {
         return createDirectMessageRumorEvent(
           senderPubkey,
@@ -315,7 +319,8 @@ export function createUserActions({
           message,
           createdAt,
           replyTargetEventId,
-          options.additionalTags
+          options.additionalTags,
+          rumorKind
         );
       },
       options
@@ -503,7 +508,8 @@ export function createUserActions({
           ndk,
           await getOrCreateOutboundGiftWrap(storedEvent.event, scope, () =>
             giftWrap(rumorEvent, recipient, signer as any, {
-              rumorKind: NDKKind.PrivateDirectMessage,
+              // Keep kind 15 file messages as kind 15 when they are re-wrapped.
+              rumorKind: resolveChatMessageRumorKind(storedEvent.event.kind),
             })
           )
         );

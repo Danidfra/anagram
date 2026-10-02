@@ -54,7 +54,8 @@ export function createMessageEventRuntime({
     message: string,
     createdAt: number,
     replyToEventId?: string | null,
-    additionalTags: string[][] = []
+    additionalTags: string[][] = [],
+    kind: 14 | 15 = NDKKind.PrivateDirectMessage
   ): NDKEvent {
     const tags: string[][] = [['p', recipientPubkey]];
     const normalizedReplyTargetEventId = normalizeEventId(replyToEventId);
@@ -74,7 +75,7 @@ export function createMessageEventRuntime({
     }
 
     return new NDKEvent(ndk, {
-      kind: NDKKind.PrivateDirectMessage,
+      kind,
       created_at: createdAt,
       pubkey: senderPubkey,
       content: message,

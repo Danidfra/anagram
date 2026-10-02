@@ -315,7 +315,7 @@
             @click="downloadFullscreenImage"
           />
           <a
-            v-if="fullscreenImageAttachment"
+            v-if="fullscreenImageAttachment && !fullscreenImageAttachment.encryption"
             class="thread-image-dialog__action"
             :href="fullscreenImageAttachment.url"
             target="_blank"
@@ -339,11 +339,11 @@
           />
         </div>
         <div class="thread-image-dialog__body">
-          <img
+          <MessageAttachmentImage
             v-if="fullscreenImageAttachment"
             class="thread-image-dialog__media"
             data-testid="message-image-fullscreen"
-            :src="fullscreenImageAttachment.url"
+            :attachment="fullscreenImageAttachment"
             :alt="resolveImageAttachmentAlt(fullscreenImageAttachment)"
           />
         </div>
@@ -356,11 +356,13 @@
 import { useQuasar } from 'quasar';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import MessageBubble from 'src/components/MessageBubble.vue';
+import MessageAttachmentImage from 'src/components/MessageAttachmentImage.vue';
 import MessageComposer from 'src/components/MessageComposer.vue';
 import CachedAvatar from 'src/components/CachedAvatar.vue';
 import ReconnectHealingBanner from 'src/components/ReconnectHealingBanner.vue';
 import StartupHistoryBanner from 'src/components/StartupHistoryBanner.vue';
 import { contactsService } from 'src/services/contactsService';
+import { encryptedMediaService } from 'src/services/encryptedMediaService';
 import { useChatStore } from 'src/stores/chatStore';
 import { useMessageStore } from 'src/stores/messageStore';
 import { useNostrStore } from 'src/stores/nostrStore';
@@ -569,13 +571,16 @@ function resolveImageDownloadName(attachment: MessageAttachmentMetadata): string
     return attachmentName.replace(/[\\/:*?"<>|]+/g, '-');
   }
 
-  try {
-    const urlName = decodeURIComponent(new URL(attachment.url).pathname.split('/').pop() ?? '').trim();
-    if (urlName) {
-      return urlName.replace(/[\\/:*?"<>|]+/g, '-');
+  // An encrypted blob URL names the ciphertext, not the image, so only the MIME type is useful.
+  if (!attachment.encryption) {
+    try {
+      const urlName = decodeURIComponent(new URL(attachment.url).pathname.split('/').pop() ?? '').trim();
+      if (urlName) {
+        return urlName.replace(/[\\/:*?"<>|]+/g, '-');
+      }
+    } catch {
+      // Use the MIME-derived fallback below.
     }
-  } catch {
-    // Use the MIME-derived fallback below.
   }
 
   const extension = attachment.mimeType.split('/')[1]?.split(';')[0]?.trim() || 'image';
@@ -592,6 +597,20 @@ function closeImageAttachmentDialog(): void {
   fullscreenImageAttachment.value = null;
 }
 
+async function readDownloadableImageBlob(attachment: MessageAttachmentMetadata): Promise<Blob> {
+  // Encrypted images are only ever saved as verified, decrypted bytes.
+  if (attachment.encryption) {
+    return encryptedMediaService.fetchDecryptedMediaBlob(attachment);
+  }
+
+  const response = await fetch(attachment.url);
+  if (!response.ok) {
+    throw new Error(`Image download failed with HTTP ${response.status}.`);
+  }
+
+  return response.blob();
+}
+
 async function downloadFullscreenImage(): Promise<void> {
   const attachment = fullscreenImageAttachment.value;
   if (!attachment || isDownloadingImage.value) {
@@ -601,12 +620,7 @@ async function downloadFullscreenImage(): Promise<void> {
   isDownloadingImage.value = true;
   let objectUrl = '';
   try {
-    const response = await fetch(attachment.url);
-    if (!response.ok) {
-      throw new Error(`Image download failed with HTTP ${response.status}.`);
-    }
-
-    const blob = await response.blob();
+    const blob = await readDownloadableImageBlob(attachment);
     if (blob.size === 0) {
       throw new Error('Image download returned an empty file.');
     }
@@ -1906,6 +1920,9 @@ function handleReplyToMessage(message: Message): void {
       text: replyContent.text,
       ...(canShowReplyImage && replyContent.imageUrl
         ? { imageUrl: replyContent.imageUrl }
+        : {}),
+      ...(canShowReplyImage && replyContent.imageAttachment
+        ? { imageAttachment: replyContent.imageAttachment }
         : {}),
       sender: message.sender,
       authorName: authorIdentity.label,

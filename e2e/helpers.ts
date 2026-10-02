@@ -303,6 +303,14 @@ export const TEST_ACCOUNTS = {
     privateKey: '8888888888888888888888888888888888888888888888888888888888888888',
     displayName: 'Bob Media Viewer',
   },
+  encryptedMediaAlice: {
+    privateKey: '9999999999999999999999999999999999999999999999999999999999999999',
+    displayName: 'Alice Encrypted Media',
+  },
+  encryptedMediaBob: {
+    privateKey: '1212121212121212121212121212121212121212121212121212121212121212',
+    displayName: 'Bob Encrypted Media',
+  },
   blockAlice: {
     privateKey: '732cc8f4c9bb1542b025b94aa494a706c9991bbf2dd23ce589cf51f99b0652ff',
     displayName: 'Alice Block',

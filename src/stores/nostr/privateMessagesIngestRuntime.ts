@@ -15,6 +15,9 @@ import type { ContactRecord } from 'src/types/contact';
 import {
   buildImageAttachmentPreviewText,
   extractMediaAttachmentsFromTags,
+  FILE_MESSAGE_KIND,
+  isChatMessageRumorKind,
+  parseNip17FileMessageAttachment,
 } from 'src/utils/messageAttachments';
 import {
   buildEditedMessageMeta,
@@ -652,7 +655,7 @@ export function createPrivateMessagesIngestRuntime({
       return;
     }
 
-    if (rumorEvent.kind !== NDKKind.PrivateDirectMessage) {
+    if (!isChatMessageRumorKind(rumorEvent.kind)) {
       logInboundEvent('drop', {
         reason: 'unsupported-rumor-kind',
         direction,
@@ -670,6 +673,29 @@ export function createPrivateMessagesIngestRuntime({
     }
 
     const messageText = rumorEvent.content.trim();
+    const isFileMessage = rumorEvent.kind === FILE_MESSAGE_KIND;
+    // Kind 15 rumors must carry a complete, valid set of decryption tags; anything else is dropped
+    // rather than shown as a plaintext link.
+    const fileMessageAttachment = isFileMessage
+      ? parseNip17FileMessageAttachment(messageText, rumorEvent.tags)
+      : null;
+    if (isFileMessage && !fileMessageAttachment) {
+      logInboundEvent('drop', {
+        reason: 'invalid-file-message',
+        direction,
+        ...buildInboundTraceDetails({
+          wrappedEvent,
+          rumorEvent,
+          loggedInPubkeyHex,
+          senderPubkeyHex,
+          chatPubkey,
+          relayUrls: wrappedRelayUrls,
+          recipients,
+        }),
+      });
+      return;
+    }
+
     if (!messageText) {
       logInboundEvent('drop', {
         reason: 'empty-content',
@@ -968,11 +994,14 @@ export function createPrivateMessagesIngestRuntime({
           }
         )
       : null;
-    const attachments = extractMediaAttachmentsFromTags(rumorEvent.tags);
-    const editTargetEventId = readMessageEditTargetEventId(rumorEvent.tags);
+    const attachments = fileMessageAttachment
+      ? [fileMessageAttachment]
+      : extractMediaAttachmentsFromTags(rumorEvent.tags);
+    // Edits are a kind 14 text convention; file messages are never treated as replacements.
+    const editTargetEventId = isFileMessage ? null : readMessageEditTargetEventId(rumorEvent.tags);
     let messageMeta: Record<string, unknown> = {
       source: 'nostr',
-      kind: NDKKind.PrivateDirectMessage,
+      kind: isFileMessage ? FILE_MESSAGE_KIND : NDKKind.PrivateDirectMessage,
       wrapper_event_id: wrappedEvent.id ?? '',
       ...buildMentionMetadata(messageText, loggedInPubkeyHex),
       ...(replyPreview ? { reply: replyPreview } : {}),

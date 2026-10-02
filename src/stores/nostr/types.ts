@@ -101,6 +101,8 @@ export interface SendGiftWrappedRumorOptions {
 export interface SendDirectMessageOptions extends SendGiftWrappedRumorOptions {
   replyToEventId?: string | null;
   additionalTags?: string[][];
+  // NIP-17 kind 14 chat message (default) or kind 15 encrypted file message.
+  rumorKind?: 14 | 15;
 }
 
 export interface SendDirectMessageReactionOptions {

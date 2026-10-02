@@ -428,6 +428,11 @@ public final class RelayNotificationService extends Service {
         return new JSONArray().put("REQ").put(subscriptionId).put(filter).toString();
     }
 
+    // NIP-17 kind 14 chat messages and kind 15 encrypted file messages.
+    static boolean isNotifiableRumorKind(int kind) {
+        return kind == 14 || kind == 15;
+    }
+
     static long subscriptionSince(long nowSeconds) {
         return Math.max(
             0L,
@@ -670,7 +675,7 @@ public final class RelayNotificationService extends Service {
             JSONObject rumor = new JSONObject(rumorPlaintext);
             long messageCreatedAt = rumor.optLong("created_at", 0L);
             if (
-                rumor.optInt("kind", -1) != 14 ||
+                !isNotifiableRumorKind(rumor.optInt("kind", -1)) ||
                 !senderPubkey.equals(rumor.optString("pubkey", "").toLowerCase(Locale.ROOT)) ||
                 !isValidRumor(rumor) ||
                 senderPubkey.equals(ownerPubkey) ||

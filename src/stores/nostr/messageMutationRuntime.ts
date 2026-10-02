@@ -18,7 +18,11 @@ import type {
   NostrEventDirection,
 } from 'src/types/chat';
 import type { ContactRecord } from 'src/types/contact';
-import { buildMessageReplyPreviewContent } from 'src/utils/messageAttachments';
+import {
+  buildMessageReplyPreviewContent,
+  isChatMessageRumorKind,
+  resolveChatMessageRumorKind,
+} from 'src/utils/messageAttachments';
 import {
   areMessageEditTimestampsEqual,
   messageEditReferencesEventId,
@@ -183,6 +187,7 @@ export function createMessageMutationRuntime({
       messageId: String(targetMessage.id),
       text: replyContent.text || UNKNOWN_REPLY_MESSAGE_TEXT,
       ...(replyContent.imageUrl ? { imageUrl: replyContent.imageUrl } : {}),
+      ...(replyContent.imageAttachment ? { imageAttachment: replyContent.imageAttachment } : {}),
       sender: isOwnTargetMessage ? 'me' : 'them',
       authorName: isOwnTargetMessage ? 'You' : deriveChatName(replyContact, chatPubkey),
       authorPublicKey: targetAuthorPublicKey,
@@ -584,8 +589,7 @@ export function createMessageMutationRuntime({
     for (const { entry: pendingDeletion, targetEventId } of pendingDeletions) {
       if (
         pendingDeletion.deletionAuthorPublicKey !== normalizedMessageAuthorPublicKey ||
-        (pendingDeletion.targetKind !== null &&
-          pendingDeletion.targetKind !== NDKKind.PrivateDirectMessage)
+        (pendingDeletion.targetKind !== null && !isChatMessageRumorKind(pendingDeletion.targetKind))
       ) {
         continue;
       }
@@ -601,7 +605,7 @@ export function createMessageMutationRuntime({
         pendingDeletion.deletionAuthorPublicKey,
         pendingDeletion.deleteEventId,
         pendingDeletion.deletedAt,
-        NDKKind.PrivateDirectMessage,
+        resolveChatMessageRumorKind(pendingDeletion.targetKind),
         options
       );
       if (updatedRow) {
@@ -1035,13 +1039,13 @@ export function createMessageMutationRuntime({
 
       if (targetKind === NDKKind.Reaction) {
         handled = await processIncomingReactionDeletion(target.eventId, senderPubkeyHex, options);
-      } else if (targetKind === NDKKind.PrivateDirectMessage) {
+      } else if (isChatMessageRumorKind(targetKind)) {
         handled = await processIncomingMessageDeletion(
           target.eventId,
           senderPubkeyHex,
           deleteEventId,
           deletedAt,
-          NDKKind.PrivateDirectMessage,
+          targetKind,
           options
         );
       } else {

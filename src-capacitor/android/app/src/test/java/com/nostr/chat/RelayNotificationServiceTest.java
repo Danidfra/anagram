@@ -40,6 +40,16 @@ public final class RelayNotificationServiceTest {
     }
 
     @Test
+    public void notifiesForNip17ChatAndFileMessageRumors() {
+        assertTrue(RelayNotificationService.isNotifiableRumorKind(14));
+        assertTrue(RelayNotificationService.isNotifiableRumorKind(15));
+        assertFalse(RelayNotificationService.isNotifiableRumorKind(7));
+        assertFalse(RelayNotificationService.isNotifiableRumorKind(5));
+        assertFalse(RelayNotificationService.isNotifiableRumorKind(1014));
+        assertFalse(RelayNotificationService.isNotifiableRumorKind(-1));
+    }
+
+    @Test
     public void subscriptionIncludesNip59TimestampRandomizationWindow() {
         long since = RelayNotificationService.subscriptionSince(NOW);
 

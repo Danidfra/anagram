@@ -1,11 +1,41 @@
-import type { MessageAttachmentMetadata } from 'src/types/chat';
+import type { MessageAttachmentEncryption, MessageAttachmentMetadata } from 'src/types/chat';
+import {
+  isValidMediaKeyHex,
+  isValidMediaNonceHex,
+  MEDIA_ENCRYPTION_ALGORITHM,
+  normalizeSha256Hex,
+} from 'src/utils/mediaCrypto';
 
 const IMETA_TAG_NAME = 'imeta';
 export const IMAGE_ATTACHMENT_PREVIEW_TEXT = 'Picture';
+export const FILE_ATTACHMENT_PREVIEW_TEXT = 'File';
+
+// NIP-17 rumor kinds rendered as chat messages.
+export const CHAT_MESSAGE_KIND = 14;
+export const FILE_MESSAGE_KIND = 15;
+
+const FILE_TYPE_TAG = 'file-type';
+const ENCRYPTION_ALGORITHM_TAG = 'encryption-algorithm';
+const DECRYPTION_KEY_TAG = 'decryption-key';
+const DECRYPTION_NONCE_TAG = 'decryption-nonce';
+const HASH_TAG = 'x';
+const ORIGINAL_HASH_TAG = 'ox';
+const SIZE_TAG = 'size';
+
+// Raster formats that are safe to hand to <img> from a decrypted blob. SVG and anything
+// document-like is deliberately excluded.
+const SAFE_INLINE_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/avif',
+]);
 
 export interface MessageReplyPreviewContent {
   text: string;
   imageUrl?: string;
+  imageAttachment?: MessageAttachmentMetadata;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -30,6 +60,60 @@ function readImetaField(entry: string, key: string): string {
   return entry.startsWith(prefix) ? entry.slice(prefix.length).trim() : '';
 }
 
+export function normalizeMimeType(value: unknown): string {
+  return normalizeText(value).split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+export function resolveSafeInlineImageMimeType(value: unknown): string | null {
+  const mimeType = normalizeMimeType(value);
+  const canonical = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
+  return SAFE_INLINE_IMAGE_MIME_TYPES.has(canonical) ? canonical : null;
+}
+
+export function normalizeEncryptedMediaUrl(value: unknown): string | null {
+  const text = normalizeText(value);
+  if (!text) {
+    return null;
+  }
+
+  try {
+    const url = new URL(text);
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) {
+      return null;
+    }
+
+    // Keep the original spelling so it still matches the rumor content.
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAttachmentEncryption(value: unknown): MessageAttachmentEncryption | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const algorithm = normalizeText(value.algorithm).toLowerCase();
+  const key = normalizeText(value.key).toLowerCase();
+  const nonce = normalizeText(value.nonce).toLowerCase();
+  if (
+    algorithm !== MEDIA_ENCRYPTION_ALGORITHM ||
+    !isValidMediaKeyHex(key) ||
+    !isValidMediaNonceHex(nonce)
+  ) {
+    return null;
+  }
+
+  const originalSha256 = normalizeSha256Hex(value.originalSha256);
+  return {
+    algorithm: MEDIA_ENCRYPTION_ALGORITHM,
+    key,
+    nonce,
+    ...(originalSha256 ? { originalSha256 } : {}),
+  };
+}
+
 export function normalizeMessageAttachment(input: unknown): MessageAttachmentMetadata | null {
   if (!isRecord(input)) {
     return null;
@@ -47,6 +131,16 @@ export function normalizeMessageAttachment(input: unknown): MessageAttachmentMet
   const uploadedAt = normalizeText(input.uploadedAt);
   const service = normalizeText(input.service);
 
+  let encryption: MessageAttachmentEncryption | null = null;
+  if (input.encryption !== undefined) {
+    // An attachment that claims encryption but cannot be decrypted must never fall back to
+    // being treated as a plaintext URL.
+    encryption = normalizeAttachmentEncryption(input.encryption);
+    if (!encryption || !normalizeSha256Hex(sha256) || !normalizeEncryptedMediaUrl(url)) {
+      return null;
+    }
+  }
+
   return {
     type: 'media',
     url,
@@ -56,7 +150,22 @@ export function normalizeMessageAttachment(input: unknown): MessageAttachmentMet
     ...(name ? { name } : {}),
     ...(uploadedAt ? { uploadedAt } : {}),
     ...(service ? { service } : {}),
+    ...(encryption ? { encryption } : {}),
   };
+}
+
+export function isEncryptedAttachment(
+  attachment: MessageAttachmentMetadata
+): attachment is MessageAttachmentMetadata & { encryption: MessageAttachmentEncryption } {
+  return Boolean(attachment.encryption);
+}
+
+export function isChatMessageRumorKind(kind: unknown): kind is 14 | 15 {
+  return kind === CHAT_MESSAGE_KIND || kind === FILE_MESSAGE_KIND;
+}
+
+export function resolveChatMessageRumorKind(kind: unknown): 14 | 15 {
+  return Number(kind) === FILE_MESSAGE_KIND ? FILE_MESSAGE_KIND : CHAT_MESSAGE_KIND;
 }
 
 export function buildAttachmentMessageText(attachment: MessageAttachmentMetadata): string {
@@ -72,7 +181,7 @@ export function buildAttachmentMessageMeta(
 
 export function buildNip92ImetaTag(attachment: MessageAttachmentMetadata): string[] {
   const normalized = normalizeMessageAttachment(attachment);
-  if (!normalized) {
+  if (!normalized || normalized.encryption) {
     return [];
   }
 
@@ -88,6 +197,86 @@ export function buildNip92ImetaTag(attachment: MessageAttachmentMetadata): strin
   }
 
   return tag;
+}
+
+// NIP-17 kind 15 file-message tags. The URL is the rumor content.
+export function buildNip17FileMessageTags(attachment: MessageAttachmentMetadata): string[][] {
+  const normalized = normalizeMessageAttachment(attachment);
+  if (!normalized?.encryption || !normalized.sha256) {
+    return [];
+  }
+
+  const { encryption } = normalized;
+  return [
+    [FILE_TYPE_TAG, normalizeMimeType(normalized.mimeType)],
+    [ENCRYPTION_ALGORITHM_TAG, encryption.algorithm],
+    [DECRYPTION_KEY_TAG, encryption.key],
+    [DECRYPTION_NONCE_TAG, encryption.nonce],
+    [HASH_TAG, normalized.sha256],
+    ...(encryption.originalSha256 ? [[ORIGINAL_HASH_TAG, encryption.originalSha256]] : []),
+    [SIZE_TAG, String(normalized.size)],
+  ];
+}
+
+function readSingleTagValue(tags: string[][], name: string): string {
+  for (const tag of tags) {
+    if (Array.isArray(tag) && tag[0] === name) {
+      return normalizeText(tag[1]);
+    }
+  }
+
+  return '';
+}
+
+export function parseNip17FileMessageAttachment(
+  content: unknown,
+  tags: string[][]
+): MessageAttachmentMetadata | null {
+  const url = normalizeEncryptedMediaUrl(content);
+  const mimeType = normalizeMimeType(readSingleTagValue(tags, FILE_TYPE_TAG));
+  const algorithm = readSingleTagValue(tags, ENCRYPTION_ALGORITHM_TAG).toLowerCase();
+  const key = readSingleTagValue(tags, DECRYPTION_KEY_TAG).toLowerCase();
+  const nonce = readSingleTagValue(tags, DECRYPTION_NONCE_TAG).toLowerCase();
+  const sha256 = normalizeSha256Hex(readSingleTagValue(tags, HASH_TAG));
+  if (
+    !url ||
+    !mimeType ||
+    algorithm !== MEDIA_ENCRYPTION_ALGORITHM ||
+    !isValidMediaKeyHex(key) ||
+    !isValidMediaNonceHex(nonce) ||
+    !sha256
+  ) {
+    return null;
+  }
+
+  const originalSha256 = normalizeSha256Hex(readSingleTagValue(tags, ORIGINAL_HASH_TAG));
+  // size is optional in NIP-17; keep the attachment shape valid when it is absent.
+  const size = normalizePositiveInteger(readSingleTagValue(tags, SIZE_TAG)) ?? 1;
+  return {
+    type: 'media',
+    url,
+    mimeType,
+    size,
+    sha256,
+    encryption: {
+      algorithm: MEDIA_ENCRYPTION_ALGORITHM,
+      key,
+      nonce,
+      ...(originalSha256 ? { originalSha256 } : {}),
+    },
+  };
+}
+
+const SECRET_FILE_MESSAGE_TAGS = new Set([DECRYPTION_KEY_TAG, DECRYPTION_NONCE_TAG]);
+export const REDACTED_TAG_VALUE = '[redacted]';
+
+// For diagnostics only: hides the kind 15 key and nonce while keeping the tag shape.
+export function redactFileMessageSecretTags(tags: unknown[]): unknown[] {
+  return tags.map((tag) =>
+    Array.isArray(tag) && SECRET_FILE_MESSAGE_TAGS.has(tag[0])
+      ? [tag[0], ...tag.slice(1).map(() => REDACTED_TAG_VALUE)]
+      : tag
+  );
 }
 
 export function extractMediaAttachmentsFromTags(tags: string[][]): MessageAttachmentMetadata[] {
@@ -137,10 +326,17 @@ export function extractMediaAttachmentsFromTags(tags: string[][]): MessageAttach
 }
 
 export function isImageAttachment(attachment: MessageAttachmentMetadata): boolean {
-  return attachment.type === 'media' && /^image\//iu.test(attachment.mimeType);
+  if (attachment.type !== 'media') {
+    return false;
+  }
+
+  // Encrypted blobs are rendered from decrypted bytes, so only allowlisted rasters qualify.
+  return attachment.encryption
+    ? resolveSafeInlineImageMimeType(attachment.mimeType) !== null
+    : /^image\//iu.test(attachment.mimeType);
 }
 
-export function readImageAttachmentsFromMeta(
+export function readMediaAttachmentsFromMeta(
   meta:
     | {
         attachments?: unknown;
@@ -154,9 +350,47 @@ export function readImageAttachmentsFromMeta(
 
   return meta.attachments
     .map((attachment) => normalizeMessageAttachment(attachment))
-    .filter((attachment): attachment is MessageAttachmentMetadata =>
-      attachment ? isImageAttachment(attachment) : false
-    );
+    .filter((attachment): attachment is MessageAttachmentMetadata => attachment !== null);
+}
+
+export function readImageAttachmentsFromMeta(
+  meta:
+    | {
+        attachments?: unknown;
+      }
+    | null
+    | undefined
+): MessageAttachmentMetadata[] {
+  return readMediaAttachmentsFromMeta(meta).filter((attachment) => isImageAttachment(attachment));
+}
+
+// Encrypted attachments that cannot be shown inline (video, audio, unsupported image formats).
+export function readUnsupportedEncryptedAttachmentsFromMeta(
+  meta:
+    | {
+        attachments?: unknown;
+      }
+    | null
+    | undefined
+): MessageAttachmentMetadata[] {
+  return readMediaAttachmentsFromMeta(meta).filter(
+    (attachment) => isEncryptedAttachment(attachment) && !isImageAttachment(attachment)
+  );
+}
+
+// URLs that should not be shown as message text: rendered images and every encrypted blob
+// (an encrypted blob URL is meaningless without the key).
+export function readHiddenAttachmentUrls(
+  meta: { attachments?: unknown } | null | undefined
+): string[] {
+  return Array.from(
+    new Set(
+      readMediaAttachmentsFromMeta(meta)
+        .filter((attachment) => isImageAttachment(attachment) || isEncryptedAttachment(attachment))
+        .map((attachment) => attachment.url.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 export function buildImageAttachmentPreviewText(
@@ -164,29 +398,42 @@ export function buildImageAttachmentPreviewText(
   meta: { attachments?: unknown } | null | undefined
 ): string {
   const normalizedText = normalizeText(text);
-  const imageAttachments = readImageAttachmentsFromMeta(meta);
-  if (imageAttachments.length === 0) {
+  const hiddenUrls = readHiddenAttachmentUrls(meta);
+  if (hiddenUrls.length === 0) {
     return normalizedText;
   }
 
-  const attachmentUrls = new Set(
-    imageAttachments.map((attachment) => attachment.url.trim()).filter(Boolean)
-  );
   let previewText = normalizedText;
-  for (const url of attachmentUrls) {
+  for (const url of hiddenUrls) {
     previewText = previewText.split(url).join(' ');
   }
 
-  return previewText.replace(/\s+/gu, ' ').trim() || IMAGE_ATTACHMENT_PREVIEW_TEXT;
+  const fallbackText =
+    readImageAttachmentsFromMeta(meta).length > 0
+      ? IMAGE_ATTACHMENT_PREVIEW_TEXT
+      : FILE_ATTACHMENT_PREVIEW_TEXT;
+  return previewText.replace(/\s+/gu, ' ').trim() || fallbackText;
 }
 
 export function buildMessageReplyPreviewContent(
   text: string,
   meta: { attachments?: unknown } | null | undefined
 ): MessageReplyPreviewContent {
-  const imageUrl = readImageAttachmentsFromMeta(meta)[0]?.url.trim() ?? '';
+  const imageAttachment = readImageAttachmentsFromMeta(meta)[0] ?? null;
+  const previewText = buildImageAttachmentPreviewText(text, meta);
+  if (!imageAttachment) {
+    return { text: previewText };
+  }
+
+  // Encrypted images carry their decryption data so the preview can be decrypted locally;
+  // legacy images keep the plain URL shape.
+  if (imageAttachment.encryption) {
+    return { text: previewText, imageAttachment };
+  }
+
+  const imageUrl = imageAttachment.url.trim();
   return {
-    text: buildImageAttachmentPreviewText(text, meta),
+    text: previewText,
     ...(imageUrl ? { imageUrl } : {}),
   };
 }

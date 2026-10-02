@@ -79,10 +79,11 @@
 
     <div v-else-if="replyTo" class="composer__reply">
       <div class="composer__reply-accent" aria-hidden="true" />
-      <img
-        v-if="replyTo.imageUrl"
+      <MessageAttachmentImage
+        v-if="replyTo.imageAttachment || replyTo.imageUrl"
         class="composer__reply-image"
         data-testid="composer-reply-preview-image"
+        :attachment="replyTo.imageAttachment"
         :src="replyTo.imageUrl"
         :alt="$t('message.imageAttachment')"
       />
@@ -294,9 +295,12 @@ import CachedAvatar from 'src/components/CachedAvatar.vue';
 import EmojiPickerPanel from 'src/components/EmojiPickerPanel.vue';
 import { TOP_500_EMOJIS, filterEmojiEntries, type EmojiOption } from 'src/data/topEmojis';
 import { t } from 'src/i18n';
+import MessageAttachmentImage from 'src/components/MessageAttachmentImage.vue';
 import {
+  isImageMediaFile,
   uploadBlossomMedia,
-  validateBlossomMediaFile,
+  uploadEncryptedImage,
+  validateOutgoingMediaFile,
 } from 'src/services/blossomUploadService';
 import { useChatStore } from 'src/stores/chatStore';
 import { useNostrStore } from 'src/stores/nostrStore';
@@ -691,7 +695,7 @@ function openMediaPrivacyDialog(file: File | null = null): void {
   }
 
   if (file) {
-    const validationError = validateBlossomMediaFile(file);
+    const validationError = validateOutgoingMediaFile(file);
     if (validationError) {
       $q.notify({
         type: 'warning',
@@ -754,7 +758,7 @@ async function handleMediaFileInputChange(event: Event): Promise<void> {
     return;
   }
 
-  const validationError = validateBlossomMediaFile(file);
+  const validationError = validateOutgoingMediaFile(file);
   if (validationError) {
     $q.notify({
       type: 'warning',
@@ -835,10 +839,14 @@ async function uploadAndSendMediaFile(file: File): Promise<void> {
   const minProgressDelay = new Promise((resolve) => window.setTimeout(resolve, 2000));
 
   try {
-    const uploadResult = await uploadBlossomMedia(file, {
+    const uploadOptions = {
       serverUrl: blossomServerUrl.value,
       signUploadAuthHeader: nostrStore.signBlossomUploadAuthHeader,
-    });
+    };
+    // Images are encrypted locally and sent as NIP-17 kind 15; Blossom only receives ciphertext.
+    const uploadResult = isImageMediaFile(file)
+      ? await uploadEncryptedImage(file, uploadOptions)
+      : await uploadBlossomMedia(file, uploadOptions);
     await minProgressDelay;
     mediaUploadStatus.value = 'sending';
     emit('send-media', {

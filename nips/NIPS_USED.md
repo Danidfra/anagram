@@ -27,6 +27,10 @@ This list is based on the current app code, especially `src/stores/nostrStore.ts
 - This is the app's main private-message transport.
 - It sends and receives `kind:14` private message rumors inside gift wraps, and it also uses the same DM flow for wrapped reactions (`kind:7`) and deletions (`kind:5`).
 - Group chat messages are also sent as NIP-17 DMs to the group's current epoch public key.
+- Images are sent as NIP-17 `kind:15` file messages. The image is encrypted on the device with AES-256-GCM (WebCrypto) using a fresh random 32-byte key and 12-byte nonce per attachment, and only the ciphertext is uploaded (as `application/octet-stream`). The rumor content is the blob URL and its tags are `file-type` (plaintext MIME type), `encryption-algorithm` (`aes-gcm`), `decryption-key` and `decryption-nonce` (lowercase hex), `x` (SHA-256 of the ciphertext), `ox` (SHA-256 of the encrypted plaintext), and `size` (ciphertext bytes). The key and nonce only exist inside the gift-wrapped rumor.
+- Before upload, JPEG APP1/APP13/COM segments and PNG text/EXIF/time chunks are removed without re-encoding; JPEG orientation is kept. Other image formats are encrypted unchanged.
+- Received `kind:15` rumors are accepted only with a complete, valid set of these tags and an HTTPS URL. The downloaded blob must match `x` before it is decrypted, a GCM authentication failure is a hard error, and only JPEG, PNG, GIF, WebP, and AVIF are rendered (from a decrypted `blob:` URL). Nonces of 12 or 16 bytes are accepted for interoperability. Forwarding a `kind:15` attachment re-sends the same URL, key, and nonce in a new `kind:15` rumor without re-uploading.
+- Video and audio still use the older plaintext upload with a `kind:14` rumor and a NIP-92 `imeta` tag, and existing `kind:14` + `imeta` media keeps rendering.
 - Text edits follow NIP-17's delete-and-replace convention: the app sends a wrapped `kind:5` deletion and a replacement wrapped `kind:14` rumor with the original message timestamp. Replacement rumors also carry a private `e` tag marked `edit` so this client can reconcile either relay arrival order without displaying duplicate messages.
 
 ## NIP-19
@@ -82,6 +86,7 @@ This list is based on the current app code, especially `src/stores/nostrStore.ts
 
 - Used for Blossom media uploads.
 - The app uploads blobs through the configured HTTPS Blossom server and signs server-scoped `kind:24242` upload authorization events.
+- Encrypted image uploads send ciphertext only. A failed upload is retried up to three times with the same ciphertext and authorization, and the server's returned hash must match the ciphertext hash.
 - The server choice remains private in the app's NIP-78 preferences; the app does not currently publish a public `kind:10063` Blossom server list.
 
 ## NIP-171

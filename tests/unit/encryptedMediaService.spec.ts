@@ -1,0 +1,204 @@
+import {
+  createEncryptedMediaService,
+  ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES,
+  UnsupportedEncryptedMediaError,
+} from 'src/services/encryptedMediaService';
+import type { MessageAttachmentMetadata } from 'src/types/chat';
+import {
+  encryptMediaBytes,
+  MediaDecryptionError,
+  MediaIntegrityError,
+  sha256Hex,
+} from 'src/utils/mediaCrypto';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const PLAINTEXT = new Uint8Array(new TextEncoder().encode('decrypted-image-bytes'));
+
+async function createEncryptedFixture(mimeType = 'image/png') {
+  const encrypted = await encryptMediaBytes(PLAINTEXT);
+  const sha256 = await sha256Hex(encrypted.ciphertext);
+  const attachment: MessageAttachmentMetadata = {
+    type: 'media',
+    url: `https://blossom.example.com/${sha256}`,
+    mimeType,
+    size: encrypted.ciphertext.byteLength,
+    sha256,
+    encryption: { algorithm: 'aes-gcm', key: encrypted.key, nonce: encrypted.nonce },
+  };
+  return { attachment, ciphertext: encrypted.ciphertext };
+}
+
+function createHarness(body: Uint8Array<ArrayBuffer> | (() => Response)) {
+  let objectUrlCounter = 0;
+  const fetch = vi.fn(async () =>
+    typeof body === 'function' ? body() : new Response(new Uint8Array(body), { status: 200 })
+  );
+  const createObjectURL = vi.fn((_blob: Blob) => {
+    objectUrlCounter += 1;
+    return `blob:anagram/${objectUrlCounter}`;
+  });
+  const revokeObjectURL = vi.fn();
+  const service = createEncryptedMediaService({
+    fetch: fetch as unknown as typeof globalThis.fetch,
+    createObjectURL,
+    revokeObjectURL,
+  });
+  return { service, fetch, createObjectURL, revokeObjectURL };
+}
+
+describe('encryptedMediaService', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('downloads, verifies, and decrypts into a blob with the allowlisted MIME type', async () => {
+    const { attachment, ciphertext } = await createEncryptedFixture('image/jpg');
+    const { service, fetch } = createHarness(ciphertext);
+
+    const blob = await service.fetchDecryptedMediaBlob(attachment);
+
+    expect(blob.type).toBe('image/jpeg');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(PLAINTEXT);
+    expect(fetch).toHaveBeenCalledWith(attachment.url, {
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    });
+  });
+
+  it('rejects a blob whose hash does not match x without decrypting it', async () => {
+    const { attachment, ciphertext } = await createEncryptedFixture();
+    const tampered = new Uint8Array(ciphertext);
+    tampered[0] ^= 0xff;
+    const decryptSpy = vi.spyOn(globalThis.crypto.subtle, 'decrypt');
+    const { service, createObjectURL } = createHarness(tampered);
+
+    await expect(service.fetchDecryptedMediaBlob(attachment)).rejects.toBeInstanceOf(
+      MediaIntegrityError
+    );
+    await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toBeInstanceOf(
+      MediaIntegrityError
+    );
+    expect(decryptSpy).not.toHaveBeenCalled();
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('fails safely when the hash matches but GCM authentication fails', async () => {
+    const { attachment, ciphertext } = await createEncryptedFixture();
+    const tampered = new Uint8Array(ciphertext);
+    tampered[1] ^= 0xff;
+    const forgedAttachment = { ...attachment, sha256: await sha256Hex(tampered) };
+    const { service, createObjectURL } = createHarness(tampered);
+
+    await expect(service.acquireDecryptedObjectUrl(forgedAttachment)).rejects.toBeInstanceOf(
+      MediaDecryptionError
+    );
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(service.getActiveObjectUrlCount()).toBe(0);
+  });
+
+  it.each([
+    'image/svg+xml',
+    'text/html',
+    'application/xhtml+xml',
+    'video/mp4',
+  ])('never turns %s into a renderable object URL', async (mimeType) => {
+    const { attachment, ciphertext } = await createEncryptedFixture(mimeType);
+    const { service, fetch, createObjectURL } = createHarness(ciphertext);
+
+    await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toBeInstanceOf(
+      UnsupportedEncryptedMediaError
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('refuses non-HTTPS blob URLs', async () => {
+    const { attachment, ciphertext } = await createEncryptedFixture();
+    const { service, fetch } = createHarness(ciphertext);
+
+    await expect(
+      service.fetchDecryptedMediaBlob({ ...attachment, url: 'http://blossom.example.com/x' })
+    ).rejects.toThrow('Encrypted media URL must use HTTPS.');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses plaintext attachments', async () => {
+    const { attachment, ciphertext } = await createEncryptedFixture();
+    const { service } = createHarness(ciphertext);
+    const { encryption: _encryption, ...plain } = attachment;
+
+    await expect(service.fetchDecryptedMediaBlob(plain)).rejects.toThrow(
+      'Attachment is not encrypted.'
+    );
+  });
+
+  it('reports HTTP failures and oversized downloads', async () => {
+    const { attachment } = await createEncryptedFixture();
+    const missing = createHarness(() => new Response('', { status: 404 }));
+    const oversized = createHarness(
+      () =>
+        new Response('', {
+          status: 200,
+          headers: { 'Content-Length': String(ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES + 1) },
+        })
+    );
+
+    await expect(missing.service.fetchDecryptedMediaBlob(attachment)).rejects.toThrow(
+      'Encrypted media download failed with HTTP 404.'
+    );
+    await expect(oversized.service.fetchDecryptedMediaBlob(attachment)).rejects.toThrow(
+      'Encrypted media is too large to download.'
+    );
+  });
+
+  it('shares one object URL per attachment and revokes it after the last release', async () => {
+    const { attachment, ciphertext } = await createEncryptedFixture();
+    const { service, fetch, createObjectURL, revokeObjectURL } = createHarness(ciphertext);
+
+    const [first, second] = await Promise.all([
+      service.acquireDecryptedObjectUrl(attachment),
+      service.acquireDecryptedObjectUrl({ ...attachment }),
+    ]);
+
+    expect(first).toBe('blob:anagram/1');
+    expect(second).toBe(first);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    service.releaseDecryptedObjectUrl(attachment);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    service.releaseDecryptedObjectUrl(attachment);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:anagram/1');
+    expect(service.getActiveObjectUrlCount()).toBe(0);
+
+    await expect(service.acquireDecryptedObjectUrl(attachment)).resolves.toBe('blob:anagram/2');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('revokes an object URL that finishes loading after its view was released', async () => {
+    const { attachment, ciphertext } = await createEncryptedFixture();
+    const { service, createObjectURL, revokeObjectURL } = createHarness(ciphertext);
+
+    const pending = service.acquireDecryptedObjectUrl(attachment);
+    service.releaseDecryptedObjectUrl(attachment);
+
+    await expect(pending).rejects.toThrow('released before it finished loading');
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:anagram/1');
+    expect(service.getActiveObjectUrlCount()).toBe(0);
+  });
+
+  it('does not cache failed loads so a later view can retry', async () => {
+    const { attachment, ciphertext } = await createEncryptedFixture();
+    let calls = 0;
+    const { service } = createHarness(() => {
+      calls += 1;
+      return calls === 1
+        ? new Response('', { status: 503 })
+        : new Response(new Uint8Array(ciphertext), { status: 200 });
+    });
+
+    await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toThrow('HTTP 503');
+    await expect(service.acquireDecryptedObjectUrl(attachment)).resolves.toBe('blob:anagram/1');
+  });
+});

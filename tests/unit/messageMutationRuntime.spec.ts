@@ -367,4 +367,97 @@ describe('messageMutationRuntime', () => {
     expect(serviceMocks.chatDataService.updateMessageMeta).not.toHaveBeenCalled();
     expect(deps.refreshMessageInLiveState).toHaveBeenCalledWith(originalMessage.id);
   });
+
+  describe('kind 15 file messages', () => {
+    const encryptedAttachment = {
+      type: 'media',
+      url: `https://blossom.example.com/${'c3'.repeat(32)}`,
+      mimeType: 'image/png',
+      size: 2048,
+      sha256: 'c3'.repeat(32),
+      encryption: { algorithm: 'aes-gcm', key: 'a1'.repeat(32), nonce: 'b2'.repeat(12) },
+    };
+    const fileMessage = {
+      id: 30,
+      chat_public_key: CHAT_PUBLIC_KEY,
+      author_public_key: CHAT_PUBLIC_KEY,
+      message: encryptedAttachment.url,
+      created_at: '2026-01-01T00:00:00.000Z',
+      event_id: TARGET_EVENT_ID,
+      meta: { kind: 15, attachments: [encryptedAttachment] },
+    };
+
+    it('builds reply previews that keep the encrypted attachment instead of a plain URL', async () => {
+      const runtime = createMessageMutationRuntime(createDeps());
+      serviceMocks.chatDataService.getMessageByEventId.mockResolvedValue(fileMessage);
+
+      const preview = await runtime.buildReplyPreviewFromTargetEvent(
+        TARGET_EVENT_ID,
+        CHAT_PUBLIC_KEY,
+        LOGGED_IN_PUBLIC_KEY,
+        null
+      );
+
+      expect(preview).toMatchObject({ text: 'Picture', imageAttachment: encryptedAttachment });
+      expect(preview).not.toHaveProperty('imageUrl');
+    });
+
+    it('applies a deletion that targets kind 15', async () => {
+      const deps = createDeps();
+      deps.readDeletionTargetEntries.mockReturnValue([{ eventId: TARGET_EVENT_ID, kind: 15 }]);
+      const runtime = createMessageMutationRuntime(deps);
+      serviceMocks.chatDataService.getMessageByEventId.mockResolvedValue(fileMessage);
+      serviceMocks.chatDataService.updateMessageMeta.mockImplementation(async (id, meta) => ({
+        ...fileMessage,
+        id,
+        meta,
+      }));
+
+      await runtime.processIncomingDeletionRumorEvent(
+        {
+          id: 'f'.repeat(64),
+          kind: NDKKind.EventDeletion,
+          created_at: 1767225660,
+          pubkey: CHAT_PUBLIC_KEY,
+          content: '',
+          tags: [],
+        } as unknown as NDKEvent,
+        CHAT_PUBLIC_KEY,
+        CHAT_PUBLIC_KEY
+      );
+
+      expect(serviceMocks.chatDataService.updateMessageMeta).toHaveBeenCalledWith(
+        fileMessage.id,
+        expect.objectContaining({
+          deleted: expect.objectContaining({ deletedEventKind: 15 }),
+        })
+      );
+      expect(deps.queuePendingIncomingDeletion).not.toHaveBeenCalled();
+    });
+
+    it('applies a queued kind 15 deletion when the file message arrives later', async () => {
+      const deps = createDeps();
+      deps.consumePendingIncomingDeletions.mockImplementation(((eventId: string) =>
+        eventId === TARGET_EVENT_ID
+          ? [
+              {
+                deletionAuthorPublicKey: CHAT_PUBLIC_KEY,
+                deleteEventId: 'f'.repeat(64),
+                deletedAt: '2026-01-01T00:05:00.000Z',
+                targetKind: 15,
+              },
+            ]
+          : []) as never);
+      const runtime = createMessageMutationRuntime(deps);
+      serviceMocks.chatDataService.updateMessageMeta.mockImplementation(async (id, meta) => ({
+        ...fileMessage,
+        id,
+        meta,
+      }));
+
+      const updated = await runtime.applyPendingIncomingDeletionsForMessage(fileMessage as never);
+
+      expect(updated.meta).toMatchObject({ deleted: { deletedEventKind: 15 } });
+    });
+  });
 });

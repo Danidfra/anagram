@@ -12,6 +12,7 @@ import { observeConnectedRelayEose } from 'src/stores/nostr/subscriptionEose';
 import type { SubscriptionLogName } from 'src/stores/nostr/types';
 import type { ChatGroupEpochKey } from 'src/types/chat';
 import type { ContactRecord } from 'src/types/contact';
+import { redactFileMessageSecretTags } from 'src/utils/messageAttachments';
 
 interface SubscriptionLoggingRuntimeDeps {
   ndk: NDK;
@@ -75,8 +76,12 @@ export function createSubscriptionLoggingRuntime({
     event: Pick<NDKEvent, 'id' | 'kind' | 'created_at' | 'pubkey' | 'content' | 'tags'>,
     storedEvent: Record<string, unknown> | null | undefined = null
   ): Record<string, unknown> {
+    // Logged rumors can be echoed to the console, so kind 15 decryption material is redacted.
     if (storedEvent) {
-      return JSON.parse(JSON.stringify(storedEvent)) as Record<string, unknown>;
+      const copy = JSON.parse(JSON.stringify(storedEvent)) as Record<string, unknown>;
+      return Array.isArray(copy.tags)
+        ? { ...copy, tags: redactFileMessageSecretTags(copy.tags) }
+        : copy;
     }
 
     return {
@@ -86,9 +91,11 @@ export function createSubscriptionLoggingRuntime({
       pubkey: inputSanitizerService.normalizeHexKey(event.pubkey ?? '') ?? event.pubkey ?? null,
       content: typeof event.content === 'string' ? event.content : '',
       tags: Array.isArray(event.tags)
-        ? event.tags
-            .filter((tag): tag is string[] => Array.isArray(tag))
-            .map((tag) => tag.map((value) => String(value ?? '')))
+        ? redactFileMessageSecretTags(
+            event.tags
+              .filter((tag): tag is string[] => Array.isArray(tag))
+              .map((tag) => tag.map((value) => String(value ?? '')))
+          )
         : [],
     };
   }

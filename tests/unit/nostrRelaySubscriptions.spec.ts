@@ -176,6 +176,35 @@ describe('relay and subscription runtimes', () => {
         ['e', 'event'],
       ],
     });
+    const fileMessageTags = [
+      ['p', USER_KEY],
+      ['decryption-key', 'a1'.repeat(32)],
+      ['decryption-nonce', 'b2'.repeat(12)],
+      ['x', 'c3'.repeat(32)],
+    ];
+    const redactedFileMessageTags = [
+      ['p', USER_KEY],
+      ['decryption-key', '[redacted]'],
+      ['decryption-nonce', '[redacted]'],
+      ['x', 'c3'.repeat(32)],
+    ];
+    const loggedFileMessage = runtime.buildLoggedNostrEvent({
+      id: 'file',
+      kind: 15,
+      created_at: 123,
+      pubkey: PUBKEY_A,
+      content: 'https://blossom.example/blob',
+      tags: fileMessageTags,
+    } as never);
+    const loggedStoredFileMessage = runtime.buildLoggedNostrEvent({} as never, {
+      id: 'file',
+      kind: 15,
+      tags: fileMessageTags,
+    });
+    expect(loggedFileMessage.tags).toEqual(redactedFileMessageTags);
+    expect(loggedStoredFileMessage.tags).toEqual(redactedFileMessageTags);
+    expect(JSON.stringify([loggedFileMessage, loggedStoredFileMessage])).not.toContain('a1a1');
+    expect(fileMessageTags[1][1]).toBe('a1'.repeat(32));
     expect(
       await runtime.buildTrackedContactSubscriptionTargetDetails([GROUP_KEY, USER_KEY])
     ).toEqual({

@@ -1,4 +1,3 @@
-import { NDKKind } from '@nostr-dev-kit/ndk';
 import { chatDataService } from 'src/services/chatDataService';
 import { inputSanitizerService } from 'src/services/inputSanitizerService';
 import { nostrEventDataService } from 'src/services/nostrEventDataService';
@@ -11,6 +10,7 @@ import {
   OUTBOUND_MESSAGE_REPLAY_SWEEP_INTERVAL_MS,
 } from 'src/stores/nostr/constants';
 import type { MessageRelayStatus } from 'src/types/chat';
+import { isChatMessageRumorKind } from 'src/utils/messageAttachments';
 
 interface RetryDirectMessageRelayOptions {
   trigger?: string;
@@ -232,7 +232,7 @@ export function createOutboundMessageReplayRuntime({
       outer: for (const outboundEvent of outboundEvents) {
         if (
           outboundEvent.direction !== 'out' ||
-          outboundEvent.event.kind !== NDKKind.PrivateDirectMessage
+          !isChatMessageRumorKind(outboundEvent.event.kind)
         ) {
           continue;
         }

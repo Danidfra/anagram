@@ -199,10 +199,11 @@
           @click.stop="handleOpenReplyTarget"
         >
           <div class="bubble__reply-preview-accent" aria-hidden="true" />
-          <img
-            v-if="replyPreviewImageUrl"
+          <MessageAttachmentImage
+            v-if="replyPreviewImageAttachment || replyPreviewImageUrl"
             class="bubble__reply-preview-image"
             data-testid="message-reply-preview-image"
+            :attachment="replyPreviewImageAttachment"
             :src="replyPreviewImageUrl"
             :alt="$t('message.imageAttachment')"
           />
@@ -263,15 +264,15 @@
                 :aria-label="resolveImageAttachmentAlt(item.attachment)"
                 @click.stop="openImageAttachmentDialog(item.attachment)"
               >
-                <img
+                <MessageAttachmentImage
                   class="bubble__image-preview-media"
                   data-testid="message-image-preview"
-                  :src="item.attachment.url"
+                  :attachment="item.attachment"
                   :alt="resolveImageAttachmentAlt(item.attachment)"
                   loading="lazy"
                 />
               </button>
-              <div class="bubble__image-actions">
+              <div v-if="!item.isEncrypted" class="bubble__image-actions">
                 <q-btn
                   flat
                   dense
@@ -310,7 +311,10 @@
                 class="bubble__image-gate-icon"
                 aria-hidden="true"
               />
-              <div class="bubble__image-actions bubble__image-actions--gate">
+              <div
+                v-if="!item.isEncrypted"
+                class="bubble__image-actions bubble__image-actions--gate"
+              >
                 <q-btn
                   flat
                   dense
@@ -363,6 +367,15 @@
               />
             </div>
           </div>
+        </div>
+        <div
+          v-for="attachment in unsupportedEncryptedAttachments"
+          :key="`${attachment.url}::${attachment.sha256 ?? ''}`"
+          class="bubble__file-attachment"
+          data-testid="message-encrypted-file-unsupported"
+        >
+          <q-icon name="lock" size="18px" aria-hidden="true" />
+          <span>{{ $t('message.encryptedAttachmentUnsupported', { type: attachment.mimeType }) }}</span>
         </div>
         <button
           v-if="canExpandMessage"
@@ -711,6 +724,7 @@ import AppDialog from 'src/components/AppDialog.vue';
 import AppTooltip from 'src/components/AppTooltip.vue';
 import CachedAvatar from 'src/components/CachedAvatar.vue';
 import EmojiPickerPanel from 'src/components/EmojiPickerPanel.vue';
+import MessageAttachmentImage from 'src/components/MessageAttachmentImage.vue';
 import {
   isRetryableStatusScope,
   type StatusListItem,
@@ -729,7 +743,13 @@ import { useNostrStore } from 'src/stores/nostrStore';
 import { useTrustedMediaStore } from 'src/stores/trustedMediaStore';
 import { openExternalHttpUrl } from 'src/utils/externalLinks';
 import type { DesktopMessageLayoutPreference } from 'src/utils/themeStorage';
-import { readImageAttachmentsFromMeta } from 'src/utils/messageAttachments';
+import {
+  isEncryptedAttachment,
+  readHiddenAttachmentUrls,
+  readImageAttachmentsFromMeta,
+  readUnsupportedEncryptedAttachmentsFromMeta,
+  redactFileMessageSecretTags
+} from 'src/utils/messageAttachments';
 import { readEditedMessageMetadata } from 'src/utils/messageEdits';
 import { isReactionUnseenForAuthor } from 'src/utils/messageReactions';
 import { buildMessageTextParts } from 'src/utils/messageTextParts';
@@ -817,6 +837,7 @@ interface ImageAttachmentItem {
   key: string;
   attachment: MessageAttachmentMetadata;
   isVisible: boolean;
+  isEncrypted: boolean;
 }
 
 function isMessageReaction(value: unknown): value is MessageReaction {
@@ -845,6 +866,8 @@ function isMessageReplyPreview(value: unknown): value is MessageReplyPreview {
     typeof candidate.messageId === 'string' &&
     typeof candidate.text === 'string' &&
     (candidate.imageUrl === undefined || typeof candidate.imageUrl === 'string') &&
+    (candidate.imageAttachment === undefined ||
+      (typeof candidate.imageAttachment === 'object' && candidate.imageAttachment !== null)) &&
     (candidate.sender === 'me' || candidate.sender === 'them') &&
     typeof candidate.authorName === 'string' &&
     typeof candidate.authorPublicKey === 'string' &&
@@ -914,23 +937,33 @@ const replyPreview = computed(() => {
   const candidate = props.message.meta.reply;
   return isMessageReplyPreview(candidate) ? candidate : null;
 });
-const replyPreviewImageUrl = computed(() => {
+const canShowReplyPreviewImage = computed(() => {
   const preview = replyPreview.value;
-  const imageUrl = preview?.imageUrl?.trim() ?? '';
-  if (!preview || !imageUrl) {
+  if (!preview) {
+    return false;
+  }
+
+  return (
+    preview.sender === 'me' ||
+    trustedMediaStore.isImageSenderTrusted(preview.authorPublicKey, loggedInPublicKey.value)
+  );
+});
+const replyPreviewImageAttachment = computed<MessageAttachmentMetadata | null>(() => {
+  if (!canShowReplyPreviewImage.value) {
+    return null;
+  }
+
+  const [attachment] = readImageAttachmentsFromMeta({
+    attachments: replyPreview.value?.imageAttachment ? [replyPreview.value.imageAttachment] : []
+  });
+  return attachment && isEncryptedAttachment(attachment) ? attachment : null;
+});
+const replyPreviewImageUrl = computed(() => {
+  if (replyPreviewImageAttachment.value || !canShowReplyPreviewImage.value) {
     return '';
   }
 
-  if (preview.sender === 'me') {
-    return imageUrl;
-  }
-
-  return trustedMediaStore.isImageSenderTrusted(
-    preview.authorPublicKey,
-    loggedInPublicKey.value
-  )
-    ? imageUrl
-    : '';
+  return replyPreview.value?.imageUrl?.trim() ?? '';
 });
 const messageReactions = computed<MessageReaction[]>(() => {
   const candidate = props.message.meta.reactions;
@@ -1062,12 +1095,24 @@ const imageAttachments = computed(() => {
   return readImageAttachmentsFromMeta(props.message.meta);
 });
 
-function removeImageAttachmentUrls(text: string, attachments: MessageAttachmentMetadata[]): string {
-  let nextText = text;
-  const urls = Array.from(
-    new Set(attachments.map((attachment) => attachment.url.trim()).filter(Boolean))
-  );
+const unsupportedEncryptedAttachments = computed(() => {
+  if (isDeletedMessage.value) {
+    return [];
+  }
 
+  return readUnsupportedEncryptedAttachmentsFromMeta(props.message.meta);
+});
+
+const hiddenAttachmentUrls = computed(() => {
+  if (isDeletedMessage.value) {
+    return [];
+  }
+
+  return readHiddenAttachmentUrls(props.message.meta);
+});
+
+function removeAttachmentUrls(text: string, urls: string[]): string {
+  let nextText = text;
   for (const url of urls) {
     nextText = nextText.split(url).join('');
   }
@@ -1081,11 +1126,11 @@ function removeImageAttachmentUrls(text: string, attachments: MessageAttachmentM
 }
 
 const visibleMessageText = computed(() => {
-  if (imageAttachments.value.length === 0) {
+  if (hiddenAttachmentUrls.value.length === 0) {
     return baseVisibleMessageText.value;
   }
 
-  return removeImageAttachmentUrls(baseVisibleMessageText.value, imageAttachments.value);
+  return removeAttachmentUrls(baseVisibleMessageText.value, hiddenAttachmentUrls.value);
 });
 
 const shouldShowMessageText = computed(() => {
@@ -1146,7 +1191,8 @@ const imageAttachmentItems = computed<ImageAttachmentItem[]>(() => {
     return {
       key,
       attachment,
-      isVisible: isSenderTrustedForImages.value || revealedImageAttachmentKeys.value.includes(key)
+      isVisible: isSenderTrustedForImages.value || revealedImageAttachmentKeys.value.includes(key),
+      isEncrypted: isEncryptedAttachment(attachment)
     };
   });
 });
@@ -1580,7 +1626,11 @@ const formattedEventJson = computed(() => {
   }
 
   try {
-    return JSON.stringify(event, null, 2);
+    // The JSON view is easy to screenshot or copy, so kind 15 decryption material is hidden.
+    const displayedEvent = Array.isArray(event.tags)
+      ? { ...event, tags: redactFileMessageSecretTags(event.tags) }
+      : event;
+    return JSON.stringify(displayedEvent, null, 2);
   } catch {
     return '';
   }
@@ -1847,6 +1897,15 @@ onBeforeUnmount(() => {
 
 .bubble__image-attachment {
   max-width: min(100%, 360px);
+}
+
+.bubble__file-attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 0.875rem;
+  opacity: 0.85;
 }
 
 .bubble__image-preview {
