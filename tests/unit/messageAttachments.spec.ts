@@ -238,10 +238,20 @@ describe('message attachment helpers', () => {
         type: 'media',
         url: blobUrl,
         mimeType: 'image/png',
-        size: 1,
         sha256: ciphertextHash,
         encryption: { algorithm: 'aes-gcm', key, nonce: 'ef'.repeat(16) },
       });
+      // Without a size tag nothing is invented, and the stored attachment stays valid.
+      expect(normalizeMessageAttachment(parsed)).toEqual(parsed);
+      expect(buildNip17FileMessageTags(parsed as MessageAttachmentMetadata)).not.toContainEqual(
+        expect.arrayContaining(['size'])
+      );
+    });
+
+    it('still requires a size for legacy imeta attachments', () => {
+      expect(
+        normalizeMessageAttachment({ type: 'media', url: blobUrl, mimeType: 'image/png' })
+      ).toBeNull();
     });
 
     it.each([

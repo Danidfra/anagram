@@ -8,10 +8,10 @@ import {
 
 const IMETA_TAG_NAME = 'imeta';
 export const IMAGE_ATTACHMENT_PREVIEW_TEXT = 'Picture';
-export const FILE_ATTACHMENT_PREVIEW_TEXT = 'File';
+const FILE_ATTACHMENT_PREVIEW_TEXT = 'File';
 
 // NIP-17 rumor kinds rendered as chat messages.
-export const CHAT_MESSAGE_KIND = 14;
+const CHAT_MESSAGE_KIND = 14;
 export const FILE_MESSAGE_KIND = 15;
 
 const FILE_TYPE_TAG = 'file-type';
@@ -60,7 +60,7 @@ function readImetaField(entry: string, key: string): string {
   return entry.startsWith(prefix) ? entry.slice(prefix.length).trim() : '';
 }
 
-export function normalizeMimeType(value: unknown): string {
+function normalizeMimeType(value: unknown): string {
   return normalizeText(value).split(';')[0]?.trim().toLowerCase() ?? '';
 }
 
@@ -122,10 +122,6 @@ export function normalizeMessageAttachment(input: unknown): MessageAttachmentMet
   const url = normalizeText(input.url);
   const mimeType = normalizeText(input.mimeType);
   const size = normalizePositiveInteger(input.size);
-  if (!url || !mimeType || !size) {
-    return null;
-  }
-
   const sha256 = normalizeText(input.sha256).toLowerCase();
   const name = normalizeText(input.name);
   const uploadedAt = normalizeText(input.uploadedAt);
@@ -141,11 +137,16 @@ export function normalizeMessageAttachment(input: unknown): MessageAttachmentMet
     }
   }
 
+  // size is required for legacy imeta media but optional for NIP-17 kind 15 files.
+  if (!url || !mimeType || (!size && !encryption)) {
+    return null;
+  }
+
   return {
     type: 'media',
     url,
     mimeType,
-    size,
+    ...(size ? { size } : {}),
     ...(sha256 ? { sha256 } : {}),
     ...(name ? { name } : {}),
     ...(uploadedAt ? { uploadedAt } : {}),
@@ -181,7 +182,7 @@ export function buildAttachmentMessageMeta(
 
 export function buildNip92ImetaTag(attachment: MessageAttachmentMetadata): string[] {
   const normalized = normalizeMessageAttachment(attachment);
-  if (!normalized || normalized.encryption) {
+  if (!normalized?.size || normalized.encryption) {
     return [];
   }
 
@@ -214,7 +215,7 @@ export function buildNip17FileMessageTags(attachment: MessageAttachmentMetadata)
     [DECRYPTION_NONCE_TAG, encryption.nonce],
     [HASH_TAG, normalized.sha256],
     ...(encryption.originalSha256 ? [[ORIGINAL_HASH_TAG, encryption.originalSha256]] : []),
-    [SIZE_TAG, String(normalized.size)],
+    ...(normalized.size ? [[SIZE_TAG, String(normalized.size)]] : []),
   ];
 }
 
@@ -250,13 +251,12 @@ export function parseNip17FileMessageAttachment(
   }
 
   const originalSha256 = normalizeSha256Hex(readSingleTagValue(tags, ORIGINAL_HASH_TAG));
-  // size is optional in NIP-17; keep the attachment shape valid when it is absent.
-  const size = normalizePositiveInteger(readSingleTagValue(tags, SIZE_TAG)) ?? 1;
+  const size = normalizePositiveInteger(readSingleTagValue(tags, SIZE_TAG));
   return {
     type: 'media',
     url,
     mimeType,
-    size,
+    ...(size ? { size } : {}),
     sha256,
     encryption: {
       algorithm: MEDIA_ENCRYPTION_ALGORITHM,
@@ -268,7 +268,7 @@ export function parseNip17FileMessageAttachment(
 }
 
 const SECRET_FILE_MESSAGE_TAGS = new Set([DECRYPTION_KEY_TAG, DECRYPTION_NONCE_TAG]);
-export const REDACTED_TAG_VALUE = '[redacted]';
+const REDACTED_TAG_VALUE = '[redacted]';
 
 // For diagnostics only: hides the kind 15 key and nonce while keeping the tag shape.
 export function redactFileMessageSecretTags(tags: unknown[]): unknown[] {
@@ -336,7 +336,7 @@ export function isImageAttachment(attachment: MessageAttachmentMetadata): boolea
     : /^image\//iu.test(attachment.mimeType);
 }
 
-export function readMediaAttachmentsFromMeta(
+function readMediaAttachmentsFromMeta(
   meta:
     | {
         attachments?: unknown;

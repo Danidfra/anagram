@@ -114,7 +114,8 @@ export interface MessageAttachmentMetadata {
   // For encrypted attachments: the MIME type of the plaintext file, not of the stored blob.
   mimeType: string;
   // For encrypted attachments: size and sha256 describe the ciphertext stored on the server.
-  size: number;
+  // size is always present for legacy imeta media and optional for NIP-17 kind 15 files.
+  size?: number;
   sha256?: string;
   name?: string;
   uploadedAt?: string;

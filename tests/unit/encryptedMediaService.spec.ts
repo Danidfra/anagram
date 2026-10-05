@@ -1,17 +1,9 @@
-import {
-  createEncryptedMediaService,
-  ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES,
-  UnsupportedEncryptedMediaError,
-} from 'src/services/encryptedMediaService';
+import { createEncryptedMediaService } from 'src/services/encryptedMediaService';
 import type { MessageAttachmentMetadata } from 'src/types/chat';
-import {
-  encryptMediaBytes,
-  MediaDecryptionError,
-  MediaIntegrityError,
-  sha256Hex,
-} from 'src/utils/mediaCrypto';
+import { encryptMediaBytes, sha256Hex } from 'src/utils/mediaCrypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const PLAINTEXT = new Uint8Array(new TextEncoder().encode('decrypted-image-bytes'));
 
 async function createEncryptedFixture(mimeType = 'image/png') {
@@ -72,11 +64,11 @@ describe('encryptedMediaService', () => {
     const decryptSpy = vi.spyOn(globalThis.crypto.subtle, 'decrypt');
     const { service, createObjectURL } = createHarness(tampered);
 
-    await expect(service.fetchDecryptedMediaBlob(attachment)).rejects.toBeInstanceOf(
-      MediaIntegrityError
+    await expect(service.fetchDecryptedMediaBlob(attachment)).rejects.toThrow(
+      'Encrypted media hash does not match the message.'
     );
-    await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toBeInstanceOf(
-      MediaIntegrityError
+    await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toThrow(
+      'Encrypted media hash does not match the message.'
     );
     expect(decryptSpy).not.toHaveBeenCalled();
     expect(createObjectURL).not.toHaveBeenCalled();
@@ -89,11 +81,10 @@ describe('encryptedMediaService', () => {
     const forgedAttachment = { ...attachment, sha256: await sha256Hex(tampered) };
     const { service, createObjectURL } = createHarness(tampered);
 
-    await expect(service.acquireDecryptedObjectUrl(forgedAttachment)).rejects.toBeInstanceOf(
-      MediaDecryptionError
+    await expect(service.acquireDecryptedObjectUrl(forgedAttachment)).rejects.toThrow(
+      'Encrypted media could not be decrypted.'
     );
     expect(createObjectURL).not.toHaveBeenCalled();
-    expect(service.getActiveObjectUrlCount()).toBe(0);
   });
 
   it.each([
@@ -105,8 +96,8 @@ describe('encryptedMediaService', () => {
     const { attachment, ciphertext } = await createEncryptedFixture(mimeType);
     const { service, fetch, createObjectURL } = createHarness(ciphertext);
 
-    await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toBeInstanceOf(
-      UnsupportedEncryptedMediaError
+    await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toThrow(
+      'This encrypted attachment type cannot be displayed.'
     );
     expect(fetch).not.toHaveBeenCalled();
     expect(createObjectURL).not.toHaveBeenCalled();
@@ -139,7 +130,7 @@ describe('encryptedMediaService', () => {
       () =>
         new Response('', {
           status: 200,
-          headers: { 'Content-Length': String(ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES + 1) },
+          headers: { 'Content-Length': String(MAX_DOWNLOAD_BYTES + 1) },
         })
     );
 
@@ -169,7 +160,6 @@ describe('encryptedMediaService', () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
     service.releaseDecryptedObjectUrl(attachment);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:anagram/1');
-    expect(service.getActiveObjectUrlCount()).toBe(0);
 
     await expect(service.acquireDecryptedObjectUrl(attachment)).resolves.toBe('blob:anagram/2');
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -185,7 +175,6 @@ describe('encryptedMediaService', () => {
     await expect(pending).rejects.toThrow('released before it finished loading');
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:anagram/1');
-    expect(service.getActiveObjectUrlCount()).toBe(0);
   });
 
   it('does not cache failed loads so a later view can retry', async () => {

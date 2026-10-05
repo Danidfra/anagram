@@ -3,52 +3,13 @@
 // gift-wrapped rumor, never to the media server.
 
 export const MEDIA_ENCRYPTION_ALGORITHM = 'aes-gcm';
-export const MEDIA_KEY_BYTES = 32;
-export const MEDIA_NONCE_BYTES = 12;
+const MEDIA_KEY_BYTES = 32;
+const MEDIA_NONCE_BYTES = 12;
 // Amethyst generates 16-byte nonces; WebCrypto accepts both lengths for AES-GCM.
-export const ACCEPTED_MEDIA_NONCE_BYTES: readonly number[] = [12, 16];
-export const AES_GCM_TAG_BYTES = 16;
+const ACCEPTED_MEDIA_NONCE_BYTES = [12, 16];
+const AES_GCM_TAG_BITS = 128;
 
-const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
-
-export class MediaIntegrityError extends Error {
-  constructor(message = 'Encrypted media hash does not match the message.') {
-    super(message);
-    this.name = 'MediaIntegrityError';
-  }
-}
-
-export class MediaDecryptionError extends Error {
-  constructor(message = 'Encrypted media could not be decrypted.') {
-    super(message);
-    this.name = 'MediaDecryptionError';
-  }
-}
-
-export interface EncryptedMediaPayload {
-  ciphertext: Uint8Array<ArrayBuffer>;
-  key: string;
-  nonce: string;
-}
-
-function getSubtleCrypto(): SubtleCrypto {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) {
-    throw new Error('WebCrypto is required to encrypt media.');
-  }
-
-  return subtle;
-}
-
-function randomBytes(length: number): Uint8Array<ArrayBuffer> {
-  if (typeof globalThis.crypto?.getRandomValues !== 'function') {
-    throw new Error('A secure random source is required to encrypt media.');
-  }
-
-  return globalThis.crypto.getRandomValues(new Uint8Array(length));
-}
-
-export function bytesToHex(bytes: Uint8Array): string {
+function bytesToHex(bytes: Uint8Array): string {
   let hex = '';
   for (const byte of bytes) {
     hex += byte.toString(16).padStart(2, '0');
@@ -56,7 +17,7 @@ export function bytesToHex(bytes: Uint8Array): string {
   return hex;
 }
 
-export function hexToBytes(value: unknown): Uint8Array<ArrayBuffer> | null {
+function hexToBytes(value: unknown): Uint8Array<ArrayBuffer> | null {
   if (typeof value !== 'string') {
     return null;
   }
@@ -79,25 +40,7 @@ export function normalizeSha256Hex(value: unknown): string | null {
   }
 
   const normalized = value.trim().toLowerCase();
-  return SHA256_HEX_PATTERN.test(normalized) ? normalized : null;
-}
-
-export function decodeMediaKey(value: unknown): Uint8Array<ArrayBuffer> {
-  const bytes = hexToBytes(value);
-  if (!bytes || bytes.length !== MEDIA_KEY_BYTES) {
-    throw new MediaDecryptionError('Encrypted media key must be 32 hex-encoded bytes.');
-  }
-
-  return bytes;
-}
-
-export function decodeMediaNonce(value: unknown): Uint8Array<ArrayBuffer> {
-  const bytes = hexToBytes(value);
-  if (!bytes || !ACCEPTED_MEDIA_NONCE_BYTES.includes(bytes.length)) {
-    throw new MediaDecryptionError('Encrypted media nonce must be 12 or 16 hex-encoded bytes.');
-  }
-
-  return bytes;
+  return /^[a-f0-9]{64}$/u.test(normalized) ? normalized : null;
 }
 
 export function isValidMediaKeyHex(value: unknown): boolean {
@@ -109,48 +52,26 @@ export function isValidMediaNonceHex(value: unknown): boolean {
   return typeof length === 'number' && ACCEPTED_MEDIA_NONCE_BYTES.includes(length);
 }
 
-export function generateMediaKey(): Uint8Array<ArrayBuffer> {
-  return randomBytes(MEDIA_KEY_BYTES);
-}
-
-export function generateMediaNonce(): Uint8Array<ArrayBuffer> {
-  return randomBytes(MEDIA_NONCE_BYTES);
-}
-
 export async function sha256Hex(data: Uint8Array<ArrayBuffer>): Promise<string> {
-  const digest = await getSubtleCrypto().digest('SHA-256', data);
-  return bytesToHex(new Uint8Array(digest));
+  return bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', data)));
 }
 
-export async function verifySha256(
-  data: Uint8Array<ArrayBuffer>,
-  expectedSha256: unknown
-): Promise<boolean> {
-  const expected = normalizeSha256Hex(expectedSha256);
-  if (!expected) {
-    return false;
-  }
-
-  return (await sha256Hex(data)) === expected;
-}
-
-async function importAesGcmKey(
+function importAesGcmKey(
   keyBytes: Uint8Array<ArrayBuffer>,
   usage: 'encrypt' | 'decrypt'
 ): Promise<CryptoKey> {
-  return getSubtleCrypto().importKey('raw', keyBytes, { name: 'AES-GCM' }, false, [usage]);
+  return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, [usage]);
 }
 
 // Every call generates a new key and nonce, so a key+nonce pair never encrypts two plaintexts.
 export async function encryptMediaBytes(
   plaintext: Uint8Array<ArrayBuffer>
-): Promise<EncryptedMediaPayload> {
-  const keyBytes = generateMediaKey();
-  const nonceBytes = generateMediaNonce();
-  const cryptoKey = await importAesGcmKey(keyBytes, 'encrypt');
-  const ciphertext = await getSubtleCrypto().encrypt(
-    { name: 'AES-GCM', iv: nonceBytes, tagLength: AES_GCM_TAG_BYTES * 8 },
-    cryptoKey,
+): Promise<{ ciphertext: Uint8Array<ArrayBuffer>; key: string; nonce: string }> {
+  const keyBytes = crypto.getRandomValues(new Uint8Array(MEDIA_KEY_BYTES));
+  const nonceBytes = crypto.getRandomValues(new Uint8Array(MEDIA_NONCE_BYTES));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonceBytes, tagLength: AES_GCM_TAG_BITS },
+    await importAesGcmKey(keyBytes, 'encrypt'),
     plaintext
   );
 
@@ -166,22 +87,25 @@ export async function decryptMediaBytes(
   keyHex: unknown,
   nonceHex: unknown
 ): Promise<Uint8Array<ArrayBuffer>> {
-  const keyBytes = decodeMediaKey(keyHex);
-  const nonceBytes = decodeMediaNonce(nonceHex);
-  if (ciphertext.byteLength <= AES_GCM_TAG_BYTES) {
-    throw new MediaDecryptionError('Encrypted media is too short.');
+  const keyBytes = hexToBytes(keyHex);
+  const nonceBytes = hexToBytes(nonceHex);
+  if (!keyBytes || keyBytes.length !== MEDIA_KEY_BYTES) {
+    throw new Error('Encrypted media key must be 32 hex-encoded bytes.');
+  }
+  if (!nonceBytes || !ACCEPTED_MEDIA_NONCE_BYTES.includes(nonceBytes.length)) {
+    throw new Error('Encrypted media nonce must be 12 or 16 hex-encoded bytes.');
   }
 
   try {
-    const cryptoKey = await importAesGcmKey(keyBytes, 'decrypt');
-    const plaintext = await getSubtleCrypto().decrypt(
-      { name: 'AES-GCM', iv: nonceBytes, tagLength: AES_GCM_TAG_BYTES * 8 },
-      cryptoKey,
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: nonceBytes, tagLength: AES_GCM_TAG_BITS },
+      await importAesGcmKey(keyBytes, 'decrypt'),
       ciphertext
     );
     return new Uint8Array(plaintext);
   } catch {
-    throw new MediaDecryptionError();
+    // Covers GCM authentication failures: tampered bytes, wrong key, or wrong nonce.
+    throw new Error('Encrypted media could not be decrypted.');
   }
 }
 
@@ -190,8 +114,9 @@ export async function verifyAndDecryptMediaBytes(
   ciphertext: Uint8Array<ArrayBuffer>,
   input: { sha256: unknown; key: unknown; nonce: unknown }
 ): Promise<Uint8Array<ArrayBuffer>> {
-  if (!(await verifySha256(ciphertext, input.sha256))) {
-    throw new MediaIntegrityError();
+  const expectedSha256 = normalizeSha256Hex(input.sha256);
+  if (!expectedSha256 || (await sha256Hex(ciphertext)) !== expectedSha256) {
+    throw new Error('Encrypted media hash does not match the message.');
   }
 
   return decryptMediaBytes(ciphertext, input.key, input.nonce);

@@ -393,7 +393,7 @@
   "message.emoji": "Emoji",
   "message.file": "File",
   "message.fileUploadNotSupportedYet": "File uploads are not supported yet.",
-  "message.mediaUrlWarning": "Photos are end-to-end encrypted before upload. Video and audio files are not encrypted: anyone with access to the file URL will be able to see them.",
+  "message.mediaUrlWarning": "Anyone with access to the file URL will be able to see it",
   "message.mediaUpload.sending": "Sending attachment...",
   "message.mediaUpload.title": "Uploading media",
   "message.mediaUpload.uploading": "Uploading media to nostr.build...",

@@ -6,14 +6,7 @@ import {
   resolveSafeInlineImageMimeType,
 } from 'src/utils/messageAttachments';
 
-export const ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
-
-export class UnsupportedEncryptedMediaError extends Error {
-  constructor(message = 'This encrypted attachment type cannot be displayed.') {
-    super(message);
-    this.name = 'UnsupportedEncryptedMediaError';
-  }
-}
+const ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 
 interface ObjectUrlEntry {
   refs: number;
@@ -59,7 +52,7 @@ export function createEncryptedMediaService(deps: EncryptedMediaServiceDeps) {
 
     const mimeType = resolveSafeInlineImageMimeType(attachment.mimeType);
     if (!mimeType) {
-      throw new UnsupportedEncryptedMediaError();
+      throw new Error('This encrypted attachment type cannot be displayed.');
     }
 
     const url = normalizeEncryptedMediaUrl(attachment.url);
@@ -142,14 +135,9 @@ export function createEncryptedMediaService(deps: EncryptedMediaServiceDeps) {
     }
   }
 
-  function getActiveObjectUrlCount(): number {
-    return objectUrlEntries.size;
-  }
-
   return {
     acquireDecryptedObjectUrl,
     fetchDecryptedMediaBlob,
-    getActiveObjectUrlCount,
     releaseDecryptedObjectUrl,
   };
 }

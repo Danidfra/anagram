@@ -10,7 +10,10 @@ import {
   getDeveloperDiagnosticsSnapshot,
   navigateToChat,
   reloadAndWaitForApp,
+  sendMessage,
+  sendMessagesViaBridge,
   TEST_ACCOUNTS,
+  waitForThreadMessage,
 } from '../helpers';
 
 test.describe.configure({ mode: 'serial' });
@@ -220,17 +223,54 @@ test('private images are encrypted before upload and decrypted by the recipient'
       true
     );
 
-    // The decrypted bytes are the metadata-stripped image, not the raw upload.
+    // The recipient gets back exactly the original image; its metadata travelled encrypted.
     const decrypted = await bobImage.evaluate(async (element) => {
       const blob = await (await fetch((element as HTMLImageElement).src)).blob();
       return { type: blob.type, bytes: Array.from(new Uint8Array(await blob.arrayBuffer())) };
     });
-    const decryptedBytes = Buffer.from(decrypted.bytes);
     expect(decrypted.type).toBe('image/png');
-    expect(decryptedBytes.subarray(0, 8).equals(png.subarray(0, 8))).toBe(true);
-    expect(decryptedBytes.includes(Buffer.from(SECRET_METADATA))).toBe(false);
-    expect(decryptedBytes.includes(Buffer.from('tEXt'))).toBe(false);
-    expect(decryptedBytes.length).toBeLessThan(png.length);
+    expect(Buffer.from(decrypted.bytes).equals(png)).toBe(true);
+    expect(stored.body.length).toBe(png.length + 16);
+
+    // Replies show the encrypted image from a decrypted blob URL, never the ciphertext URL.
+    const ciphertextUrl = `${BLOSSOM_ORIGIN}/${storedSha256}`;
+    await alice.page
+      .locator('.bubble')
+      .filter({ has: alice.page.getByTestId('message-image-attachment') })
+      .last()
+      .click({ button: 'right', position: { x: 4, y: 4 } });
+    await alice.page.getByText('Reply', { exact: true }).click();
+    await expect(alice.page.getByTestId('composer-reply-preview-image')).toHaveAttribute(
+      'src',
+      /^blob:/u,
+      { timeout: 30_000 }
+    );
+    const replyText = `encrypted-image-reply-${Date.now()}`;
+    await sendMessage(alice.page, replyText, { chatId: bob.session.publicKey });
+    await expect(alice.page.getByTestId('message-reply-preview-image').last()).toHaveAttribute(
+      'src',
+      /^blob:/u,
+      { timeout: 30_000 }
+    );
+    await expect(alice.page.locator(`img[src="${ciphertextUrl}"]`)).toHaveCount(0);
+
+    // Images far from the viewport are not downloaded until the user scrolls near them.
+    const fillerTexts = Array.from(
+      { length: 40 },
+      (_, index) => `lazy-filler-${index}\nline two\nline three\nline four`
+    );
+    await sendMessagesViaBridge(alice.page, bob.session.publicKey, fillerTexts);
+    await reloadAndWaitForApp(alice.page);
+    blossom.downloads.length = 0;
+    await navigateToChat(alice.page, bob.session.publicKey);
+    await waitForThreadMessage(alice.page, 'lazy-filler-39', { chatId: bob.session.publicKey });
+    const pendingImage = alice.page.getByTestId('message-image-pending').first();
+    await expect(pendingImage).toBeAttached();
+    await alice.page.waitForTimeout(1500);
+    expect(blossom.downloads).toHaveLength(0);
+    await pendingImage.scrollIntoViewIfNeeded();
+    await readRenderedImage(alice.page);
+    expect(blossom.downloads.length).toBeGreaterThan(0);
 
     // A blob that no longer matches the message hash is never rendered.
     stored.body[0] ^= 0xff;

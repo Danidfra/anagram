@@ -1,22 +1,26 @@
 import {
-  BlossomUploadError,
-  ENCRYPTED_BLOB_CONTENT_TYPE,
-  prepareEncryptedImage,
-  sha256HexFromBlob,
+  hasKnownImageSignature,
   uploadBlossomMedia,
   uploadEncryptedImage,
-  uploadPreparedEncryptedImage,
   validateBlossomMediaFile,
   validateEncryptedImageFile,
   validateOutgoingMediaFile,
 } from 'src/services/blossomUploadService';
-import { bytesToHex, decryptMediaBytes, sha256Hex } from 'src/utils/mediaCrypto';
+import { decryptMediaBytes, sha256Hex } from 'src/utils/mediaCrypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const IMAGE_TEXT = 'PRIVATE-IMAGE-BYTES-'.repeat(8);
+const UPLOAD_OPTIONS = {
+  serverUrl: 'https://media.example.com',
+  signUploadAuthHeader: async () => 'Nostr signed-auth',
+};
 
 function imageFile(type = 'image/png', name = 'photo.png'): File {
   return new File([IMAGE_TEXT], name, { type });
+}
+
+function hex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('hex');
 }
 
 function readRequestBody(init: RequestInit | undefined): Uint8Array<ArrayBuffer> {
@@ -41,17 +45,8 @@ function descriptorResponse(sha256: string, size: number): Response {
 }
 
 // Answers like a Blossom server: hashes the received body and echoes it in the descriptor.
-function createBlossomFetchMock(failures: Array<number | 'network'> = []) {
-  const queue = [...failures];
+function createBlossomFetchMock() {
   return vi.fn(async (_url: string, init?: RequestInit) => {
-    const failure = queue.shift();
-    if (failure === 'network') {
-      throw new TypeError('Failed to fetch');
-    }
-    if (typeof failure === 'number') {
-      return new Response('temporarily unavailable', { status: failure });
-    }
-
     const body = readRequestBody(init);
     return descriptorResponse(await sha256Hex(body), body.byteLength);
   });
@@ -60,6 +55,7 @@ function createBlossomFetchMock(failures: Array<number | 'network'> = []) {
 describe('blossomUploadService', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('validates common media files for the upload flow', () => {
@@ -71,12 +67,6 @@ describe('blossomUploadService', () => {
     );
     expect(validateBlossomMediaFile(new File([], 'empty.png', { type: 'image/png' }))).toBe(
       'The selected file is empty.'
-    );
-  });
-
-  it('hashes blobs with SHA-256', async () => {
-    await expect(sha256HexFromBlob(new Blob(['hello']))).resolves.toBe(
-      '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
     );
   });
 
@@ -130,19 +120,6 @@ describe('blossomUploadService', () => {
     });
   });
 
-  it('refuses to upload images through the plaintext path', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(
-      uploadBlossomMedia(imageFile(), {
-        serverUrl: 'https://media.example.com',
-        signUploadAuthHeader: async () => 'Nostr auth',
-      })
-    ).rejects.toThrow('Images must be encrypted before upload.');
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('validates which images can be sent encrypted', () => {
     expect(validateEncryptedImageFile(imageFile('image/jpeg', 'a.jpg'))).toBeNull();
     expect(validateEncryptedImageFile(imageFile('image/webp', 'a.webp'))).toBeNull();
@@ -156,16 +133,64 @@ describe('blossomUploadService', () => {
     expect(validateOutgoingMediaFile(new File(['v'], 'a.mp4', { type: 'video/mp4' }))).toBeNull();
   });
 
-  describe('encrypted image upload', () => {
-    it('uploads only ciphertext as application/octet-stream', async () => {
-      const fetchMock = createBlossomFetchMock();
-      const signUploadAuthHeader = vi.fn(async () => 'Nostr signed-auth');
+  describe('plaintext path hardening', () => {
+    const ascii = (value: string) => Array.from(value, (char) => char.charCodeAt(0));
+    const ftyp = (brand: string) => [0, 0, 0, 0x18, ...ascii('ftyp'), ...ascii(brand), 0, 0, 0, 0];
+    const imageSignatures: Array<[string, number[]]> = [
+      ['JPEG', [0xff, 0xd8, 0xff, 0xe0, 0, 0x10]],
+      ['PNG', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+      ['GIF', ascii('GIF89a')],
+      ['WebP', [...ascii('RIFF'), 0x10, 0, 0, 0, ...ascii('WEBPVP8 ')]],
+      ['AVIF', ftyp('avif')],
+      ['HEIC', ftyp('heic')],
+    ];
+
+    it.each(
+      imageSignatures
+    )('refuses a %s image disguised as video before any upload', async (_label, signature) => {
+      const fetchMock = vi.fn();
+      const signUploadAuthHeader = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const disguised = new File([new Uint8Array([...signature, 1, 2, 3])], 'clip.mp4', {
+        type: 'video/mp4',
+      });
+
+      await expect(
+        uploadBlossomMedia(disguised, { ...UPLOAD_OPTIONS, signUploadAuthHeader })
+      ).rejects.toThrow('Images must be encrypted before upload.');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(signUploadAuthHeader).not.toHaveBeenCalled();
+    });
+
+    it('refuses files that declare an image type', async () => {
+      const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
 
-      const result = await uploadEncryptedImage(imageFile(), {
-        serverUrl: 'https://media.example.com',
-        signUploadAuthHeader,
-      });
+      await expect(uploadBlossomMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
+        'Images must be encrypted before upload.'
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['MP4', ftyp('isom')],
+      ['QuickTime', ftyp('qt  ')],
+      ['M4A audio', ftyp('M4A ')],
+      ['MP3 with ID3', ascii('ID3\u0004\u0000')],
+      ['MP3 frame', [0xff, 0xfb, 0x90, 0x00]],
+      ['WebM', [0x1a, 0x45, 0xdf, 0xa3]],
+      ['WAV', [...ascii('RIFF'), 0x10, 0, 0, 0, ...ascii('WAVEfmt ')]],
+    ])('still accepts real %s media on the plaintext path', (_label, signature) => {
+      expect(hasKnownImageSignature(new Uint8Array(signature))).toBe(false);
+    });
+  });
+
+  describe('encrypted image upload', () => {
+    it('uploads only ciphertext of the original bytes as application/octet-stream', async () => {
+      const fetchMock = createBlossomFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { attachment } = await uploadEncryptedImage(imageFile(), UPLOAD_OPTIONS);
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [url, init] = fetchMock.mock.calls[0];
@@ -175,34 +200,27 @@ describe('blossomUploadService', () => {
 
       expect(url).toBe('https://media.example.com/upload');
       expect(init?.method).toBe('PUT');
-      expect(init?.body).not.toBeInstanceOf(File);
       expect(init?.headers).toEqual({
         Authorization: 'Nostr signed-auth',
-        'Content-Type': ENCRYPTED_BLOB_CONTENT_TYPE,
+        'Content-Type': 'application/octet-stream',
         'X-SHA-256': ciphertextHash,
       });
       expect(new TextDecoder().decode(body)).not.toContain('PRIVATE-IMAGE-BYTES');
-      expect(bytesToHex(body)).not.toContain(bytesToHex(plaintext.subarray(0, 16)));
-      expect(signUploadAuthHeader).toHaveBeenCalledWith({
-        serverUrl: 'https://media.example.com',
-        sha256: ciphertextHash,
-      });
 
-      const { attachment } = result;
+      // x and size describe the ciphertext; ox describes exactly the bytes that were encrypted,
+      // which are the original file bytes.
       expect(attachment).toMatchObject({
         type: 'media',
         url: `https://blossom.example.com/${ciphertextHash}`,
         mimeType: 'image/png',
-        size: body.byteLength,
+        size: plaintext.byteLength + 16,
         sha256: ciphertextHash,
         name: 'photo.png',
         service: 'media.example.com',
         uploadedAt: '2026-06-08T10:00:00.000Z',
-        encryption: {
-          algorithm: 'aes-gcm',
-          originalSha256: await sha256Hex(plaintext),
-        },
+        encryption: { algorithm: 'aes-gcm', originalSha256: await sha256Hex(plaintext) },
       });
+      expect(body.byteLength).toBe(plaintext.byteLength + 16);
       await expect(
         decryptMediaBytes(body, attachment.encryption?.key, attachment.encryption?.nonce)
       ).resolves.toEqual(plaintext);
@@ -214,7 +232,7 @@ describe('blossomUploadService', () => {
       vi.stubGlobal('fetch', fetchMock);
 
       const { attachment } = await uploadEncryptedImage(imageFile(), {
-        serverUrl: 'https://media.example.com',
+        ...UPLOAD_OPTIONS,
         signUploadAuthHeader,
       });
       const key = attachment.encryption?.key ?? '';
@@ -224,7 +242,7 @@ describe('blossomUploadService', () => {
         url,
         JSON.stringify(init?.headers),
         JSON.stringify(signUploadAuthHeader.mock.calls),
-        bytesToHex(readRequestBody(init)),
+        hex(readRequestBody(init)),
       ].join('\n');
 
       expect(key).toMatch(/^[a-f0-9]{64}$/u);
@@ -233,72 +251,7 @@ describe('blossomUploadService', () => {
       expect(outgoing).not.toContain(nonce);
     });
 
-    it('strips JPEG metadata before encrypting', async () => {
-      const exif = [
-        0xff,
-        0xe1,
-        0x00,
-        0x10,
-        ...new TextEncoder().encode('Exif\0\0GPS-LEAK!!'),
-      ].slice(0, 18);
-      const scan = [0xff, 0xda, 0x00, 0x02, 0x11, 0x22, 0xff, 0xd9];
-      const jpeg = new Uint8Array([0xff, 0xd8, ...exif, ...scan]);
-      const prepared = await prepareEncryptedImage(
-        new File([jpeg], 'gps.jpg', { type: 'image/jpeg' })
-      );
-      const plaintext = await decryptMediaBytes(prepared.ciphertext, prepared.key, prepared.nonce);
-
-      expect(prepared.metadataStripped).toBe(true);
-      expect(Array.from(plaintext)).toEqual([0xff, 0xd8, ...scan]);
-      expect(prepared.originalSha256).toBe(await sha256Hex(plaintext));
-      expect(prepared.sha256).toBe(await sha256Hex(prepared.ciphertext));
-    });
-
-    it('retries a failed PUT with the same ciphertext, hash, and authorization', async () => {
-      const fetchMock = createBlossomFetchMock(['network', 503]);
-      const signUploadAuthHeader = vi.fn(async () => 'Nostr signed-auth');
-      const encryptSpy = vi.spyOn(globalThis.crypto.subtle, 'encrypt');
-      vi.stubGlobal('fetch', fetchMock);
-
-      const result = await uploadEncryptedImage(imageFile(), {
-        serverUrl: 'https://media.example.com',
-        signUploadAuthHeader,
-        retryDelayMs: 0,
-      });
-
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      expect(encryptSpy).toHaveBeenCalledTimes(1);
-      expect(signUploadAuthHeader).toHaveBeenCalledTimes(1);
-      const bodies = fetchMock.mock.calls.map(([, init]) => bytesToHex(readRequestBody(init)));
-      const headers = fetchMock.mock.calls.map(([, init]) => JSON.stringify(init?.headers));
-      expect(new Set(bodies).size).toBe(1);
-      expect(new Set(headers).size).toBe(1);
-      expect(result.attachment.sha256).toBe(
-        await sha256Hex(readRequestBody(fetchMock.mock.calls[2][1]))
-      );
-      encryptSpy.mockRestore();
-    });
-
-    it('reuses a prepared ciphertext across separate upload attempts', async () => {
-      const prepared = await prepareEncryptedImage(imageFile());
-      vi.stubGlobal('fetch', createBlossomFetchMock([500]));
-      const options = {
-        serverUrl: 'https://media.example.com',
-        signUploadAuthHeader: async () => 'Nostr auth',
-        maxAttempts: 1,
-      };
-
-      await expect(
-        uploadPreparedEncryptedImage(prepared, 'photo.png', options)
-      ).rejects.toBeInstanceOf(BlossomUploadError);
-      const retried = await uploadPreparedEncryptedImage(prepared, 'photo.png', options);
-
-      expect(retried.attachment.sha256).toBe(prepared.sha256);
-      expect(retried.attachment.encryption?.key).toBe(prepared.key);
-      expect(retried.attachment.encryption?.nonce).toBe(prepared.nonce);
-    });
-
-    it('does not retry a rejected upload and reports the server reason', async () => {
+    it('does not retry a visible rejection and reports the server reason', async () => {
       const fetchMock = vi.fn(
         async () =>
           new Response('', {
@@ -308,18 +261,47 @@ describe('blossomUploadService', () => {
       );
       vi.stubGlobal('fetch', fetchMock);
 
-      const upload = uploadEncryptedImage(imageFile(), {
-        serverUrl: 'https://media.example.com',
-        signUploadAuthHeader: async () => 'Nostr auth',
-        retryDelayMs: 0,
-      });
-
-      await expect(upload).rejects.toMatchObject({
-        name: 'BlossomUploadError',
-        status: 415,
-        message: 'Unsupported media type: application/octet-stream',
-      });
+      await expect(uploadEncryptedImage(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
+        'Unsupported media type: application/octet-stream'
+      );
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([429, 503])('does not retry HTTP %s automatically', async (status) => {
+      const fetchMock = vi.fn(async () => new Response('busy', { status }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(uploadEncryptedImage(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow('busy');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('uploads the ciphertext once and explains an opaque network failure', async () => {
+      // A rejection without CORS headers reaches the browser as a bare TypeError.
+      const fetchMock = vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(uploadEncryptedImage(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
+        'Could not upload to media.example.com. The server may be unavailable or may not accept encrypted file uploads.'
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rethrows aborts unchanged', async () => {
+      const controller = new AbortController();
+      const abortError = new DOMException('Aborted', 'AbortError');
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          controller.abort(abortError);
+          throw abortError;
+        })
+      );
+
+      await expect(
+        uploadEncryptedImage(imageFile(), { ...UPLOAD_OPTIONS, signal: controller.signal })
+      ).rejects.toBe(abortError);
     });
 
     it('rejects a server descriptor whose hash does not match the uploaded ciphertext', async () => {
@@ -328,12 +310,9 @@ describe('blossomUploadService', () => {
         vi.fn(async () => descriptorResponse('f'.repeat(64), 10))
       );
 
-      await expect(
-        uploadEncryptedImage(imageFile(), {
-          serverUrl: 'https://media.example.com',
-          signUploadAuthHeader: async () => 'Nostr auth',
-        })
-      ).rejects.toThrow('media.example.com stored a blob with an unexpected hash.');
+      await expect(uploadEncryptedImage(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
+        'media.example.com stored a blob with an unexpected hash.'
+      );
     });
 
     it('does not upload unsupported image types', async () => {
@@ -341,10 +320,7 @@ describe('blossomUploadService', () => {
       vi.stubGlobal('fetch', fetchMock);
 
       await expect(
-        uploadEncryptedImage(imageFile('image/svg+xml', 'x.svg'), {
-          serverUrl: 'https://media.example.com',
-          signUploadAuthHeader: async () => 'Nostr auth',
-        })
+        uploadEncryptedImage(imageFile('image/svg+xml', 'x.svg'), UPLOAD_OPTIONS)
       ).rejects.toThrow('Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.');
       expect(fetchMock).not.toHaveBeenCalled();
     });

@@ -4,14 +4,11 @@ import {
   getBlossomServerHost,
   requireBlossomServerUrl,
 } from 'src/utils/blossomServer';
-import { stripImageMetadata } from 'src/utils/imageMetadata';
 import { encryptMediaBytes, MEDIA_ENCRYPTION_ALGORITHM, sha256Hex } from 'src/utils/mediaCrypto';
-import { normalizeMimeType, resolveSafeInlineImageMimeType } from 'src/utils/messageAttachments';
+import { resolveSafeInlineImageMimeType } from 'src/utils/messageAttachments';
 
 export const BLOSSOM_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
-export const ENCRYPTED_BLOB_CONTENT_TYPE = 'application/octet-stream';
-export const BLOSSOM_UPLOAD_MAX_ATTEMPTS = 3;
-const RETRYABLE_UPLOAD_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const ENCRYPTED_BLOB_CONTENT_TYPE = 'application/octet-stream';
 
 export interface BlossomUploadResult {
   attachment: MessageAttachmentMetadata;
@@ -30,8 +27,6 @@ interface UploadBlossomMediaOptions {
   serverUrl: string;
   signal?: AbortSignal;
   signUploadAuthHeader: (input: { serverUrl: string; sha256: string }) => Promise<string>;
-  maxAttempts?: number;
-  retryDelayMs?: number;
 }
 
 function normalizeString(value: unknown): string {
@@ -116,22 +111,31 @@ export function validateOutgoingMediaFile(file: File): string | null {
   return isImageMediaFile(file) ? validateEncryptedImageFile(file) : validateBlossomMediaFile(file);
 }
 
-export async function sha256HexFromBlob(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  const digest = await crypto.subtle.digest('SHA-256', buffer);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+const ASCII = (value: string): number[] => Array.from(value, (char) => char.charCodeAt(0));
+const IMAGE_FTYP_BRANDS = new Set(['avif', 'avis', 'heic', 'heix', 'heim', 'heis', 'mif1', 'msf1']);
+
+function startsWithBytes(bytes: Uint8Array, signature: number[], offset = 0): boolean {
+  return signature.every((byte, index) => bytes[offset + index] === byte);
 }
 
-export class BlossomUploadError extends Error {
-  readonly status: number | null;
-  readonly retryable: boolean;
-
-  constructor(message: string, status: number | null, retryable: boolean) {
-    super(message);
-    this.name = 'BlossomUploadError';
-    this.status = status;
-    this.retryable = retryable;
+// Recognizes common image containers by their leading bytes, so an image with a misleading
+// video/audio type or extension is never uploaded through the plaintext path.
+export function hasKnownImageSignature(bytes: Uint8Array): boolean {
+  if (
+    startsWithBytes(bytes, [0xff, 0xd8, 0xff]) ||
+    startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) ||
+    startsWithBytes(bytes, ASCII('GIF8')) ||
+    (startsWithBytes(bytes, ASCII('RIFF')) && startsWithBytes(bytes, ASCII('WEBP'), 8))
+  ) {
+    return true;
   }
+
+  if (!startsWithBytes(bytes, ASCII('ftyp'), 4)) {
+    return false;
+  }
+
+  const brand = String.fromCharCode(...bytes.subarray(8, 12));
+  return IMAGE_FTYP_BRANDS.has(brand);
 }
 
 async function readUploadError(response: Response, serverHost: string): Promise<string> {
@@ -148,25 +152,6 @@ async function readUploadError(response: Response, serverHost: string): Promise<
   return `${serverHost} upload failed with HTTP ${response.status}.`;
 }
 
-function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason);
-      return;
-    }
-
-    const timer = globalThis.setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, delayMs);
-    const onAbort = () => {
-      globalThis.clearTimeout(timer);
-      reject(signal?.reason);
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
 interface PutBlossomBlobInput {
   body: Blob | Uint8Array<ArrayBuffer>;
   contentType: string;
@@ -174,64 +159,44 @@ interface PutBlossomBlobInput {
   serverUrl: string;
   serverHost: string;
   options: UploadBlossomMediaOptions;
-  maxAttempts: number;
+  unreachableMessage?: string;
 }
 
-// The same body and authorization are reused for every attempt: a retry never re-reads,
-// re-encrypts, or re-hashes the file.
+// A single PUT: the response is authoritative and failures are never retried automatically,
+// so a rejected upload is not sent again.
 async function putBlossomBlob(input: PutBlossomBlobInput): Promise<BlossomBlobDescriptor> {
   const { body, contentType, sha256, serverUrl, serverHost, options } = input;
   const authorization = await options.signUploadAuthHeader({ serverUrl, sha256 });
-  const maxAttempts = Math.max(1, Math.floor(input.maxAttempts));
-  const retryDelayMs = Math.max(0, options.retryDelayMs ?? 1000);
-  let lastError: unknown = null;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    let response: Response;
-    try {
-      response = await fetch(buildBlossomUploadUrl(serverUrl), {
-        method: 'PUT',
-        headers: {
-          Authorization: authorization,
-          'Content-Type': contentType,
-          'X-SHA-256': sha256,
-        },
-        body,
-        signal: options.signal,
-      });
-    } catch (error) {
-      if (options.signal?.aborted) {
-        throw error;
-      }
-      lastError = error;
-      if (attempt < maxAttempts) {
-        await waitForRetry(retryDelayMs * attempt, options.signal);
-        continue;
-      }
-      throw error;
+  let response: Response;
+  try {
+    response = await fetch(buildBlossomUploadUrl(serverUrl), {
+      method: 'PUT',
+      headers: {
+        Authorization: authorization,
+        'Content-Type': contentType,
+        'X-SHA-256': sha256,
+      },
+      body,
+      signal: options.signal,
+    });
+  } catch (error) {
+    // Browsers report a rejection without CORS headers as an opaque network error.
+    if (input.unreachableMessage && !options.signal?.aborted) {
+      throw new Error(input.unreachableMessage);
     }
-
-    if (response.status === 200 || response.status === 201) {
-      const descriptor = normalizeBlobDescriptor(await response.json().catch(() => null));
-      if (!descriptor) {
-        throw new Error(`${serverHost} returned an invalid upload response.`);
-      }
-      return descriptor;
-    }
-
-    const retryable = RETRYABLE_UPLOAD_STATUSES.has(response.status);
-    lastError = new BlossomUploadError(
-      await readUploadError(response, serverHost),
-      response.status,
-      retryable
-    );
-    if (!retryable || attempt >= maxAttempts) {
-      throw lastError;
-    }
-    await waitForRetry(retryDelayMs * attempt, options.signal);
+    throw error;
   }
 
-  throw lastError ?? new Error(`${serverHost} upload failed.`);
+  if (response.status !== 200 && response.status !== 201) {
+    throw new Error(await readUploadError(response, serverHost));
+  }
+
+  const descriptor = normalizeBlobDescriptor(await response.json().catch(() => null));
+  if (!descriptor) {
+    throw new Error(`${serverHost} returned an invalid upload response.`);
+  }
+
+  return descriptor;
 }
 
 // Plaintext upload path, kept for video and audio. Images must use uploadEncryptedImage.
@@ -244,13 +209,14 @@ export async function uploadBlossomMedia(
     throw new Error(validationError);
   }
 
-  if (isImageMediaFile(file)) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (isImageMediaFile(file) || hasKnownImageSignature(bytes)) {
     throw new Error('Images must be encrypted before upload.');
   }
 
   const serverUrl = requireBlossomServerUrl(options.serverUrl);
   const serverHost = getBlossomServerHost(serverUrl);
-  const sha256 = await sha256HexFromBlob(file);
+  const sha256 = await sha256Hex(bytes);
   const descriptor = await putBlossomBlob({
     body: file,
     contentType: file.type,
@@ -258,7 +224,6 @@ export async function uploadBlossomMedia(
     serverUrl,
     serverHost,
     options,
-    maxAttempts: options.maxAttempts ?? 1,
   });
 
   const uploadedAt = descriptor.uploaded ? new Date(descriptor.uploaded * 1000).toISOString() : '';
@@ -278,91 +243,58 @@ export async function uploadBlossomMedia(
   };
 }
 
-export interface PreparedEncryptedImage {
-  ciphertext: Uint8Array<ArrayBuffer>;
-  sha256: string;
-  originalSha256: string;
-  mimeType: string;
-  key: string;
-  nonce: string;
-  metadataStripped: boolean;
-}
-
-// Strips image metadata and encrypts the result once. The returned ciphertext is what gets
-// uploaded; the key and nonce stay on the client until they are placed in the gift-wrapped rumor.
-export async function prepareEncryptedImage(file: File): Promise<PreparedEncryptedImage> {
-  const validationError = validateEncryptedImageFile(file);
-  if (validationError) {
-    throw new Error(validationError);
-  }
-
-  const mimeType = resolveSafeInlineImageMimeType(file.type) ?? normalizeMimeType(file.type);
-  const original = new Uint8Array(await file.arrayBuffer());
-  const { bytes: plaintext, stripped } = stripImageMetadata(original, mimeType);
-  const originalSha256 = await sha256Hex(plaintext);
-  const encrypted = await encryptMediaBytes(plaintext);
-  const sha256 = await sha256Hex(encrypted.ciphertext);
-
-  return {
-    ciphertext: encrypted.ciphertext,
-    sha256,
-    originalSha256,
-    mimeType,
-    key: encrypted.key,
-    nonce: encrypted.nonce,
-    metadataStripped: stripped,
-  };
-}
-
-export async function uploadPreparedEncryptedImage(
-  prepared: PreparedEncryptedImage,
-  fileName: string,
+// Encrypts the original image bytes once and uploads only the ciphertext. The key and nonce
+// stay on the client until they are placed in the gift-wrapped kind 15 rumor.
+export async function uploadEncryptedImage(
+  file: File,
   options: UploadBlossomMediaOptions
 ): Promise<BlossomUploadResult> {
+  const validationError = validateEncryptedImageFile(file);
+  const mimeType = resolveSafeInlineImageMimeType(file.type);
+  if (validationError || !mimeType) {
+    throw new Error(validationError ?? 'Unsupported image type.');
+  }
+
   const serverUrl = requireBlossomServerUrl(options.serverUrl);
   const serverHost = getBlossomServerHost(serverUrl);
+  const plaintext = new Uint8Array(await file.arrayBuffer());
+  const originalSha256 = await sha256Hex(plaintext);
+  const { ciphertext, key, nonce } = await encryptMediaBytes(plaintext);
+  const sha256 = await sha256Hex(ciphertext);
   const descriptor = await putBlossomBlob({
-    body: prepared.ciphertext,
+    body: ciphertext,
     contentType: ENCRYPTED_BLOB_CONTENT_TYPE,
-    sha256: prepared.sha256,
+    sha256,
     serverUrl,
     serverHost,
     options,
-    maxAttempts: options.maxAttempts ?? BLOSSOM_UPLOAD_MAX_ATTEMPTS,
+    unreachableMessage: `Could not upload to ${serverHost}. The server may be unavailable or may not accept encrypted file uploads.`,
   });
 
-  if (descriptor.sha256 !== prepared.sha256) {
+  if (descriptor.sha256 !== sha256) {
     throw new Error(`${serverHost} stored a blob with an unexpected hash.`);
   }
 
   const uploadedAt = descriptor.uploaded ? new Date(descriptor.uploaded * 1000).toISOString() : '';
-  const name = fileName.trim();
+  const name = file.name.trim();
 
   return {
     descriptor,
     attachment: {
       type: 'media',
       url: descriptor.url,
-      mimeType: prepared.mimeType,
-      size: prepared.ciphertext.byteLength,
-      sha256: prepared.sha256,
+      mimeType,
+      size: ciphertext.byteLength,
+      sha256,
       ...(name ? { name } : {}),
       service: serverHost,
       ...(uploadedAt ? { uploadedAt } : {}),
       encryption: {
         algorithm: MEDIA_ENCRYPTION_ALGORITHM,
-        key: prepared.key,
-        nonce: prepared.nonce,
-        originalSha256: prepared.originalSha256,
+        key,
+        nonce,
+        originalSha256,
       },
     },
   };
-}
-
-export async function uploadEncryptedImage(
-  file: File,
-  options: UploadBlossomMediaOptions
-): Promise<BlossomUploadResult> {
-  const prepared = await prepareEncryptedImage(file);
-  return uploadPreparedEncryptedImage(prepared, file.name, options);
 }

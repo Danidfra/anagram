@@ -224,7 +224,7 @@
       max-width="420px"
     >
       <div class="composer__media-warning">
-        <div>{{ $t('message.mediaUrlWarning') }}</div>
+        <div>{{ $t('message.mediaEncryptionNotice') }}</div>
         <div>{{ $t('message.mediaUpload.usingBlossomServer', { server: blossomServerUrl }) }}</div>
       </div>
 
