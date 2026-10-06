@@ -1,0 +1,75 @@
+name: Android APK
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      NDK_VERSION: '29.0.13846066'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: android
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - name: Set release version
+        if: inputs.release_tag != ''
+        run: npm run release:version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+      - run: npm run verify:iroh
+      - name: Install NDK
+        run: |
+          sdkmanager "ndk;$NDK_VERSION" "build-tools;35.0.0"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Generate Android project
+        run: |
+          npm run tauri -- android init --ci
+          node scripts/prepare-android.mjs
+          node scripts/mobile-version.mjs
+          sdk=$(sed -n 's/.*compileSdk = \([0-9]*\).*/\1/p' src-tauri/gen/android/app/build.gradle.kts)
+          [[ "$sdk" =~ ^[0-9]+$ ]]
+          sdkmanager "platforms;android-$sdk"
+          npm run tauri -- icon src-tauri/icons/icon.png --output src-tauri/icons
+      - name: Build ARM64 and ARMv7 APK
+        run: npm run tauri -- android build --ci --apk --target aarch64 armv7 --config src-tauri/mobile-version.json -- --locked
+      - name: Sign APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: bash scripts/package-android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-android
+          path: mobile-assets/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/anagram-signing.jks"

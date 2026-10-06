@@ -24,3 +24,10 @@ coverage/
 .DS_Store
 Thumbs.db
 .idea/
+# Mobile signing material and generated version overrides
+*.jks
+*.keystore
+*.p8
+keystore.properties
+src-tauri/mobile-version.json
+mobile-assets/

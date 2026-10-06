@@ -89,7 +89,8 @@ test('group call invitations show compact join links and open the call lobby', a
     for (const prefix of ['https://anagram.chat/#/call/', 'anagram://room/call/']) {
       const url = prefix + token;
       const marker = `Come chat ${prefix.startsWith('https') ? 'web' : 'app'}`;
-      await sendMessage(alice.page, `${marker}: ${url}`);
+      await alice.page.getByTestId('message-composer-input').fill(`${marker}: ${url}`);
+      await alice.page.getByTestId('message-send-button').click();
       const message = threadMessage(bob.page, marker);
       const join = message.getByRole('link', { name: 'Join group call' });
       await expect(join).toBeVisible();
