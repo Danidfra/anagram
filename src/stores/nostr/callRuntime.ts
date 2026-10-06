@@ -14,6 +14,7 @@ import {
 } from '#src/types/call.ts';
 import { CALL_MIME_TYPES, CALL_VIDEO_MIME_TYPE } from '#src/utils/callSignal.ts';
 import { ref, shallowRef } from '#src/lib/state/reactivity.ts';
+import { diagnosticText } from '#src/utils/diagnosticExport.ts';
 
 export interface CallRuntimeDeps {
   onEnded?(session: CallSession): Promise<void>;
@@ -166,8 +167,18 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
   function fail(ctx: Context, cause?: unknown) {
     if (!alive(ctx)) return;
     error.value = 'call.error.failed';
-    failureDetail.value =
-      cause instanceof Error ? cause.message : String(cause ?? 'Call media failed');
+    // Keep local troubleshooting useful without exposing a key/credential that
+    // might be embedded in a relay or signer error. Never retain parser snippets.
+    const detail =
+      cause instanceof SyntaxError
+        ? 'Invalid call data'
+        : cause instanceof Error
+          ? cause.message
+          : String(cause ?? 'Call media failed');
+    failureDetail.value = `${session.value?.phase ?? 'preparing'}: ${diagnosticText(detail)}`.slice(
+      0,
+      1000,
+    );
     finish(ctx, 'failed');
   }
   function armTimeout(ctx: Context, ms: number) {
@@ -482,8 +493,12 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     const ctx = context;
     if (incoming.action === 'end') {
       remember(peer, incoming.callId);
-      if (ctx?.peer === peer && ctx.id === incoming.callId)
+      if (ctx?.peer === peer && ctx.id === incoming.callId) {
+        if (incoming.reason === 'failed')
+          failureDetail.value =
+            'The other participant reported a call failure. Check their call failure details.';
         finish(ctx, incoming.reason ?? 'hangup', false);
+      }
       return;
     }
     if (incoming.action === 'ringing') {
@@ -822,6 +837,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     if (!context) {
       session.value = null;
       error.value = '';
+      failureDetail.value = '';
     }
   }
   return {

@@ -316,6 +316,39 @@ describe('call negotiation and lifetime', () => {
     expect(h.microphone.stop).toHaveBeenCalledOnce();
   });
 
+  it('keeps failure details local, includes the phase, redacts credentials, and clears on dismissal', async () => {
+    const h = setup();
+    const key = 'a'.repeat(64);
+    h.deps.createEndpoint.mockRejectedValueOnce(
+      new Error(`Failed ${key} nsec1qqqqqq https://user:password@relay.example/?token=private`),
+    );
+    await h.runtime.start(peer, 'audio');
+    expect(h.runtime.failureDetail.value).toContain('preparing:');
+    expect(h.runtime.failureDetail.value).toContain('[redacted-key]');
+    expect(h.runtime.failureDetail.value).not.toContain(key);
+    expect(h.runtime.failureDetail.value).not.toContain('nsec1');
+    expect(h.runtime.failureDetail.value).not.toContain('password');
+    expect(h.runtime.failureDetail.value).not.toContain('token=private');
+    expect(h.deps.sendSignal).not.toHaveBeenCalled();
+    h.runtime.dismiss();
+    expect(h.runtime.failureDetail.value).toBe('');
+  });
+  it('never includes parser excerpts in failure details', async () => {
+    const h = setup();
+    h.deps.createEndpoint.mockRejectedValueOnce(
+      new SyntaxError('Unexpected private content in input'),
+    );
+    await h.runtime.start(peer, 'audio');
+    expect(h.runtime.failureDetail.value).toBe('preparing: Invalid call data');
+  });
+  it('distinguishes a peer failure from a local media or connection failure', async () => {
+    const h = setup();
+    await h.runtime.start(peer, 'audio');
+    const sent = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
+    await h.runtime.receiveSignal(peer, { ...sent, action: 'end', reason: 'failed' });
+    expect(h.runtime.failureDetail.value).toContain('other participant');
+    expect(h.runtime.session.value?.endReason).toBe('failed');
+  });
   it('aborts malformed media frames and releases devices', async () => {
     const h = setup();
     vi.mocked(h.connection.recv)
