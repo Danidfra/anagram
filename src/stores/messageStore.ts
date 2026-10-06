@@ -1,16 +1,16 @@
-import { defineStore } from 'pinia';
-import { getEmojiEntryByValue } from 'src/data/topEmojis';
+import { defineStore } from '#src/lib/state/store.ts';
+import { getEmojiEntryByValue } from '#src/data/topEmojis.ts';
 import {
   type ChatRow,
   chatDataService,
   type MessageCursor as PersistedMessageCursor,
   type MessageSearchResult as PersistedMessageSearchResult,
-} from 'src/services/chatDataService';
-import { contactsService } from 'src/services/contactsService';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { nostrEventDataService } from 'src/services/nostrEventDataService';
-import { useChatStore } from 'src/stores/chatStore';
-import { resolveLatestReadBoundaryAtValue } from 'src/stores/nostr/valueUtils';
+} from '#src/services/chatDataService.ts';
+import { contactsService } from '#src/services/contactsService.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { nostrEventDataService } from '#src/services/nostrEventDataService.ts';
+import { useChatStore } from '#src/stores/chatStore.ts';
+import { resolveLatestReadBoundaryAtValue } from '#src/stores/nostr/valueUtils.ts';
 import type {
   DeletedMessageMetadata,
   Message,
@@ -19,27 +19,33 @@ import type {
   MessageReaction,
   MessageReplyPreview,
   NostrEventEntry,
-} from 'src/types/chat';
-import { yieldToNextPaint } from 'src/utils/backgroundTasks';
-import { resolvePreferredContactRelayUrls } from 'src/utils/contactRelayUrls';
-import { isIncomingUnreadMessageActivity } from 'src/utils/messageActivity';
+} from '#src/types/chat.ts';
+import { yieldToNextPaint } from '#src/utils/backgroundTasks.ts';
+import {
+  type CallHistory,
+  callHistoryTag,
+  callHistoryText,
+  readCallHistory,
+} from '#src/utils/callHistory.ts';
+import { resolvePreferredContactRelayUrls } from '#src/utils/contactRelayUrls.ts';
+import { isIncomingUnreadMessageActivity } from '#src/utils/messageActivity.ts';
 import {
   buildAttachmentMessageMeta,
   buildAttachmentMessageText,
   buildNip92ImetaTag,
   normalizeMessageAttachment,
-} from 'src/utils/messageAttachments';
-import { buildMessageEditTag } from 'src/utils/messageEdits';
+} from '#src/utils/messageAttachments.ts';
+import { buildMessageEditTag } from '#src/utils/messageEdits.ts';
 import {
   areMessageReactionsEqual,
   buildMetaWithReactions,
   countUnseenReactionsForAuthor,
   markReactionsViewedByAuthor,
   normalizeMessageReactions,
-} from 'src/utils/messageReactions';
-import { resolveMessageWindowMerge } from 'src/utils/messageWindowRange';
-import { buildMentionMetadata } from 'src/utils/nostrMentions';
-import { ref } from 'vue';
+} from '#src/utils/messageReactions.ts';
+import { resolveMessageWindowMerge } from '#src/utils/messageWindowRange.ts';
+import { buildMentionMetadata } from '#src/utils/nostrMentions.ts';
+import { ref } from '#src/lib/state/reactivity.ts';
 
 type MessageRow = Awaited<ReturnType<typeof chatDataService.listMessages>>[number];
 const MESSAGE_PAGE_SIZE = 50;
@@ -76,9 +82,9 @@ interface ForwardedMessagePayload {
   additionalTags: string[][];
 }
 
-type NostrStoreModule = typeof import('src/stores/nostrStore');
+type NostrStoreModule = typeof import('#src/stores/nostrStore.ts');
 type NostrStore = ReturnType<NostrStoreModule['useNostrStore']>;
-type RelayStoreModule = typeof import('src/stores/relayStore');
+type RelayStoreModule = typeof import('#src/stores/relayStore.ts');
 type RelayStore = ReturnType<RelayStoreModule['useRelayStore']>;
 
 export class MissingContactRelaysError extends Error {
@@ -161,7 +167,7 @@ function buildDeletedMessageMeta(
   deletedByPublicKey: string,
   deletedEventKind: number,
   deletedAt: string,
-  deleteEventId?: string | null
+  deleteEventId?: string | null,
 ): DeletedMessageMetadata {
   return {
     deletedAt,
@@ -174,7 +180,7 @@ function buildDeletedMessageMeta(
 function mapMessageRowToMessage(
   row: MessageRow,
   chatId: string,
-  nostrEvent: NostrEventEntry | null = null
+  nostrEvent: NostrEventEntry | null = null,
 ): Message {
   const authorKey = row.author_public_key.trim();
   const isMine = authorKey.toLowerCase() === window.localStorage.getItem('npub')?.toLowerCase();
@@ -217,7 +223,7 @@ function readForwardableAttachments(meta: MessageMetadata): MessageAttachmentMet
 }
 
 function buildForwardedMessagePayload(
-  message: Pick<Message, 'text' | 'meta'>
+  message: Pick<Message, 'text' | 'meta'>,
 ): ForwardedMessagePayload | null {
   const text = message.text.trim();
   if (!text) {
@@ -241,7 +247,7 @@ function buildForwardedMessagePayload(
 }
 
 function buildMessageCursorFromRow(
-  row: Pick<MessageRow, 'id' | 'created_at'> | null | undefined
+  row: Pick<MessageRow, 'id' | 'created_at'> | null | undefined,
 ): PersistedMessageCursor | null {
   if (!row) {
     return null;
@@ -254,7 +260,7 @@ function buildMessageCursorFromRow(
 }
 
 function buildMessageCursorFromSearchResult(
-  row: Pick<PersistedMessageSearchResult, 'id' | 'created_at'> | null | undefined
+  row: Pick<PersistedMessageSearchResult, 'id' | 'created_at'> | null | undefined,
 ): PersistedMessageCursor | null {
   if (!row) {
     return null;
@@ -267,7 +273,7 @@ function buildMessageCursorFromSearchResult(
 }
 
 function buildMessageCursorFromMessage(
-  message: Pick<Message, 'id' | 'sentAt'> | null | undefined
+  message: Pick<Message, 'id' | 'sentAt'> | null | undefined,
 ): PersistedMessageCursor | null {
   if (!message) {
     return null;
@@ -286,7 +292,7 @@ function buildMessageCursorFromMessage(
 
 function compareMessageCursors(
   first: Pick<PersistedMessageCursor, 'id' | 'created_at'>,
-  second: Pick<PersistedMessageCursor, 'id' | 'created_at'>
+  second: Pick<PersistedMessageCursor, 'id' | 'created_at'>,
 ): number {
   const byTime = toComparableTimestamp(first.created_at) - toComparableTimestamp(second.created_at);
   if (byTime !== 0) {
@@ -297,7 +303,7 @@ function compareMessageCursors(
 }
 
 function getNormalizedMessageAuthorKey(
-  row: Pick<MessageRow, 'author_public_key'> | null | undefined
+  row: Pick<MessageRow, 'author_public_key'> | null | undefined,
 ): string {
   return normalizeChatIdentifier(row?.author_public_key) ?? '';
 }
@@ -358,7 +364,7 @@ function compareMessagesBySentAt(first: Message, second: Message): number {
 
 function countOwnUnseenReactions(
   rows: Array<Pick<MessageRow, 'author_public_key' | 'meta'>>,
-  loggedInPublicKey: string | null | undefined
+  loggedInPublicKey: string | null | undefined,
 ): number {
   const normalizedLoggedInPublicKey = normalizeChatIdentifier(loggedInPublicKey);
   if (!normalizedLoggedInPublicKey) {
@@ -374,7 +380,7 @@ function countOwnUnseenReactions(
       count +
       countUnseenReactionsForAuthor(
         normalizeMessageReactions(row.meta.reactions),
-        normalizedLoggedInPublicKey
+        normalizedLoggedInPublicKey,
       )
     );
   }, 0);
@@ -382,7 +388,7 @@ function countOwnUnseenReactions(
 
 function resolveLatestOwnMessageAt(
   rows: Array<Pick<MessageRow, 'author_public_key' | 'created_at'>>,
-  loggedInPublicKey: string | null | undefined
+  loggedInPublicKey: string | null | undefined,
 ): string {
   const normalizedLoggedInPublicKey = normalizeChatIdentifier(loggedInPublicKey);
   if (!normalizedLoggedInPublicKey) {
@@ -403,7 +409,7 @@ function resolveLatestOwnMessageAt(
 function countUnreadMessageRowsAfterBoundary(
   rows: Array<Pick<MessageRow, 'author_public_key' | 'created_at' | 'meta'>>,
   loggedInPublicKey: string | null | undefined,
-  boundaryAt: string
+  boundaryAt: string,
 ): number {
   const boundaryTimestamp = toComparableTimestamp(boundaryAt);
 
@@ -418,7 +424,7 @@ function countUnreadMessageRowsAfterBoundary(
 
 function areReactionListsEqualValue(
   currentReactions: MessageReaction[],
-  nextReactions: MessageReaction[]
+  nextReactions: MessageReaction[],
 ): boolean {
   return (
     currentReactions.length === nextReactions.length &&
@@ -447,17 +453,29 @@ function mergeMessagesById(currentMessages: Message[], incomingMessages: Message
 
 function mergeLoadedMessagesWithLocalOutbound(
   loadedMessages: Message[],
-  existingMessages: Message[]
+  existingMessages: Message[],
+  messagesAtLoadStart?: ReadonlyMap<string, Message>,
 ): Message[] {
   const loadedIds = new Set(loadedMessages.map((message) => message.id));
   const newestLoadedMessage = loadedMessages[loadedMessages.length - 1] ?? null;
   const preserved = existingMessages.filter((message) => {
+    // A database snapshot can finish after ingestion has already committed and
+    // displayed a reply (or an edit/reaction). Preserve changes made since this
+    // load began for either author, including older history arriving out of order.
+    if (messagesAtLoadStart && messagesAtLoadStart.get(message.id) !== message) {
+      return !(
+        message.id.startsWith('incoming:') &&
+        loadedMessages.some((row) => row.eventId === message.eventId)
+      );
+    }
     if (loadedIds.has(message.id)) {
       return false;
     }
 
     return (
       isOptimisticMessageId(message.id) ||
+      (message.id.startsWith('incoming:') &&
+        !loadedMessages.some((row) => row.eventId === message.eventId)) ||
       (message.sender === 'me' &&
         (!normalizeEventId(message.eventId) ||
           !newestLoadedMessage ||
@@ -484,7 +502,7 @@ function readUnseenReactionCountFromMetaValue(meta: Record<string, unknown>): nu
 
 function buildChatMetaWithUnseenReactionCountValue(
   meta: Record<string, unknown>,
-  unseenReactionCount: number
+  unseenReactionCount: number,
 ): Record<string, unknown> {
   const normalizedCount = Math.max(0, Math.floor(Number(unseenReactionCount) || 0));
   const nextMeta = { ...meta };
@@ -503,7 +521,7 @@ function buildInitialMessageWindowFromUnreadAnchor(
   firstUnreadRow: MessageRow,
   newerRows: MessageRow[],
   hasOlder: boolean,
-  hasNewer: boolean
+  hasNewer: boolean,
 ): {
   rows: MessageRow[];
   hasOlder: boolean;
@@ -517,7 +535,7 @@ function buildInitialMessageWindowFromUnreadAnchor(
 }
 
 function resolveChatRecipientPublicKeyFromRow(
-  chat: Pick<ChatRow, 'public_key' | 'type' | 'meta'>
+  chat: Pick<ChatRow, 'public_key' | 'type' | 'meta'>,
 ): string {
   return chat.type === 'group'
     ? typeof chat.meta.current_epoch_public_key === 'string'
@@ -565,7 +583,7 @@ function resolveChatDeliveryTargetValue<T extends Pick<ChatRow, 'public_key' | '
   options: {
     relayUrls?: string[];
     recipientRelayUrls?: string[];
-  } = {}
+  } = {},
 ): {
   chat: T;
   recipientPublicKey: string;
@@ -595,7 +613,7 @@ function resolveChatDeliveryTargetValue<T extends Pick<ChatRow, 'public_key' | '
 
 function resolveReplyTargetEventIdValue(
   replyTo: Pick<MessageReplyPreview, 'eventId' | 'messageId'> | null,
-  persistedEventId?: string | null
+  persistedEventId?: string | null,
 ): string | null {
   const directEventId = normalizeEventId(replyTo?.eventId);
   if (directEventId) {
@@ -616,13 +634,16 @@ function applyMessageUpsert(
   message: Message,
   options: {
     allowOutsideLoadedWindow?: boolean;
-  } = {}
+  } = {},
 ): {
   ignored: boolean;
   messages: Message[];
   paginationState: ChatMessagePaginationState;
 } {
-  const existingIndex = currentMessages.findIndex((entry) => entry.id === message.id);
+  const existingIndex = currentMessages.findIndex(
+    (entry) =>
+      entry.id === message.id || Boolean(message.eventId && entry.eventId === message.eventId),
+  );
   if (existingIndex >= 0) {
     const nextMessages = [...currentMessages];
     nextMessages[existingIndex] = message;
@@ -637,7 +658,7 @@ function applyMessageUpsert(
   const incomingCursor = buildMessageCursorFromMessage(message);
   const firstLoadedCursor = buildMessageCursorFromMessage(currentMessages[0] ?? null);
   const lastLoadedCursor = buildMessageCursorFromMessage(
-    currentMessages[currentMessages.length - 1] ?? null
+    currentMessages[currentMessages.length - 1] ?? null,
   );
   const isBeforeLoadedRange =
     incomingCursor !== null &&
@@ -730,6 +751,12 @@ export const useMessageStore = defineStore('messageStore', () => {
   const messagesByChat = ref<Record<string, Message[]>>({});
   const paginationStateByChat = ref<Record<string, ChatMessagePaginationState>>({});
   const loadedChatIds = new Set<string>();
+  // Only explicit paging/search pins a window. Initial hydration must still be
+  // able to fill in older arrivals when the thread was opened before sync.
+  const messageWindowRevisions = new Map<string, number>();
+  function pinMessageWindow(chatId: string) {
+    messageWindowRevisions.set(chatId, (messageWindowRevisions.get(chatId) ?? 0) + 1);
+  }
   const loadingChatPromises = new Map<string, Promise<void>>();
   const paginationLoadPromises = new Map<string, Promise<void>>();
   const unseenReactionSyncPromises = new Map<string, Promise<number>>();
@@ -762,13 +789,27 @@ export const useMessageStore = defineStore('messageStore', () => {
 
   function setPaginationState(
     chatId: string,
-    nextState: Partial<ChatMessagePaginationState>
+    nextState: Partial<ChatMessagePaginationState>,
   ): void {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     if (!normalizedChatId) {
       return;
     }
 
+    const window = messagesByChat.value[normalizedChatId];
+    if (window?.length > 300) {
+      const loadingOlder = Boolean(nextState.oldestCursor && !nextState.newestCursor);
+      const retained = loadingOlder ? window.slice(0, 300) : window.slice(-300);
+      messagesByChat.value[normalizedChatId] = retained;
+      nextState = {
+        ...nextState,
+        oldestCursor:
+          retained.map(buildMessageCursorFromMessage).find((cursor) => cursor !== null) ?? null,
+        newestCursor:
+          retained.map(buildMessageCursorFromMessage).findLast((cursor) => cursor !== null) ?? null,
+        ...(loadingOlder ? { hasNewer: true } : { hasOlder: true }),
+      };
+    }
     paginationStateByChat.value[normalizedChatId] = {
       ...(paginationStateByChat.value[normalizedChatId] ??
         buildDefaultChatMessagePaginationState()),
@@ -782,8 +823,8 @@ export const useMessageStore = defineStore('messageStore', () => {
 
   async function getNostrStore(): Promise<NostrStore> {
     if (!nostrStorePromise) {
-      nostrStorePromise = import('src/stores/nostrStore').then(({ useNostrStore }) =>
-        useNostrStore()
+      nostrStorePromise = import('#src/stores/nostrStore.ts').then(({ useNostrStore }) =>
+        useNostrStore(),
       );
     }
 
@@ -792,7 +833,7 @@ export const useMessageStore = defineStore('messageStore', () => {
 
   async function getRelayStore(): Promise<RelayStore> {
     if (!relayStorePromise) {
-      relayStorePromise = import('src/stores/relayStore').then(({ useRelayStore }) => {
+      relayStorePromise = import('#src/stores/relayStore.ts').then(({ useRelayStore }) => {
         const relayStore = useRelayStore();
         relayStore.init();
         return relayStore;
@@ -806,7 +847,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     const eventIds = rows
       .map((row) => row.event_id)
       .filter(
-        (eventId): eventId is string => typeof eventId === 'string' && eventId.trim().length > 0
+        (eventId): eventId is string => typeof eventId === 'string' && eventId.trim().length > 0,
       );
     const eventsById = await nostrEventDataService.getEventsByIds(eventIds);
 
@@ -814,8 +855,8 @@ export const useMessageStore = defineStore('messageStore', () => {
       mapMessageRowToMessage(
         row,
         chatId,
-        row.event_id ? (eventsById.get(row.event_id) ?? null) : null
-      )
+        row.event_id ? (eventsById.get(row.event_id) ?? null) : null,
+      ),
     );
   }
 
@@ -860,7 +901,7 @@ export const useMessageStore = defineStore('messageStore', () => {
 
   function areReactionListsEqual(
     currentReactions: MessageReaction[],
-    nextReactions: MessageReaction[]
+    nextReactions: MessageReaction[],
   ): boolean {
     return (
       currentReactions.length === nextReactions.length &&
@@ -884,19 +925,19 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     await chatDataService.init();
 
-    const [chatRow, messageRows] = await Promise.all([
-      chatDataService.getChatByPublicKey(normalizedChatId),
-      chatDataService.listMessages(normalizedChatId),
-    ]);
+    const chatRow = await chatDataService.getChatByPublicKey(normalizedChatId);
     const loggedInPublicKey = getLoggedInPublicKey();
-    const nextUnseenReactionCount = countOwnUnseenReactions(messageRows, loggedInPublicKey);
+    let nextUnseenReactionCount = 0;
+    for await (const batch of chatDataService.reactionMessageBatches(normalizedChatId)) {
+      nextUnseenReactionCount += countOwnUnseenReactions(batch, loggedInPublicKey);
+    }
 
     if (chatRow) {
       const currentCount = readUnseenReactionCountFromMetaValue(chatRow.meta);
       if (currentCount !== nextUnseenReactionCount) {
         await chatDataService.updateChatMeta(
           normalizedChatId,
-          buildChatMetaWithUnseenReactionCountValue(chatRow.meta, nextUnseenReactionCount)
+          buildChatMetaWithUnseenReactionCountValue(chatRow.meta, nextUnseenReactionCount),
         );
       }
     }
@@ -942,20 +983,30 @@ export const useMessageStore = defineStore('messageStore', () => {
 
   async function resolveSendRelayUrls(
     chatPublicKey: string,
-    relayUrls: string[] | undefined
+    relayUrls: string[] | undefined,
   ): Promise<string[]> {
-    return resolveSendRelayUrlsValue({
-      chatPublicKey,
-      relayUrls,
-      recipientRelayUrls: Array.isArray(relayUrls)
-        ? relayUrls
-        : await resolveRecipientRelayUrls(chatPublicKey),
-    });
+    let recipientRelayUrls = Array.isArray(relayUrls)
+      ? relayUrls
+      : await resolveRecipientRelayUrls(chatPublicKey);
+    if (!Array.isArray(relayUrls) && recipientRelayUrls.length === 0) {
+      // A freshly restored contact may precede its relay metadata. Discover the
+      // recipient's advertised inbox before asking to fall back to app relays.
+      const nostr = await getNostrStore();
+      const account = nostr.getLoggedInPublicKeyHex();
+      await nostr.refreshContactByPublicKey(chatPublicKey, chatPublicKey, {
+        refreshRelayList: true,
+        relayListSeedRelayUrls: await resolveAppRelayUrls(),
+      });
+      if (nostr.getLoggedInPublicKeyHex() !== account)
+        throw new Error('Account changed during relay discovery.');
+      recipientRelayUrls = await resolveRecipientRelayUrls(chatPublicKey);
+    }
+    return resolveSendRelayUrlsValue({ chatPublicKey, relayUrls, recipientRelayUrls });
   }
 
   async function resolveChatDeliveryTarget(
     chatPublicKey: string,
-    relayUrls: string[] | undefined
+    relayUrls: string[] | undefined,
   ): Promise<{
     chat: ChatRow;
     recipientPublicKey: string;
@@ -974,7 +1025,7 @@ export const useMessageStore = defineStore('messageStore', () => {
   }
 
   async function resolveReplyTargetEventId(
-    replyTo: MessageReplyPreview | null
+    replyTo: MessageReplyPreview | null,
   ): Promise<string | null> {
     const localMessageId = Number.parseInt(replyTo?.messageId ?? '', 10);
     if (Number.isInteger(localMessageId) && localMessageId > 0) {
@@ -994,7 +1045,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     message: Message,
     options: {
       allowOutsideLoadedWindow?: boolean;
-    } = {}
+    } = {},
   ): void {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     if (!normalizedChatId) {
@@ -1006,7 +1057,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       existingMessages,
       paginationStateByChat.value[normalizedChatId],
       message,
-      options
+      options,
     );
 
     if (computedUpsert.ignored) {
@@ -1014,13 +1065,13 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
 
     messagesByChat.value[normalizedChatId] = computedUpsert.messages;
-    paginationStateByChat.value[normalizedChatId] = computedUpsert.paginationState;
+    setPaginationState(normalizedChatId, computedUpsert.paginationState);
   }
 
   function replaceMessageIdInState(
     chatId: string,
     previousMessageId: string,
-    nextMessage: Message
+    nextMessage: Message,
   ): void {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     if (!normalizedChatId) {
@@ -1052,7 +1103,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     chatId: string,
     text: string,
     createdAt: string,
-    meta: MessageMetadata
+    meta: MessageMetadata,
   ): Message {
     return {
       id: createOptimisticMessageId(),
@@ -1121,7 +1172,7 @@ export const useMessageStore = defineStore('messageStore', () => {
         normalizedChatId,
         cleanText,
         createdAt,
-        input.meta
+        input.meta,
       );
       optimisticId = liveMessage.id;
       if (input.shouldSyncLiveMessage) {
@@ -1239,6 +1290,20 @@ export const useMessageStore = defineStore('messageStore', () => {
     return liveMessage;
   }
 
+  function stageIncomingMessage(row: Omit<MessageRow, 'id'>): void {
+    const chatId = normalizeChatIdentifier(row.chat_public_key);
+    if (
+      !chatId ||
+      (!loadedChatIds.has(chatId) &&
+        !messagesByChat.value[chatId] &&
+        chatStore.selectedChatId !== chatId)
+    )
+      return;
+    const message = mapMessageRowToMessage({ ...row, id: 0 }, chatId);
+    message.id = `incoming:${row.event_id}`;
+    upsertMessageInState(chatId, message);
+  }
+
   function upsertPersistedMessage(row: MessageRow): Promise<void> {
     const chatId = normalizeChatIdentifier(row.chat_public_key);
     if (!chatId || (!loadedChatIds.has(chatId) && !messagesByChat.value[chatId])) {
@@ -1267,7 +1332,7 @@ export const useMessageStore = defineStore('messageStore', () => {
   async function extendOlderEdgeRows(
     chatId: string,
     initialRows: MessageRow[],
-    initialHasMore: boolean
+    initialHasMore: boolean,
   ): Promise<{ rows: MessageRow[]; hasMore: boolean }> {
     if (initialRows.length === 0 || !initialHasMore) {
       return {
@@ -1287,7 +1352,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     const rows = [...initialRows];
     let hasMore: boolean = initialHasMore;
 
-    while (hasMore) {
+    while (hasMore && rows.length < MESSAGE_PAGE_SIZE * 2) {
       const oldestCursor = buildMessageCursorFromRow(rows[0] ?? null);
       if (!oldestCursor) {
         break;
@@ -1296,7 +1361,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       const nextBatch = await chatDataService.listMessagesBefore(
         chatId,
         oldestCursor,
-        MESSAGE_PAGE_SIZE
+        MESSAGE_PAGE_SIZE,
       );
       if (nextBatch.rows.length === 0) {
         hasMore = false;
@@ -1325,7 +1390,7 @@ export const useMessageStore = defineStore('messageStore', () => {
   async function extendNewerEdgeRows(
     chatId: string,
     initialRows: MessageRow[],
-    initialHasMore: boolean
+    initialHasMore: boolean,
   ): Promise<{ rows: MessageRow[]; hasMore: boolean }> {
     if (initialRows.length === 0 || !initialHasMore) {
       return {
@@ -1335,7 +1400,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
 
     const boundaryAuthorKey = getNormalizedMessageAuthorKey(
-      initialRows[initialRows.length - 1] ?? null
+      initialRows[initialRows.length - 1] ?? null,
     );
     if (!boundaryAuthorKey) {
       return {
@@ -1347,7 +1412,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     const rows = [...initialRows];
     let hasMore: boolean = initialHasMore;
 
-    while (hasMore) {
+    while (hasMore && rows.length < MESSAGE_PAGE_SIZE * 2) {
       const newestCursor = buildMessageCursorFromRow(rows[rows.length - 1] ?? null);
       if (!newestCursor) {
         break;
@@ -1356,7 +1421,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       const nextBatch = await chatDataService.listMessagesAfter(
         chatId,
         newestCursor,
-        MESSAGE_PAGE_SIZE
+        MESSAGE_PAGE_SIZE,
       );
       if (nextBatch.rows.length === 0) {
         hasMore = false;
@@ -1407,7 +1472,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       const firstUnreadRow = await chatDataService.findFirstIncomingMessageAfter(
         chatId,
         lastSeenReceivedActivityAt,
-        loggedInPublicKey
+        loggedInPublicKey,
       );
 
       if (firstUnreadRow) {
@@ -1418,7 +1483,7 @@ export const useMessageStore = defineStore('messageStore', () => {
             chatDataService.listMessagesAfter(
               chatId,
               firstUnreadCursor,
-              INITIAL_UNREAD_MESSAGE_LIMIT - 1
+              INITIAL_UNREAD_MESSAGE_LIMIT - 1,
             ),
           ]);
           const [olderBatch, unreadBatch] = await Promise.all([
@@ -1426,7 +1491,7 @@ export const useMessageStore = defineStore('messageStore', () => {
             extendNewerEdgeRows(
               chatId,
               [firstUnreadRow, ...initialUnreadBatch.rows],
-              initialUnreadBatch.has_more
+              initialUnreadBatch.has_more,
             ),
           ]);
 
@@ -1435,7 +1500,7 @@ export const useMessageStore = defineStore('messageStore', () => {
             firstUnreadRow,
             unreadBatch.rows.slice(1),
             olderBatch.hasMore,
-            unreadBatch.hasMore
+            unreadBatch.hasMore,
           );
         }
       }
@@ -1445,12 +1510,25 @@ export const useMessageStore = defineStore('messageStore', () => {
     const extendedLatestBatch = await extendOlderEdgeRows(
       chatId,
       latestBatch.rows,
-      latestBatch.has_more
+      latestBatch.has_more,
     );
     return {
       rows: extendedLatestBatch.rows,
       hasOlder: extendedLatestBatch.hasMore,
       hasNewer: false,
+    };
+  }
+
+  async function reloadMessageWindow(chatId: string, oldest: PersistedMessageCursor) {
+    const [first, after, before] = await Promise.all([
+      chatDataService.getMessageById(oldest.id),
+      chatDataService.listMessagesAfter(chatId, oldest, 299),
+      chatDataService.listMessagesBefore(chatId, oldest, 1),
+    ]);
+    return {
+      rows: [...(first?.chat_public_key === chatId ? [first] : []), ...after.rows],
+      hasOlder: before.has_more || before.rows.length > 0,
+      hasNewer: after.has_more,
     };
   }
 
@@ -1460,6 +1538,11 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
+    for (const cachedId of loadedChatIds) {
+      if (loadedChatIds.size < 6) break;
+      if (cachedId !== normalizedChatId && cachedId !== chatStore.selectedChatId)
+        removeChatMessages(cachedId);
+    }
     if (!force && loadedChatIds.has(normalizedChatId)) {
       return;
     }
@@ -1470,19 +1553,37 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
+    const paginationAtLoadStart = paginationStateByChat.value[normalizedChatId];
+    const windowRevision = messageWindowRevisions.get(normalizedChatId);
+    const preserveWindow =
+      force && windowRevision !== undefined && paginationAtLoadStart?.oldestCursor;
+    // Background EOSE checks must not compete with an explicit history page.
+    if (force && (paginationAtLoadStart?.isLoadingOlder || paginationAtLoadStart?.isLoadingNewer))
+      return;
+
+    const messagesAtLoadStart = new Map(
+      (messagesByChat.value[normalizedChatId] ?? []).map((message) => [message.id, message]),
+    );
     const loadPromise = (async () => {
       try {
-        const initialWindow = await loadInitialMessageWindow(normalizedChatId);
+        const initialWindow = preserveWindow
+          ? await reloadMessageWindow(normalizedChatId, preserveWindow)
+          : await loadInitialMessageWindow(normalizedChatId);
         const loadedMessages = await hydrateMessageRows(initialWindow.rows, normalizedChatId);
+        // A user page/search can start while the disk snapshot is pending.
+        // Live arrivals are retained by the merge below, without discarding
+        // historical rows recovered in this refresh.
+        if (messageWindowRevisions.get(normalizedChatId) !== windowRevision) return;
         const existingMessages = messagesByChat.value[normalizedChatId] ?? [];
         messagesByChat.value[normalizedChatId] = mergeLoadedMessagesWithLocalOutbound(
           loadedMessages,
-          existingMessages
+          existingMessages,
+          messagesAtLoadStart,
         );
         setPaginationState(normalizedChatId, {
           oldestCursor: buildMessageCursorFromRow(initialWindow.rows[0] ?? null),
           newestCursor: buildMessageCursorFromRow(
-            initialWindow.rows[initialWindow.rows.length - 1] ?? null
+            initialWindow.rows[initialWindow.rows.length - 1] ?? null,
           ),
           hasOlder: initialWindow.hasOlder,
           hasNewer: initialWindow.hasNewer,
@@ -1547,7 +1648,7 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     const loadedAfterInitialLoad = getMessageFromState(
       normalizedChatId,
-      String(normalizedMessageId)
+      String(normalizedMessageId),
     );
     if (loadedAfterInitialLoad) {
       return loadedAfterInitialLoad;
@@ -1564,74 +1665,26 @@ export const useMessageStore = defineStore('messageStore', () => {
       return null;
     }
 
-    let iterationCount = 0;
-    while (iterationCount < 200) {
-      const currentMessage = getMessageFromState(normalizedChatId, String(normalizedMessageId));
-      if (currentMessage) {
-        return currentMessage;
-      }
-
-      const paginationState = paginationStateByChat.value[normalizedChatId];
-      const oldestCursor = paginationState?.oldestCursor ?? null;
-      const newestCursor = paginationState?.newestCursor ?? null;
-      const needsOlderLoad =
-        Boolean(oldestCursor) &&
-        compareMessageCursors(targetCursor, oldestCursor as PersistedMessageCursor) < 0;
-      const needsNewerLoad =
-        Boolean(newestCursor) &&
-        compareMessageCursors(targetCursor, newestCursor as PersistedMessageCursor) > 0;
-
-      if (needsOlderLoad && paginationState?.hasOlder) {
-        iterationCount += 1;
-        await loadOlderMessages(normalizedChatId);
-        continue;
-      }
-
-      if (needsNewerLoad && paginationState?.hasNewer) {
-        iterationCount += 1;
-        await loadNewerMessages(normalizedChatId);
-        continue;
-      }
-
-      break;
-    }
-
-    const loadedMessage = getMessageFromState(normalizedChatId, String(normalizedMessageId));
-    if (loadedMessage) {
-      return loadedMessage;
-    }
-
-    const allRows = await chatDataService.listMessages(normalizedChatId);
-    const currentMessages = messagesByChat.value[normalizedChatId] ?? [];
-    const mergeResult = resolveMessageWindowMerge(allRows, currentMessages, normalizedMessageId);
-    if (!mergeResult) {
-      return null;
-    }
-
-    const paginationPatch: Partial<ChatMessagePaginationState> = {};
-    if (mergeResult.oldestRow) {
-      paginationPatch.oldestCursor = buildMessageCursorFromRow(mergeResult.oldestRow);
-      paginationPatch.hasOlder = mergeResult.hasOlder ?? false;
-    }
-
-    if (mergeResult.newestRow) {
-      paginationPatch.newestCursor = buildMessageCursorFromRow(mergeResult.newestRow);
-      paginationPatch.hasNewer = mergeResult.hasNewer ?? false;
-    }
-
-    const hydratedMessages = await hydrateMessageRows(mergeResult.rowsToMerge, normalizedChatId);
-    messagesByChat.value[normalizedChatId] = mergeMessagesById(currentMessages, hydratedMessages);
-
-    if (Object.keys(paginationPatch).length > 0) {
-      setPaginationState(normalizedChatId, paginationPatch);
-    }
-
+    pinMessageWindow(normalizedChatId);
+    // Jump directly to the indexed target instead of walking or reading the full history.
+    const [before, after] = await Promise.all([
+      chatDataService.listMessagesBefore(normalizedChatId, targetCursor, MESSAGE_PAGE_SIZE),
+      chatDataService.listMessagesAfter(normalizedChatId, targetCursor, MESSAGE_PAGE_SIZE),
+    ]);
+    const rows = [...before.rows, targetRow, ...after.rows];
+    messagesByChat.value[normalizedChatId] = await hydrateMessageRows(rows, normalizedChatId);
+    setPaginationState(normalizedChatId, {
+      oldestCursor: buildMessageCursorFromRow(rows[0]),
+      newestCursor: buildMessageCursorFromRow(rows[rows.length - 1]),
+      hasOlder: before.has_more,
+      hasNewer: after.has_more,
+    });
     return getMessageFromState(normalizedChatId, String(normalizedMessageId)) ?? null;
   }
 
   async function ensureMessageLoadedByEventId(
     chatId: string,
-    eventId: string
+    eventId: string,
   ): Promise<Message | null> {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const normalizedEventId = normalizeEventId(eventId);
@@ -1690,18 +1743,19 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
+    pinMessageWindow(normalizedChatId);
     setPaginationState(normalizedChatId, { isLoadingOlder: true });
     const loadPromise = (async () => {
       try {
         const initialBatch = await chatDataService.listMessagesBefore(
           normalizedChatId,
           paginationState.oldestCursor as PersistedMessageCursor,
-          MESSAGE_PAGE_SIZE
+          MESSAGE_PAGE_SIZE,
         );
         const batch = await extendOlderEdgeRows(
           normalizedChatId,
           initialBatch.rows,
-          initialBatch.has_more
+          initialBatch.has_more,
         );
         if (batch.rows.length === 0) {
           setPaginationState(normalizedChatId, { hasOlder: false });
@@ -1711,7 +1765,7 @@ export const useMessageStore = defineStore('messageStore', () => {
         const hydratedMessages = await hydrateMessageRows(batch.rows, normalizedChatId);
         messagesByChat.value[normalizedChatId] = mergeMessagesById(
           messagesByChat.value[normalizedChatId] ?? [],
-          hydratedMessages
+          hydratedMessages,
         );
         setPaginationState(normalizedChatId, {
           oldestCursor: buildMessageCursorFromRow(batch.rows[0] ?? null),
@@ -1752,18 +1806,19 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
+    pinMessageWindow(normalizedChatId);
     setPaginationState(normalizedChatId, { isLoadingNewer: true });
     const loadPromise = (async () => {
       try {
         const initialBatch = await chatDataService.listMessagesAfter(
           normalizedChatId,
           paginationState.newestCursor as PersistedMessageCursor,
-          MESSAGE_PAGE_SIZE
+          MESSAGE_PAGE_SIZE,
         );
         const batch = await extendNewerEdgeRows(
           normalizedChatId,
           initialBatch.rows,
-          initialBatch.has_more
+          initialBatch.has_more,
         );
         if (batch.rows.length === 0) {
           setPaginationState(normalizedChatId, { hasNewer: false });
@@ -1773,7 +1828,7 @@ export const useMessageStore = defineStore('messageStore', () => {
         const hydratedMessages = await hydrateMessageRows(batch.rows, normalizedChatId);
         messagesByChat.value[normalizedChatId] = mergeMessagesById(
           messagesByChat.value[normalizedChatId] ?? [],
-          hydratedMessages
+          hydratedMessages,
         );
         setPaginationState(normalizedChatId, {
           newestCursor: buildMessageCursorFromRow(batch.rows[batch.rows.length - 1] ?? null),
@@ -1792,11 +1847,27 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
   }
 
+  async function sendCallHistory(chatId: string, history: CallHistory): Promise<Message | null> {
+    const normalized = normalizeChatIdentifier(chatId);
+    const valid = readCallHistory(history);
+    const chat = normalized ? await chatDataService.getChatByPublicKey(normalized) : null;
+    if (!valid || !chat || chat.type === 'group') return null;
+    return sendOutboundChatMessage({
+      chatId: normalized,
+      text: callHistoryText(valid),
+      meta: { call_history: valid },
+      replyTo: null,
+      additionalTags: [callHistoryTag(valid)],
+      options: {},
+      shouldSyncLiveMessage: true,
+    });
+  }
+
   async function sendMessage(
     chatId: string,
     text: string,
     replyTo: MessageReplyPreview | null = null,
-    options: RelaySendOptions = {}
+    options: RelaySendOptions = {},
   ): Promise<Message | null> {
     const cleanText = text.trim();
     if (!cleanText) {
@@ -1828,7 +1899,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     chatId: string,
     messageId: string,
     text: string,
-    options: RelaySendOptions = {}
+    options: RelaySendOptions = {},
   ): Promise<Message | null> {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const normalizedMessageId = Number.parseInt(messageId, 10);
@@ -1865,7 +1936,7 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     const deliveryTarget = await resolveChatDeliveryTarget(
       existingRow.chat_public_key,
-      options.relayUrls
+      options.relayUrls,
     );
     if (!deliveryTarget) {
       return null;
@@ -1894,7 +1965,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       {
         createdAt: editedAt,
         publishSelfCopy: deliveryTarget.publishSelfCopy,
-      }
+      },
     );
 
     let sendError: unknown = null;
@@ -1909,7 +1980,7 @@ export const useMessageStore = defineStore('messageStore', () => {
           replyToEventId: replyTargetEventId,
           additionalTags: [editTag],
           publishSelfCopy: deliveryTarget.publishSelfCopy,
-        }
+        },
       );
     } catch (error) {
       sendError = error;
@@ -1925,13 +1996,13 @@ export const useMessageStore = defineStore('messageStore', () => {
           loggedInPublicKey,
           targetKind,
           editedAt,
-          deletionEvent?.id ?? null
+          deletionEvent?.id ?? null,
         ),
       });
       if (deletedRow) {
         replaceMessageInState(
           normalizedChatId,
-          await hydrateMessageRow(deletedRow, normalizedChatId)
+          await hydrateMessageRow(deletedRow, normalizedChatId),
         );
       }
       if (sendError) {
@@ -1972,7 +2043,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     chatId: string,
     attachment: MessageAttachmentMetadata,
     replyTo: MessageReplyPreview | null = null,
-    options: RelaySendOptions = {}
+    options: RelaySendOptions = {},
   ): Promise<Message | null> {
     const messageText = buildAttachmentMessageText(attachment);
     const attachmentMeta = buildAttachmentMessageMeta(attachment);
@@ -2006,7 +2077,7 @@ export const useMessageStore = defineStore('messageStore', () => {
   async function forwardMessage(
     chatId: string,
     message: Pick<Message, 'text' | 'meta'>,
-    options: RelaySendOptions = {}
+    options: RelaySendOptions = {},
   ): Promise<Message | null> {
     const forwardedPayload = buildForwardedMessagePayload(message);
     if (!forwardedPayload) {
@@ -2037,7 +2108,7 @@ export const useMessageStore = defineStore('messageStore', () => {
   async function updateMessageReactions(
     chatId: string,
     messageId: string,
-    transform: (reactions: MessageReaction[], loggedInPublicKey: string) => MessageReaction[]
+    transform: (reactions: MessageReaction[], loggedInPublicKey: string) => MessageReaction[],
   ): Promise<Message | null> {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const normalizedMessageId = Number.parseInt(messageId, 10);
@@ -2065,7 +2136,7 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     const updatedRow = await chatDataService.updateMessageMeta(
       normalizedMessageId,
-      buildMetaWithReactions(existingRow.meta, nextReactions)
+      buildMetaWithReactions(existingRow.meta, nextReactions),
     );
     if (!updatedRow) {
       return null;
@@ -2081,7 +2152,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     chatId: string,
     messageId: string,
     emoji: string,
-    options: RelaySendOptions = {}
+    options: RelaySendOptions = {},
   ): Promise<Message | null> {
     const normalizedEmoji = emoji.trim();
     if (!normalizedEmoji) {
@@ -2122,7 +2193,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     if (existingRow.event_id) {
       const deliveryTarget = await resolveChatDeliveryTarget(
         existingRow.chat_public_key,
-        options.relayUrls
+        options.relayUrls,
       );
       if (deliveryTarget) {
         reactionRecipientPublicKey = deliveryTarget.recipientPublicKey;
@@ -2150,7 +2221,7 @@ export const useMessageStore = defineStore('messageStore', () => {
             ...(isOwnMessage ? { viewedByAuthorAt: createdAt } : {}),
           },
         ];
-      }
+      },
     );
 
     if (!updatedMessage || !existingRow.event_id) {
@@ -2174,7 +2245,7 @@ export const useMessageStore = defineStore('messageStore', () => {
         createdAt,
         targetKind: updatedMessage.nostrEvent?.event.kind,
         publishSelfCopy: shouldPublishReactionSelfCopy,
-      }
+      },
     );
 
     const publishedReactionEventId = normalizeEventId(publishedReactionEvent?.id);
@@ -2200,14 +2271,14 @@ export const useMessageStore = defineStore('messageStore', () => {
             eventId: publishedReactionEventId,
           };
         });
-      }
+      },
     );
   }
 
   async function removeReaction(
     chatId: string,
     messageId: string,
-    reactionToRemove: MessageReaction
+    reactionToRemove: MessageReaction,
   ): Promise<Message | null> {
     const loggedInPublicKey = getLoggedInPublicKey();
     if (
@@ -2236,7 +2307,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     if (reactionEventId) {
       const deliveryTarget = await resolveChatDeliveryTarget(
         existingRow.chat_public_key,
-        undefined
+        undefined,
       );
       if (deliveryTarget) {
         reactionDeletionRecipientPublicKey = deliveryTarget.recipientPublicKey;
@@ -2276,7 +2347,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       {
         createdAt: new Date().toISOString(),
         publishSelfCopy: shouldPublishReactionDeletionSelfCopy,
-      }
+      },
     );
     await nostrEventDataService.deleteEventsByIds([reactionEventId]);
 
@@ -2344,7 +2415,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       {
         createdAt: new Date().toISOString(),
         publishSelfCopy: shouldPublishDeletionSelfCopy,
-      }
+      },
     );
     const deleteEventId = normalizeEventId(deleteEvent?.id);
     if (!deleteEventId) {
@@ -2358,7 +2429,7 @@ export const useMessageStore = defineStore('messageStore', () => {
         targetKind,
         (updatedRow.meta.deleted as DeletedMessageMetadata | undefined)?.deletedAt ??
           new Date().toISOString(),
-        deleteEventId
+        deleteEventId,
       ),
     });
     if (!rowWithDeleteEvent) {
@@ -2377,8 +2448,8 @@ export const useMessageStore = defineStore('messageStore', () => {
       new Set(
         messageIds
           .map((messageId) => Number.parseInt(messageId, 10))
-          .filter((messageId) => Number.isInteger(messageId) && messageId > 0)
-      )
+          .filter((messageId) => Number.isInteger(messageId) && messageId > 0),
+      ),
     );
 
     if (!normalizedChatId || !loggedInPublicKey || normalizedMessageIds.length === 0) {
@@ -2412,7 +2483,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       const nextReactions = markReactionsViewedByAuthor(
         currentReactions,
         loggedInPublicKey,
-        viewedAt
+        viewedAt,
       );
       if (areReactionListsEqual(currentReactions, nextReactions)) {
         continue;
@@ -2420,7 +2491,7 @@ export const useMessageStore = defineStore('messageStore', () => {
 
       const updatedRow = await chatDataService.updateMessageMeta(
         messageId,
-        buildMetaWithReactions(existingRow.meta, nextReactions)
+        buildMetaWithReactions(existingRow.meta, nextReactions),
       );
       if (!updatedRow) {
         continue;
@@ -2452,7 +2523,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       if (latestViewedIncomingReactionAt) {
         await chatStore.setLastSeenReceivedActivityAt(
           normalizedChatId,
-          latestViewedIncomingReactionAt
+          latestViewedIncomingReactionAt,
         );
       }
       await syncChatUnseenReactionCount(normalizedChatId);
@@ -2470,8 +2541,8 @@ export const useMessageStore = defineStore('messageStore', () => {
       new Set(
         chatIds
           .map((chatId) => normalizeChatIdentifier(chatId))
-          .filter((chatId): chatId is string => Boolean(chatId))
-      )
+          .filter((chatId): chatId is string => Boolean(chatId)),
+      ),
     );
     const targetChatIds = normalizedChatIds.length > 0 ? new Set(normalizedChatIds) : null;
     const loggedInPublicKey = getLoggedInPublicKey();
@@ -2485,12 +2556,10 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     await Promise.all([chatDataService.init(), contactsService.init()]);
 
-    const [chatRows, messageRows, contacts] = await Promise.all([
+    const [chatRows, contacts] = await Promise.all([
       chatDataService.listChats(),
-      chatDataService.listAllMessages(),
       contactsService.listContacts(),
     ]);
-    const messageRowsByChat = new Map<string, MessageRow[]>();
     const seenBoundaryByChat = new Map<string, string>();
 
     for (const contact of contacts) {
@@ -2511,17 +2580,6 @@ export const useMessageStore = defineStore('messageStore', () => {
       seenBoundaryByChat.set(normalizedChatId, seenBoundaryAt);
     }
 
-    for (const row of messageRows) {
-      const normalizedChatId = normalizeChatIdentifier(row.chat_public_key);
-      if (!normalizedChatId || (targetChatIds && !targetChatIds.has(normalizedChatId))) {
-        continue;
-      }
-
-      const chatMessageRows = messageRowsByChat.get(normalizedChatId) ?? [];
-      chatMessageRows.push(row);
-      messageRowsByChat.set(normalizedChatId, chatMessageRows);
-    }
-
     for (const chatRow of chatRows) {
       const normalizedChatId = normalizeChatIdentifier(chatRow.public_key);
       if (!normalizedChatId || (targetChatIds && !targetChatIds.has(normalizedChatId))) {
@@ -2532,14 +2590,17 @@ export const useMessageStore = defineStore('messageStore', () => {
 
       const currentLastSeenReceivedActivityAt = readMetaString(
         chatRow.meta,
-        'last_seen_received_activity_at'
+        'last_seen_received_activity_at',
       );
       const contactLastSeenIncomingActivityAt = seenBoundaryByChat.get(normalizedChatId) ?? '';
-      const chatMessageRows = messageRowsByChat.get(normalizedChatId) ?? [];
+      // Reconcile one conversation at a time, yielding between database pages.
+      const latestOwnMessageAt =
+        (await chatDataService.findLatestMessageByAuthor(normalizedChatId, loggedInPublicKey))
+          ?.created_at ?? '';
       const boundaryAt = resolveLatestReadBoundaryAtValue(
         currentLastSeenReceivedActivityAt,
         contactLastSeenIncomingActivityAt,
-        resolveLatestOwnMessageAt(chatMessageRows, loggedInPublicKey)
+        latestOwnMessageAt,
       );
       const boundaryTimestamp = toComparableTimestamp(boundaryAt);
 
@@ -2554,11 +2615,13 @@ export const useMessageStore = defineStore('messageStore', () => {
         summary.boundaryAdvancedCount += 1;
       }
 
-      const nextUnreadCount = countUnreadMessageRowsAfterBoundary(
-        chatMessageRows,
-        loggedInPublicKey,
-        boundaryAt
-      );
+      let nextUnreadCount = 0;
+      for await (const batch of chatDataService.messageBatches(normalizedChatId, 250, boundaryAt))
+        nextUnreadCount += countUnreadMessageRowsAfterBoundary(
+          batch,
+          loggedInPublicKey,
+          boundaryAt,
+        );
 
       if (Number(chatRow.unread_count ?? 0) !== nextUnreadCount) {
         await chatDataService.updateChatUnreadCount(normalizedChatId, nextUnreadCount);
@@ -2573,47 +2636,48 @@ export const useMessageStore = defineStore('messageStore', () => {
         continue;
       }
 
-      for (const row of chatMessageRows) {
-        if (normalizeChatIdentifier(row.author_public_key) !== loggedInPublicKey) {
-          continue;
-        }
-
-        const currentReactions = normalizeMessageReactions(row.meta.reactions);
-        let markedReactionCount = 0;
-        const nextReactions = currentReactions.map((reaction) => {
-          const reactionCreatedAt = normalizeTimestamp(reaction.createdAt);
-          if (
-            !reactionCreatedAt ||
-            reaction.viewedByAuthorAt ||
-            normalizeChatIdentifier(reaction.reactorPublicKey) === loggedInPublicKey ||
-            toComparableTimestamp(reactionCreatedAt) > boundaryTimestamp
-          ) {
-            return reaction;
+      for await (const batch of chatDataService.reactionMessageBatches(normalizedChatId))
+        for (const row of batch) {
+          if (normalizeChatIdentifier(row.author_public_key) !== loggedInPublicKey) {
+            continue;
           }
 
-          markedReactionCount += 1;
-          return {
-            ...reaction,
-            viewedByAuthorAt: boundaryAt,
-          };
-        });
+          const currentReactions = normalizeMessageReactions(row.meta.reactions);
+          let markedReactionCount = 0;
+          const nextReactions = currentReactions.map((reaction) => {
+            const reactionCreatedAt = normalizeTimestamp(reaction.createdAt);
+            if (
+              !reactionCreatedAt ||
+              reaction.viewedByAuthorAt ||
+              normalizeChatIdentifier(reaction.reactorPublicKey) === loggedInPublicKey ||
+              toComparableTimestamp(reactionCreatedAt) > boundaryTimestamp
+            ) {
+              return reaction;
+            }
 
-        if (markedReactionCount === 0) {
-          continue;
+            markedReactionCount += 1;
+            return {
+              ...reaction,
+              viewedByAuthorAt: boundaryAt,
+            };
+          });
+
+          if (markedReactionCount === 0) {
+            continue;
+          }
+
+          const updatedRow = await chatDataService.updateMessageMeta(
+            row.id,
+            buildMetaWithReactions(row.meta, nextReactions),
+          );
+          if (!updatedRow) {
+            continue;
+          }
+
+          summary.reactionMessageCount += 1;
+          summary.reactionsMarkedCount += markedReactionCount;
+          await upsertPersistedMessage(updatedRow);
         }
-
-        const updatedRow = await chatDataService.updateMessageMeta(
-          row.id,
-          buildMetaWithReactions(row.meta, nextReactions)
-        );
-        if (!updatedRow) {
-          continue;
-        }
-
-        summary.reactionMessageCount += 1;
-        summary.reactionsMarkedCount += markedReactionCount;
-        await upsertPersistedMessage(updatedRow);
-      }
     }
 
     return summary;
@@ -2632,6 +2696,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     delete messagesByChat.value[normalizedChatId];
     delete paginationStateByChat.value[normalizedChatId];
     loadedChatIds.delete(normalizedChatId);
+    messageWindowRevisions.delete(normalizedChatId);
     loadingChatPromises.delete(normalizedChatId);
     paginationLoadPromises.delete(`${normalizedChatId}:older`);
     paginationLoadPromises.delete(`${normalizedChatId}:newer`);
@@ -2655,6 +2720,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     getMessages,
     getPaginationState,
     sendMessage,
+    sendCallHistory,
     editMessage,
     sendMediaAttachment,
     forwardMessage,
@@ -2667,6 +2733,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     syncChatUnseenReactionCount,
     removeChatMessages,
     upsertPersistedMessage,
+    stageIncomingMessage,
     refreshPersistedMessage,
   };
 });

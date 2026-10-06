@@ -1,6 +1,6 @@
-import { isValidPubkey, nip19 } from '@nostr-dev-kit/ndk';
-import type { MessageMentionMetadata, MessageMetadata } from 'src/types/chat';
-import type { ContactGroupMember, ContactMetadata } from 'src/types/contact';
+import { isValidPubkey, nip19 } from '#src/lib/nostr/client.ts';
+import type { MessageMentionMetadata, MessageMetadata } from '#src/types/chat.ts';
+import type { ContactGroupMember, ContactMetadata } from '#src/types/contact.ts';
 
 export interface NostrMentionProfile {
   publicKey: string;

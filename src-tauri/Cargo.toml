@@ -1,0 +1,11 @@
+[package]
+name = "anagram"
+version = "0.9.0"
+description = "Private Nostr messaging"
+edition = "2021"
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }

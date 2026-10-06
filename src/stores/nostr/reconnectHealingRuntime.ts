@@ -1,4 +1,4 @@
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import {
   RECONNECT_HEALING_FOCUS_DELAY_MS,
   RECONNECT_HEALING_MIN_BACKGROUND_MS,
@@ -8,9 +8,9 @@ import {
   RECONNECT_HEALING_RELAY_LIST_CHANGE_DELAY_MS,
   RECONNECT_HEALING_RELAY_RECONNECT_DELAY_MS,
   RECONNECT_HEALING_VISIBILITY_DELAY_MS,
-} from 'src/stores/nostr/constants';
-import type { ChatType } from 'src/types/chat';
-import type { Ref } from 'vue';
+} from '#src/stores/nostr/constants.ts';
+import type { ChatType } from '#src/types/chat.ts';
+import type { Ref } from '#src/lib/state/reactivity.ts';
 
 export type ReconnectHealingReason =
   | 'manual-refresh'

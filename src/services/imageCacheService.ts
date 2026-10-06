@@ -1,5 +1,5 @@
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { closeIndexedDbConnection, deleteIndexedDbDatabase } from 'src/utils/indexedDbStorage';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { closeIndexedDbConnection, deleteIndexedDbDatabase } from '#src/utils/indexedDbStorage.ts';
 
 const IMAGE_CACHE_DB_NAME = 'nostr-chat-image-cache';
 const IMAGE_CACHE_DB_VERSION = 1;

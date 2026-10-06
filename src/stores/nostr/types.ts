@@ -1,16 +1,16 @@
 import type {
-  NDKRelayConnectionStats,
-  NDKRelayInformation,
-  NDKUserProfile,
+  NostrRelayConnectionStats,
+  NostrRelayInformation,
+  NostrUserProfile,
   NostrEvent,
-} from '@nostr-dev-kit/ndk';
-import type { chatDataService } from 'src/services/chatDataService';
+} from '#src/lib/nostr/client.ts';
+import type { chatDataService } from '#src/services/chatDataService.ts';
 import type {
   DeveloperTraceEntry,
   DeveloperTraceLevel,
-} from 'src/services/developerTraceDataService';
-import type { ChatGroupEpochKey, MessageReaction, MessageRelayStatus } from 'src/types/chat';
-import type { ContactRelay } from 'src/types/contact';
+} from '#src/services/developerTraceDataService.ts';
+import type { ChatGroupEpochKey, MessageReaction, MessageRelayStatus } from '#src/types/chat.ts';
+import type { ContactRelay } from '#src/types/contact.ts';
 
 export interface NostrIdentifierResolutionResult {
   isValid: boolean;
@@ -166,23 +166,13 @@ export interface SubscribePrivateMessagesOptions {
   startupTrackStep?: boolean;
 }
 
-export interface RefreshPrivateMessagesLiveSubscriptionOptions
-  extends SubscribePrivateMessagesOptions {
+export interface RefreshPrivateMessagesLiveSubscriptionOptions extends SubscribePrivateMessagesOptions {
   forceRecreate?: boolean;
   probeTimeoutMs?: number;
 }
 
 export interface RefreshPrivateMessagesLiveSubscriptionResult {
   recreatedLiveSubscription: boolean;
-}
-
-export interface PrivateMessagesBackfillState {
-  pubkey: string;
-  nextSince: number;
-  nextUntil: number;
-  floorSince: number;
-  delayMs: number;
-  completed: boolean;
 }
 
 export interface QueuePrivateMessageUiRefreshOptions {
@@ -192,10 +182,7 @@ export interface QueuePrivateMessageUiRefreshOptions {
 }
 
 export type MissingMessageDependencyRepairReason =
-  | 'reply-target-missing'
-  | 'reaction-target-missing'
-  | 'deletion-target-missing'
-  | 'reply-open';
+  'reply-target-missing' | 'reaction-target-missing' | 'deletion-target-missing' | 'reply-open';
 
 export interface RepairMissingMessageDependencyOptions {
   reason: MissingMessageDependencyRepairReason;
@@ -229,6 +216,7 @@ export type SubscriptionLogName =
 export interface PrivatePreferences {
   contactSecret: string;
   blossomServerUrl?: string;
+  irohRelaySettings?: import('#src/utils/irohRelays.ts').IrohRelaySettings;
   [key: string]: unknown;
 }
 
@@ -389,7 +377,7 @@ export type {
   ChatGroupEpochKey,
   DeveloperTraceEntry,
   DeveloperTraceLevel,
-  NDKRelayConnectionStats,
-  NDKRelayInformation,
-  NDKUserProfile,
+  NostrRelayConnectionStats,
+  NostrRelayInformation,
+  NostrUserProfile,
 };

@@ -1,7 +1,7 @@
-import { useMessageBubbleStatus } from 'src/composables/useMessageBubbleStatus';
-import type { Message } from 'src/types/chat';
+import { useMessageBubbleStatus } from '#src/composables/useMessageBubbleStatus.ts';
+import type { Message } from '#src/types/chat.ts';
 import { describe, expect, it } from 'vitest';
-import { computed, ref } from 'vue';
+import { computed, ref } from '#src/lib/state/reactivity.ts';
 
 describe('useMessageBubbleStatus', () => {
   it('builds outbound relay status tabs with published success counts', () => {

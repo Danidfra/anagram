@@ -1,25 +1,25 @@
-import { contactsService } from 'src/services/contactsService';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { PRIVATE_MESSAGES_STARTUP_RESTORE_THROTTLE_MS } from 'src/stores/nostr/constants';
+import { contactsService } from '#src/services/contactsService.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { PRIVATE_MESSAGES_STARTUP_RESTORE_THROTTLE_MS } from '#src/stores/nostr/constants.ts';
 import {
   RelayQueryTimeoutError,
   RelayQueryUnavailableError,
-} from 'src/stores/nostr/relayQueryUtils';
+} from '#src/stores/nostr/relayQueryUtils.ts';
 import {
   isStartupCheckpointCurrent,
   readStartupCheckpoint,
   writeStartupCheckpoint,
-} from 'src/stores/nostr/startupCheckpoint';
-import type { StartupStepId } from 'src/stores/nostr/startupState';
+} from '#src/stores/nostr/startupCheckpoint.ts';
+import type { StartupStepId } from '#src/stores/nostr/startupState.ts';
 import type {
   ContactCursorContent,
   ContactRefreshLifecycle,
   PrivatePreferences,
   SubscribePrivateMessagesOptions,
-} from 'src/stores/nostr/types';
-import type { ContactRecord } from 'src/types/contact';
-import { yieldToMainThread } from 'src/utils/backgroundTasks';
-import type { Ref } from 'vue';
+} from '#src/stores/nostr/types.ts';
+import type { ContactRecord } from '#src/types/contact.ts';
+import { yieldToMainThread } from '#src/utils/backgroundTasks.ts';
+import type { Ref } from '#src/lib/state/reactivity.ts';
 
 interface StartupBatchTracker {
   beginItem: () => void;
@@ -85,19 +85,20 @@ interface StartupTaskRunOptions {
 interface StartupContactSyncRuntimeDeps {
   applyContactCursorStateToContact: (
     contact: ContactRecord,
-    cursor: ContactCursorContent
+    cursor: ContactCursorContent,
   ) => Promise<boolean>;
   beginStartupStep: (stepId: StartupStepId) => void;
   bumpContactListVersion: () => void;
   completeStartupStep: (stepId: StartupStepId) => void;
   createStartupBatchTracker: (
-    stepId: 'logged-in-profile' | 'logged-in-relays' | 'recent-chat-profiles' | 'recent-chat-relays'
+    stepId:
+      'logged-in-profile' | 'logged-in-relays' | 'recent-chat-profiles' | 'recent-chat-relays',
   ) => StartupBatchTracker;
   deriveContactCursorDTag: (contactPublicKey: string) => Promise<string | null>;
   ensureRelayConnections: (relayUrls: string[]) => Promise<void>;
   ensureStoredEventSince: () => void;
   fetchContactCursorEvents: (
-    contacts: ContactRecord[]
+    contacts: ContactRecord[],
   ) => Promise<Map<string, ContactCursorContent>>;
   failStartupStep: (stepId: StartupStepId, error: unknown) => void;
   flushPendingEventSinceUpdate: () => void;
@@ -112,7 +113,7 @@ interface StartupContactSyncRuntimeDeps {
   refreshContactByPublicKey: (
     pubkeyHex: string,
     fallbackName?: string,
-    lifecycle?: ContactRefreshLifecycle
+    lifecycle?: ContactRefreshLifecycle,
   ) => Promise<unknown>;
   refreshGroupRelayListsOnStartup: (seedRelayUrls?: string[]) => Promise<void>;
   resetStartupStep: (stepId: StartupStepId) => void;
@@ -133,13 +134,13 @@ interface StartupContactSyncRuntimeDeps {
   subscribeContactRelayListUpdates: (seedRelayUrls?: string[], force?: boolean) => Promise<void>;
   subscribeGroupMembershipRosterUpdates: (
     seedRelayUrls?: string[],
-    force?: boolean
+    force?: boolean,
   ) => Promise<void>;
   subscribeMyRelayListUpdates: (seedRelayUrls?: string[], force?: boolean) => Promise<void>;
   subscribePrivateContactListUpdates: (seedRelayUrls?: string[], force?: boolean) => Promise<void>;
   subscribePrivateMessagesForLoggedInUser: (
     force?: boolean,
-    options?: SubscribePrivateMessagesOptions
+    options?: SubscribePrivateMessagesOptions,
   ) => Promise<void>;
 }
 
@@ -196,9 +197,8 @@ export function createStartupContactSyncRuntime({
   let initializedSessionPubkey: string | null = null;
 
   function getCheckpointRelayUrls(fallbackRelayUrls: string[]): string[] {
-    const configuredRelayUrls = inputSanitizerService.normalizeStringArray(
-      getConfiguredRelayUrls()
-    );
+    const configuredRelayUrls =
+      inputSanitizerService.normalizeStringArray(getConfiguredRelayUrls());
     return configuredRelayUrls.length > 0 ? configuredRelayUrls : fallbackRelayUrls;
   }
 
@@ -232,7 +232,7 @@ export function createStartupContactSyncRuntime({
         console.warn(
           'Failed to refresh stored contact after DM startup EOSE',
           contact.public_key,
-          error
+          error,
         );
       }
     }
@@ -265,7 +265,7 @@ export function createStartupContactSyncRuntime({
         console.log('Starting UI refresh after per-contact cursor data refresh', {
           cursorAppliedCount,
         });
-        const { useMessageStore } = await import('src/stores/messageStore');
+        const { useMessageStore } = await import('#src/stores/messageStore.ts');
         await Promise.all([reloadChats(), useMessageStore().reloadLoadedMessages()]);
         cursorUiReloaded = true;
       }
@@ -344,7 +344,7 @@ export function createStartupContactSyncRuntime({
   async function runStartupTaskBody(
     stepId: StartupStepId,
     seedRelayUrls: string[],
-    options: StartupTaskRunOptions
+    options: StartupTaskRunOptions,
   ): Promise<void> {
     const forceSubscriptions = options.forceSubscriptions === true;
 
@@ -407,7 +407,7 @@ export function createStartupContactSyncRuntime({
   async function runStartupTask(
     stepId: StartupStepId,
     seedRelayUrls: string[],
-    options: StartupTaskRunOptions = {}
+    options: StartupTaskRunOptions = {},
   ): Promise<boolean> {
     const taskStartedAt = Date.now();
     if (options.resetStep === true) {
@@ -449,7 +449,7 @@ export function createStartupContactSyncRuntime({
 
   async function rerunStartupStep(
     stepId: StartupStepId,
-    seedRelayUrls: string[] = []
+    seedRelayUrls: string[] = [],
   ): Promise<void> {
     ensureStoredEventSince();
     await runStartupTask(stepId, seedRelayUrls, {
@@ -498,7 +498,7 @@ export function createStartupContactSyncRuntime({
           const finalCheckpoint = writeStartupCheckpoint(
             loggedInPubkeyHex,
             getCheckpointRelayUrls(seedRelayUrls),
-            didCompleteEveryTask ? 'complete' : 'failed'
+            didCompleteEveryTask ? 'complete' : 'failed',
           );
           initializedSessionPubkey =
             finalCheckpoint?.status === 'complete' ? loggedInPubkeyHex : null;
@@ -543,6 +543,7 @@ export function createStartupContactSyncRuntime({
       });
       try {
         await runLightweightSessionResume(checkpointRelayUrls);
+        startPrivateMessagesHistoryRestore();
         initializedSessionPubkey = loggedInPubkeyHex;
         logStartupRestore('lightweight-resume-complete', {
           relayCount: checkpointRelayUrls.length,

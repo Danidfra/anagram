@@ -28,6 +28,8 @@ This list is based on the current app code, especially `src/stores/nostrStore.ts
 - It sends and receives `kind:14` private message rumors inside gift wraps, and it also uses the same DM flow for wrapped reactions (`kind:7`) and deletions (`kind:5`).
 - Group chat messages are also sent as NIP-17 DMs to the group's current epoch public key.
 - Text edits follow NIP-17's delete-and-replace convention: the app sends a wrapped `kind:5` deletion and a replacement wrapped `kind:14` rumor with the original message timestamp. Replacement rumors also carry a private `e` tag marked `edit` so this client can reconcile either relay arrival order without displaying duplicate messages.
+- Completed direct-call attempts are summarized as ordinary encrypted `kind:14` messages with readable content and an app-specific `anagram-call` tag for call-history rendering and explicit redial.
+- One-to-one Iroh calls and link-based group rooms negotiate through an app-specific `kind:21117` rumor inside the same NIP-44/NIP-59 encrypted DM envelopes. These controls never enter chat history, previews, unread counts, or message notifications. This kind is a private application extension, not an assigned Nostr standard. See [Iroh call protocol](iroh-calls.md).
 
 ## NIP-19
 
@@ -52,7 +54,13 @@ This list is based on the current app code, especially `src/stores/nostrStore.ts
 - The NIP-46 local client key is persisted as a session token so refresh and app restart can restore the remote signer connection without storing the user's `nsec`.
 - The app requests broad `sign_event`, `nip44_encrypt`, and `nip44_decrypt` permissions because private messaging, private app storage, profile updates, relay lists, and relay auth all need the active signer.
 
+## NIP-50
+
+- The chat sidebar searches public kind-0 profiles on the account's read relays while filtering cached conversations locally. Results stream as they arrive; short-lived searches are cancelled when the query changes. Full NIP-05 addresses resolve through their authoritative domain before profile lookup.
+
 ## NIP-51
+
+- Restores the account's signed `kind:10013` private-storage relay list, including NIP-44 encrypted `relay` tags. Only the signed encrypted event is cached in IndexedDB; decrypted URLs stay account-scoped in memory. These relays supplement the account's NIP-17 and NIP-65 inboxes for receiving.
 
 - Used for private follow-set style lists.
 - The app restores and publishes the user's `kind:10000` mute list with muted pubkeys stored as NIP-44-encrypted private `p` items in `content`.

@@ -1,4 +1,4 @@
-import type { MessageAttachmentMetadata } from 'src/types/chat';
+import type { MessageAttachmentMetadata } from '#src/types/chat.ts';
 
 const IMETA_TAG_NAME = 'imeta';
 export const IMAGE_ATTACHMENT_PREVIEW_TEXT = 'Picture';

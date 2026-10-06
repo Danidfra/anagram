@@ -1,8 +1,8 @@
-import { NDKPrivateKeySigner, type NostrEvent } from '@nostr-dev-kit/ndk';
-import { type ChatRow, chatDataService } from 'src/services/chatDataService';
-import { contactsService } from 'src/services/contactsService';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { nostrEventDataService } from 'src/services/nostrEventDataService';
+import { NostrPrivateKeySigner, type NostrEvent } from '#src/lib/nostr/client.ts';
+import { type ChatRow, chatDataService } from '#src/services/chatDataService.ts';
+import { contactsService } from '#src/services/contactsService.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { nostrEventDataService } from '#src/services/nostrEventDataService.ts';
 import {
   GROUP_CHAT_EPOCH_PUBLIC_KEY_META_KEY,
   GROUP_CURRENT_EPOCH_PRIVATE_KEY_ENCRYPTED_CHAT_META_KEY,
@@ -11,12 +11,12 @@ import {
   GROUP_MEMBER_TICKET_DELIVERIES_CHAT_META_KEY,
   GROUP_OWNER_PUBLIC_KEY_CONTACT_META_KEY,
   GROUP_PRIVATE_KEY_CONTACT_META_KEY,
-} from 'src/stores/nostr/constants';
+} from '#src/stores/nostr/constants.ts';
 import type {
   GroupIdentitySecretContent,
   RelaySaveStatus,
   SubscribePrivateMessagesOptions,
-} from 'src/stores/nostr/types';
+} from '#src/stores/nostr/types.ts';
 import {
   buildAvatarFallbackValue,
   findConflictingKnownGroupEpochNumberValue,
@@ -24,20 +24,20 @@ import {
   resolveCurrentGroupChatEpochEntryValue,
   resolveGroupChatEpochEntriesValue,
   resolveGroupDisplayNameValue,
-} from 'src/stores/nostr/valueUtils';
+} from '#src/stores/nostr/valueUtils.ts';
 import type {
   ChatGroupEpochKey,
   ChatMetadata,
   GroupMemberTicketDelivery,
   MessageRelayStatus,
   NostrEventDirection,
-} from 'src/types/chat';
-import type { ContactMetadata, ContactRecord } from 'src/types/contact';
+} from '#src/types/chat.ts';
+import type { ContactMetadata, ContactRecord } from '#src/types/contact.ts';
 import {
   mergeGroupMemberTicketDeliveries,
   normalizeGroupMemberTicketDeliveries,
-} from 'src/utils/groupMemberTicketDelivery';
-import { normalizeMessageRelayStatuses } from 'src/utils/messageRelayStatus';
+} from '#src/utils/groupMemberTicketDelivery.ts';
+import { normalizeMessageRelayStatuses } from '#src/utils/messageRelayStatus.ts';
 
 interface GroupEpochStateRuntimeDeps {
   bumpContactListVersion: () => void;
@@ -412,7 +412,7 @@ export function createGroupEpochStateRuntime({
     const nextSecret: GroupIdentitySecretContent = {
       ...decryptedSecret,
       epoch_number: 0,
-      epoch_privkey: NDKPrivateKeySigner.generate().privateKey,
+      epoch_privkey: NostrPrivateKeySigner.generate().privateKey,
     };
     const nextEncryptedSecret = await encryptGroupIdentitySecretContent(nextSecret);
     const nextMeta: ContactMetadata = {

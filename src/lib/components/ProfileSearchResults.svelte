@@ -1,0 +1,161 @@
+<script lang="ts">
+  import { onDestroy, tick } from 'svelte';
+  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import {
+    profileSearchAllowed,
+    type ProfileSearchResult,
+  } from '#src/stores/nostr/profileSearchRuntime.ts';
+  import { getPublicProfile, rememberPublicProfile } from '#src/lib/state/publicProfiles.ts';
+  import { contactsService } from '#src/services/contactsService.ts';
+  import Avatar from './Avatar.svelte';
+  export let query = '';
+  export let existingKeys: string[] = [];
+  export let onselect: (profile: ProfileSearchResult) => void;
+  const nostr = useNostrStore();
+  let results: ProfileSearchResult[] = [];
+  let loading = false;
+  let status = '';
+  let dismissed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let controller: AbortController | undefined;
+  let container: HTMLElement;
+  $: schedule(query);
+  $: visible = results.filter((result) => !existingKeys.includes(result.publicKey));
+  function schedule(value: string) {
+    clearTimeout(timer);
+    controller?.abort();
+    const current = new AbortController();
+    controller = current;
+    results = [];
+    status = '';
+    dismissed = false;
+    loading = profileSearchAllowed(value);
+    if (!loading) return;
+    timer = setTimeout(async () => {
+      const saved = new Set<string>();
+      try {
+        const result = await nostr.searchProfiles(value, current.signal, (profiles) => {
+          if (current.signal.aborted) return;
+          results = profiles;
+          for (const profile of profiles) {
+            if (!profile.eventId || saved.has(profile.eventId)) continue;
+            saved.add(profile.eventId);
+            rememberPublicProfile(profile.publicKey, profile, profile.createdAt, profile.eventId);
+            const cached = getPublicProfile(profile.publicKey);
+            if (cached?.eventId === profile.eventId)
+              void contactsService.savePublicProfile(profile.publicKey, cached).catch(() => {});
+          }
+        });
+        if (!current.signal.aborted) status = result;
+      } catch {
+        if (!current.signal.aborted) status = 'unavailable';
+      } finally {
+        if (!current.signal.aborted) loading = false;
+      }
+    }, 260);
+  }
+  export async function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      dismissed = true;
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    if (!visible.length) return;
+    event.preventDefault();
+    dismissed = false;
+    await tick();
+    const buttons = [...(container?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    buttons[
+      (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+    ]?.focus();
+  }
+  onDestroy(() => {
+    clearTimeout(timer);
+    controller?.abort();
+  });
+</script>
+
+{#if profileSearchAllowed(query) && !dismissed}
+  <section class="profile-search-results" aria-label="People on relays" bind:this={container}>
+    <h2>People on relays</h2>
+    {#each visible as profile (profile.publicKey)}
+      <button
+        class="profile-result"
+        data-testid="profile-search-result"
+        onclick={() => onselect(profile)}
+        onkeydown={handleKeydown}
+      >
+        <Avatar
+          publicKey={profile.publicKey}
+          name={profile.name}
+          picture={profile.picture}
+          size={40}
+          eager
+        />
+        <span
+          ><strong>{profile.name}</strong><small
+            >{profile.nip05 ||
+              `${profile.publicKey.slice(0, 12)}…${profile.publicKey.slice(-6)}`}</small
+          ></span
+        >
+      </button>
+    {/each}
+    <p role="status" aria-live="polite">
+      {#if loading}Searching profiles…
+      {:else if status === 'unavailable'}Profile search is unavailable. Try again shortly.
+      {:else if !visible.length}{results.length
+          ? 'Matching profiles are already in your chats.'
+          : 'No profiles found on your relays.'}{/if}
+    </p>
+  </section>
+{/if}
+
+<style>
+  .profile-search-results {
+    border-top: 1px solid var(--nc-border);
+    padding: 8px 0;
+  }
+  h2 {
+    font-size: 12px;
+    color: var(--nc-text-secondary);
+    margin: 4px 12px 8px;
+    font-weight: 600;
+  }
+  .profile-result {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    width: 100%;
+    padding: 9px 12px;
+  }
+  .profile-result:hover,
+  .profile-result:focus-visible {
+    background: var(--nc-search-bg);
+  }
+  .profile-result > span {
+    min-width: 0;
+  }
+  strong,
+  small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  strong {
+    font-size: 13px;
+  }
+  small,
+  p {
+    color: var(--nc-text-secondary);
+    font-size: 12px;
+  }
+  p {
+    margin: 6px 12px;
+  }
+  p:empty {
+    display: none;
+  }
+</style>

@@ -2,7 +2,7 @@ import {
   buildNostrMentionTextParts,
   type NostrMentionProfile,
   type NostrMentionTextPart,
-} from 'src/utils/nostrMentions';
+} from '#src/utils/nostrMentions.ts';
 
 export type MessageTextPart =
   | NostrMentionTextPart

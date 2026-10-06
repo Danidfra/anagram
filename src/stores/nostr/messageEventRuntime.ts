@@ -1,13 +1,13 @@
-import NDK, {
-  NDKEvent,
-  NDKKind,
-  NDKPrivateKeySigner,
-  type NDKSigner,
-  NDKUser,
+import NostrClient, {
+  ClientEvent,
+  NostrKind,
+  NostrPrivateKeySigner,
+  type NostrSigner,
+  NostrUser,
   type NostrEvent,
-} from '@nostr-dev-kit/ndk';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { INVITATION_PROOF_TAG } from 'src/stores/nostr/constants';
+} from '#src/lib/nostr/client.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { INVITATION_PROOF_TAG } from '#src/stores/nostr/constants.ts';
 
 interface GroupEpochContext {
   chat: {
@@ -24,8 +24,8 @@ interface MessageEventRuntimeDeps {
   findGroupChatEpochContextByRecipientPubkey: (
     epochPublicKey: string
   ) => Promise<GroupEpochContext | null>;
-  getOrCreateSigner: () => Promise<NDKSigner>;
-  ndk: NDK;
+  getOrCreateSigner: () => Promise<NostrSigner>;
+  ndk: NostrClient;
   readEpochNumberTag: (tags: string[][]) => number | null;
   readFirstTagValue: (tags: string[][], tagName: string) => string | null;
 }
@@ -55,7 +55,7 @@ export function createMessageEventRuntime({
     createdAt: number,
     replyToEventId?: string | null,
     additionalTags: string[][] = []
-  ): NDKEvent {
+  ): ClientEvent {
     const tags: string[][] = [['p', recipientPubkey]];
     const normalizedReplyTargetEventId = normalizeEventId(replyToEventId);
     if (normalizedReplyTargetEventId) {
@@ -73,8 +73,8 @@ export function createMessageEventRuntime({
       }
     }
 
-    return new NDKEvent(ndk, {
-      kind: NDKKind.PrivateDirectMessage,
+    return new ClientEvent(ndk, {
+      kind: NostrKind.PrivateDirectMessage,
       created_at: createdAt,
       pubkey: senderPubkey,
       content: message,
@@ -90,9 +90,9 @@ export function createMessageEventRuntime({
     targetAuthorPubkey: string,
     targetKind: number,
     createdAt: number
-  ): NDKEvent {
-    return new NDKEvent(ndk, {
-      kind: NDKKind.Reaction,
+  ): ClientEvent {
+    return new ClientEvent(ndk, {
+      kind: NostrKind.Reaction,
       created_at: createdAt,
       pubkey: senderPubkey,
       content: emoji,
@@ -111,9 +111,9 @@ export function createMessageEventRuntime({
     targetEventId: string,
     targetKind: number,
     createdAt: number
-  ): NDKEvent {
-    return new NDKEvent(ndk, {
-      kind: NDKKind.EventDeletion,
+  ): ClientEvent {
+    return new ClientEvent(ndk, {
+      kind: NostrKind.EventDeletion,
       created_at: createdAt,
       pubkey: senderPubkey,
       content: '',
@@ -125,7 +125,7 @@ export function createMessageEventRuntime({
     });
   }
 
-  function createStoredSignedEvent(event: NostrEvent): NDKEvent | null {
+  function createStoredSignedEvent(event: NostrEvent): ClientEvent | null {
     const pubkey = inputSanitizerService.normalizeHexKey(event.pubkey);
     if (!pubkey) {
       return null;
@@ -137,8 +137,8 @@ export function createMessageEventRuntime({
           .map((tag) => tag.map((entry) => String(entry)))
       : [];
 
-    return new NDKEvent(ndk, {
-      kind: typeof event.kind === 'number' ? event.kind : NDKKind.PrivateDirectMessage,
+    return new ClientEvent(ndk, {
+      kind: typeof event.kind === 'number' ? event.kind : NostrKind.PrivateDirectMessage,
       created_at: event.created_at,
       pubkey,
       content: event.content,
@@ -148,7 +148,7 @@ export function createMessageEventRuntime({
     });
   }
 
-  function createStoredDirectMessageRumorEvent(event: NostrEvent): NDKEvent | null {
+  function createStoredDirectMessageRumorEvent(event: NostrEvent): ClientEvent | null {
     return createStoredSignedEvent(event);
   }
 
@@ -157,10 +157,10 @@ export function createMessageEventRuntime({
   }
 
   async function giftWrapSignedEvent(
-    event: NDKEvent,
-    recipient: NDKUser,
-    signer: NDKSigner
-  ): Promise<NDKEvent> {
+    event: ClientEvent,
+    recipient: NostrUser,
+    signer: NostrSigner
+  ): Promise<ClientEvent> {
     if (!event.sig) {
       throw new Error('Signed event is required before gift wrapping.');
     }
@@ -179,8 +179,8 @@ export function createMessageEventRuntime({
       ...(event.id?.trim() ? { id: event.id.trim() } : {}),
     };
 
-    const sealEvent = new NDKEvent(ndk, {
-      kind: NDKKind.GiftWrapSeal,
+    const sealEvent = new ClientEvent(ndk, {
+      kind: NostrKind.GiftWrapSeal,
       created_at: approximateGiftWrapNow(),
       pubkey: event.pubkey,
       content: JSON.stringify(rumorPayload),
@@ -189,9 +189,9 @@ export function createMessageEventRuntime({
     await sealEvent.encrypt(recipient, signer, 'nip44');
     await sealEvent.sign(signer);
 
-    const wrapSigner = NDKPrivateKeySigner.generate();
-    const giftWrapEvent = new NDKEvent(ndk, {
-      kind: NDKKind.GiftWrap,
+    const wrapSigner = NostrPrivateKeySigner.generate();
+    const giftWrapEvent = new ClientEvent(ndk, {
+      kind: NostrKind.GiftWrap,
       created_at: approximateGiftWrapNow(),
       content: JSON.stringify(sealEvent.rawEvent()),
       tags: [['p', recipient.pubkey]],
@@ -202,7 +202,7 @@ export function createMessageEventRuntime({
     return giftWrapEvent;
   }
 
-  async function toStoredNostrEvent(event: NDKEvent): Promise<NostrEvent | null> {
+  async function toStoredNostrEvent(event: ClientEvent): Promise<NostrEvent | null> {
     try {
       const nostrEvent = await event.toNostrEvent();
       const eventId = normalizeEventId(nostrEvent.id ?? event.id);
@@ -235,12 +235,12 @@ export function createMessageEventRuntime({
         tags,
         pubkey,
         id: eventId,
-        ...(typeof event.kind === 'number' ? { kind: event.kind } : {}),
+        kind: typeof event.kind === 'number' ? event.kind : 1,
       };
     }
   }
 
-  async function unwrapGiftWrapSealEvent(wrappedEvent: NDKEvent): Promise<NostrEvent | null> {
+  async function unwrapGiftWrapSealEvent(wrappedEvent: ClientEvent): Promise<NostrEvent | null> {
     const normalizedContent = wrappedEvent.content.trim();
     const wrapAuthorPubkey = inputSanitizerService.normalizeHexKey(wrappedEvent.pubkey ?? '');
     if (!normalizedContent || !wrapAuthorPubkey) {
@@ -248,12 +248,12 @@ export function createMessageEventRuntime({
     }
 
     ndk.assertSigner();
-    const wrapAuthor = new NDKUser({ pubkey: wrapAuthorPubkey });
+    const wrapAuthor = new NostrUser({ pubkey: wrapAuthorPubkey });
     const decryptedContent = await ndk.signer.decrypt(wrapAuthor, normalizedContent, 'nip44');
 
     try {
       const rawSeal = JSON.parse(decryptedContent) as Partial<NostrEvent>;
-      const sealEvent = new NDKEvent(ndk, rawSeal);
+      const sealEvent = new ClientEvent(ndk, rawSeal);
       if (!sealEvent.verifySignature(false)) {
         return null;
       }
@@ -265,7 +265,7 @@ export function createMessageEventRuntime({
   }
 
   async function verifyIncomingGroupEpochTicket(
-    rumorEvent: NDKEvent,
+    rumorEvent: ClientEvent,
     sealEvent: NostrEvent | null
   ): Promise<{
     isValid: boolean;
@@ -288,7 +288,7 @@ export function createMessageEventRuntime({
       };
     }
 
-    const signedEvent = new NDKEvent(ndk, {
+    const signedEvent = new ClientEvent(ndk, {
       created_at: rumorEvent.created_at,
       content: rumorEvent.content,
       tags: rumorEvent.tags.map((tag) => [...tag]),
@@ -308,11 +308,11 @@ export function createMessageEventRuntime({
   }
 
   async function resolveIncomingPrivateMessageRecipientContext(
-    wrappedEvent: NDKEvent,
+    wrappedEvent: ClientEvent,
     loggedInPubkeyHex: string
   ): Promise<{
     recipientPubkey: string;
-    unwrapSigner: NDKSigner;
+    unwrapSigner: NostrSigner;
     groupChatPublicKey: string | null;
   } | null> {
     const tags = Array.isArray(wrappedEvent.tags)
@@ -353,7 +353,7 @@ export function createMessageEventRuntime({
 
     return {
       recipientPubkey: wrappedRecipientPubkey,
-      unwrapSigner: new NDKPrivateKeySigner(decryptedCurrentEpochPrivateKey, ndk),
+      unwrapSigner: new NostrPrivateKeySigner(decryptedCurrentEpochPrivateKey, ndk),
       groupChatPublicKey: groupEpochContext.chat.public_key,
     };
   }
@@ -377,11 +377,11 @@ export function createMessageEventRuntime({
     return null;
   }
 
-  function readReactionTargetEventId(event: NDKEvent): string | null {
+  function readReactionTargetEventId(event: ClientEvent): string | null {
     return normalizeEventId(event.getMatchingTags('e')[0]?.[1] ?? '');
   }
 
-  function readReplyTargetEventId(event: NDKEvent): string | null {
+  function readReplyTargetEventId(event: ClientEvent): string | null {
     const replyTag = event.getMatchingTags('e').find((tag) => {
       const marker = String(tag[3] ?? '')
         .trim()
@@ -395,12 +395,12 @@ export function createMessageEventRuntime({
     return normalizeEventId(event.getMatchingTags('e')[0]?.[1] ?? '');
   }
 
-  function readReactionTargetAuthorPubkey(event: NDKEvent): string | null {
+  function readReactionTargetAuthorPubkey(event: ClientEvent): string | null {
     return inputSanitizerService.normalizeHexKey(event.getMatchingTags('p')[1]?.[1] ?? '');
   }
 
   function readDeletionTargetEntries(
-    event: NDKEvent
+    event: ClientEvent
   ): Array<{ eventId: string; kind: number | null }> {
     const eventIds = event
       .getMatchingTags('e')

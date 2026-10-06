@@ -1,19 +1,19 @@
-import { Capacitor, type PluginListenerHandle, registerPlugin } from '@capacitor/core';
-import { NDKPrivateKeySigner, type NostrEvent, normalizeRelayUrl } from '@nostr-dev-kit/ndk';
+import { Capacitor, type PluginListenerHandle, registerPlugin } from '#src/lib/platform/legacyNative.ts';
+import { NostrPrivateKeySigner, type NostrEvent, normalizeRelayUrl } from '#src/lib/nostr/client.ts';
 import {
   AndroidNotificationRelaySelectionError,
   resolveSelectedAndroidNotificationRelayUrls,
-} from 'src/services/androidNotificationRelaySelectionService';
-import { readAndroidSecurePrivateKeyHex } from 'src/services/androidSecurePrivateKeyStorage';
-import { chatDataService } from 'src/services/chatDataService';
-import { contactsService } from 'src/services/contactsService';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { resolveCurrentGroupChatEpochEntryValue } from 'src/stores/nostr/valueUtils';
-import { useNostrStore } from 'src/stores/nostrStore';
-import type { Chat } from 'src/types/chat';
-import type { ContactRecord } from 'src/types/contact';
-import { buildAvatarText } from 'src/utils/avatarText';
-import type { RouteLocationRaw } from 'vue-router';
+} from '#src/services/androidNotificationRelaySelectionService.ts';
+import { readAndroidSecurePrivateKeyHex } from '#src/services/androidSecurePrivateKeyStorage.ts';
+import { chatDataService } from '#src/services/chatDataService.ts';
+import { contactsService } from '#src/services/contactsService.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { resolveCurrentGroupChatEpochEntryValue } from '#src/stores/nostr/valueUtils.ts';
+import { useNostrStore } from '#src/stores/nostrStore.ts';
+import type { Chat } from '#src/types/chat.ts';
+import type { ContactRecord } from '#src/types/contact.ts';
+import { buildAvatarText } from '#src/utils/avatarText.ts';
+import type { RouteLocationRaw } from '#src/lib/platform/router.ts';
 
 const ANDROID_RELAY_NOTIFICATIONS_STORAGE_KEY = 'ui-android-relay-notifications';
 const ANDROID_RELAY_START_ON_BOOT_STORAGE_KEY = 'ui-android-relay-notifications-start-on-boot';
@@ -377,7 +377,7 @@ async function resolveLocalIdentityPrivateKey(ownerPubkey: string): Promise<stri
     }
     try {
       if (
-        inputSanitizerService.normalizeHexKey(new NDKPrivateKeySigner(privateKey).pubkey) ===
+        inputSanitizerService.normalizeHexKey(new NostrPrivateKeySigner(privateKey).pubkey) ===
         ownerPubkey
       ) {
         return privateKey;
@@ -399,7 +399,7 @@ async function decryptGroupEpochPrivateKey(input: {
   }
 
   try {
-    const identitySigner = new NDKPrivateKeySigner(input.identityPrivateKey);
+    const identitySigner = new NostrPrivateKeySigner(input.identityPrivateKey);
     const identityUser = await identitySigner.user();
     const decrypted = inputSanitizerService.normalizeHexKey(
       await identitySigner.decrypt(identityUser, input.encryptedPrivateKey, 'nip44')
@@ -409,7 +409,7 @@ async function decryptGroupEpochPrivateKey(input: {
       return null;
     }
     const result =
-      inputSanitizerService.normalizeHexKey(new NDKPrivateKeySigner(decrypted).pubkey) ===
+      inputSanitizerService.normalizeHexKey(new NostrPrivateKeySigner(decrypted).pubkey) ===
       input.epochPubkey
         ? decrypted
         : null;

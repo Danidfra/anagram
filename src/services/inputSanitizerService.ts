@@ -1,10 +1,10 @@
-import { isValidPubkey, nip19, normalizeRelayUrl } from '@nostr-dev-kit/ndk';
+import { isValidPubkey, nip19, normalizeRelayUrl } from '#src/lib/nostr/client.ts';
 import type {
   ContactBirthday,
   ContactGroupMember,
   ContactMetadata,
   ContactRelay,
-} from 'src/types/contact';
+} from '#src/types/contact.ts';
 
 export interface NpubValidationResult {
   isValid: boolean;

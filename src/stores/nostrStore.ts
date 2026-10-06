@@ -1,26 +1,33 @@
-import { Capacitor } from '@capacitor/core';
-import NDK, {
-  NDKEvent,
-  NDKKind,
-  NDKPrivateKeySigner,
-  type NDKSigner,
+import {
+  searchRelayProfiles,
+  type ProfileSearchResult,
+} from '#src/stores/nostr/profileSearchRuntime.ts';
+import { Capacitor } from '#src/lib/platform/legacyNative.ts';
+import NostrClient, {
+  ClientEvent,
+  NostrKind,
+  NostrPrivateKeySigner,
+  type NostrSigner,
   type NostrEvent,
   normalizeRelayUrl,
-} from '@nostr-dev-kit/ndk';
-import { defineStore } from 'pinia';
-import type { ChatRow } from 'src/services/chatDataService';
+} from '#src/lib/nostr/client.ts';
+import { defineStore } from '#src/lib/state/store.ts';
+import type { ChatRow } from '#src/services/chatDataService.ts';
 import {
   inputSanitizerService,
   type NpubValidationResult,
   type NsecValidationResult,
   type PrivateKeyValidationResult,
-} from 'src/services/inputSanitizerService';
-import { useChatStore } from 'src/stores/chatStore';
-import { useNip65RelayStore } from 'src/stores/nip65RelayStore';
-import { createAppLifecycleRuntime } from 'src/stores/nostr/appLifecycleRuntime';
-import { createAuthIdentityRuntime } from 'src/stores/nostr/authIdentityRuntime';
-import { createAuthSessionRuntime } from 'src/stores/nostr/authSessionRuntime';
-import { createBlossomSettingsRuntime } from 'src/stores/nostr/blossomSettingsRuntime';
+} from '#src/services/inputSanitizerService.ts';
+import { useCallRoomStore } from '#src/stores/callRoomStore.ts';
+import { useCallStore } from '#src/stores/callStore.ts';
+import { useChatStore } from '#src/stores/chatStore.ts';
+import { useNip65RelayStore } from '#src/stores/nip65RelayStore.ts';
+import { createAppLifecycleRuntime } from '#src/stores/nostr/appLifecycleRuntime.ts';
+import { createAuthIdentityRuntime } from '#src/stores/nostr/authIdentityRuntime.ts';
+import { createAuthSessionRuntime } from '#src/stores/nostr/authSessionRuntime.ts';
+import { createBlossomSettingsRuntime } from '#src/stores/nostr/blossomSettingsRuntime.ts';
+import { createCallSignalingRuntime } from '#src/stores/nostr/callSignalingRuntime.ts';
 import {
   DEFAULT_EVENT_SINCE_LOOKBACK_SECONDS,
   DEVELOPER_DIAGNOSTICS_STORAGE_KEY,
@@ -33,55 +40,56 @@ import {
   RELAY_CONNECT_RETRY_MAX_DELAY_MS,
   RELAY_FIRST_HEALTHY_WAIT_MS,
   STARTUP_STEP_MIN_PROGRESS_MS,
-} from 'src/stores/nostr/constants';
-import { createContactProfileRuntime } from 'src/stores/nostr/contactProfileRuntime';
-import { createContactRelayRuntime } from 'src/stores/nostr/contactRelayRuntime';
-import { createContactSubscriptionsRuntime } from 'src/stores/nostr/contactSubscriptionsRuntime';
-import { createDeveloperDiagnosticsRuntime } from 'src/stores/nostr/developerDiagnostics';
-import { createDeveloperRelayRuntime } from 'src/stores/nostr/developerRelayRuntime';
+} from '#src/stores/nostr/constants.ts';
+import { createContactProfileRuntime } from '#src/stores/nostr/contactProfileRuntime.ts';
+import { createContactRelayRuntime } from '#src/stores/nostr/contactRelayRuntime.ts';
+import { createContactSubscriptionsRuntime } from '#src/stores/nostr/contactSubscriptionsRuntime.ts';
+import { createDeveloperDiagnosticsRuntime } from '#src/stores/nostr/developerDiagnostics.ts';
+import { createDeveloperRelayRuntime } from '#src/stores/nostr/developerRelayRuntime.ts';
 import {
   createDeveloperTraceRuntime,
   readDeveloperDiagnosticsEnabledFromStorage,
-} from 'src/stores/nostr/developerTrace';
-import { createGroupEpochPublishRuntime } from 'src/stores/nostr/groupEpochPublishRuntime';
-import { createGroupEpochStateRuntime } from 'src/stores/nostr/groupEpochStateRuntime';
-import { createGroupInviteRuntime } from 'src/stores/nostr/groupInviteRuntime';
-import { createGroupRosterSubscriptionRuntime } from 'src/stores/nostr/groupRosterSubscriptionRuntime';
-import { createInboundPresentationRuntime } from 'src/stores/nostr/inboundPresentationRuntime';
-import { createMessageEventRuntime } from 'src/stores/nostr/messageEventRuntime';
-import { createMessageMutationRuntime } from 'src/stores/nostr/messageMutationRuntime';
-import { createMessageRelayRuntime } from 'src/stores/nostr/messageRelayRuntime';
-import { createMuteListRuntime } from 'src/stores/nostr/muteListRuntime';
-import { createMyRelayListRuntime } from 'src/stores/nostr/myRelayListRuntime';
-import { createAppNdkOptions } from 'src/stores/nostr/ndkOptions';
-import { createOutboundMessageReplayRuntime } from 'src/stores/nostr/outboundMessageReplayRuntime';
-import { createPrivateContactListRuntime } from 'src/stores/nostr/privateContactListRuntime';
-import { createPrivateContactMembershipRuntime } from 'src/stores/nostr/privateContactMembershipRuntime';
-import { createPrivateMessagesBackfillRuntime } from 'src/stores/nostr/privateMessagesBackfillRuntime';
-import { createPrivateMessagesIngestRuntime } from 'src/stores/nostr/privateMessagesIngestRuntime';
-import { createPrivateMessagesSubscriptionRuntime } from 'src/stores/nostr/privateMessagesSubscriptionRuntime';
-import { createPrivateMessagesUiRuntime } from 'src/stores/nostr/privateMessagesUiRuntime';
-import { createPrivateStateRuntime } from 'src/stores/nostr/privateStateRuntime';
+} from '#src/stores/nostr/developerTrace.ts';
+import { createGroupEpochPublishRuntime } from '#src/stores/nostr/groupEpochPublishRuntime.ts';
+import { createGroupEpochStateRuntime } from '#src/stores/nostr/groupEpochStateRuntime.ts';
+import { createGroupInviteRuntime } from '#src/stores/nostr/groupInviteRuntime.ts';
+import { createGroupRosterSubscriptionRuntime } from '#src/stores/nostr/groupRosterSubscriptionRuntime.ts';
+import { createInboundPresentationRuntime } from '#src/stores/nostr/inboundPresentationRuntime.ts';
+import { createIrohSettingsRuntime } from '#src/stores/nostr/irohSettingsRuntime.ts';
+import { createMessageEventRuntime } from '#src/stores/nostr/messageEventRuntime.ts';
+import { createMessageMutationRuntime } from '#src/stores/nostr/messageMutationRuntime.ts';
+import { createMessageRelayRuntime } from '#src/stores/nostr/messageRelayRuntime.ts';
+import { createMuteListRuntime } from '#src/stores/nostr/muteListRuntime.ts';
+import { createMyRelayListRuntime } from '#src/stores/nostr/myRelayListRuntime.ts';
+import { createAppClientOptions } from '#src/stores/nostr/clientOptions.ts';
+import { createOutboundMessageReplayRuntime } from '#src/stores/nostr/outboundMessageReplayRuntime.ts';
+import { createPrivateContactListRuntime } from '#src/stores/nostr/privateContactListRuntime.ts';
+import { createPrivateContactMembershipRuntime } from '#src/stores/nostr/privateContactMembershipRuntime.ts';
+import { createPrivateMessagesBackfillRuntime } from '#src/stores/nostr/privateMessagesBackfillRuntime.ts';
+import { createPrivateMessagesIngestRuntime } from '#src/stores/nostr/privateMessagesIngestRuntime.ts';
+import { createPrivateMessagesSubscriptionRuntime } from '#src/stores/nostr/privateMessagesSubscriptionRuntime.ts';
+import { createPrivateMessagesUiRuntime } from '#src/stores/nostr/privateMessagesUiRuntime.ts';
+import { createPrivateStateRuntime } from '#src/stores/nostr/privateStateRuntime.ts';
 import {
   createReconnectHealingRuntime,
   type ReconnectHealingReason,
   type ReconnectHealingRunOptions,
-} from 'src/stores/nostr/reconnectHealingRuntime';
-import { createRelayConnectionRuntime } from 'src/stores/nostr/relayConnectionRuntime';
-import { createRelayPublishRuntime } from 'src/stores/nostr/relayPublishRuntime';
-import { watchRelaySettingsSubscriptions } from 'src/stores/nostr/relaySettingsSubscriptions';
-import { createStartupContactSyncRuntime } from 'src/stores/nostr/startupContactSyncRuntime';
-import { createStartupRuntime } from 'src/stores/nostr/startupRuntime';
+} from '#src/stores/nostr/reconnectHealingRuntime.ts';
+import { createRelayConnectionRuntime } from '#src/stores/nostr/relayConnectionRuntime.ts';
+import { createRelayPublishRuntime } from '#src/stores/nostr/relayPublishRuntime.ts';
+import { watchRelaySettingsSubscriptions } from '#src/stores/nostr/relaySettingsSubscriptions.ts';
+import { createStartupContactSyncRuntime } from '#src/stores/nostr/startupContactSyncRuntime.ts';
+import { createStartupRuntime } from '#src/stores/nostr/startupRuntime.ts';
 import {
   createInitialStartupStepSnapshots,
   type StartupDisplaySnapshot,
   type StartupStepId,
   type StartupStepSnapshot,
-} from 'src/stores/nostr/startupState';
-import { createStorageSessionRuntime } from 'src/stores/nostr/storageSession';
-import { createSubscriptionLoggingRuntime } from 'src/stores/nostr/subscriptionLoggingRuntime';
-import { createSubscriptionRefreshRuntime } from 'src/stores/nostr/subscriptionRefreshRuntime';
-import { createTrackedContactStateRuntime } from 'src/stores/nostr/trackedContactStateRuntime';
+} from '#src/stores/nostr/startupState.ts';
+import { createStorageSessionRuntime } from '#src/stores/nostr/storageSession.ts';
+import { createSubscriptionLoggingRuntime } from '#src/stores/nostr/subscriptionLoggingRuntime.ts';
+import { createSubscriptionRefreshRuntime } from '#src/stores/nostr/subscriptionRefreshRuntime.ts';
+import { createTrackedContactStateRuntime } from '#src/stores/nostr/trackedContactStateRuntime.ts';
 import type {
   ContactCursorState,
   GroupIdentitySecretContent,
@@ -95,8 +103,8 @@ import type {
   RelaySaveStatus,
   RepairMissingMessageDependencyOptions,
   SubscribePrivateMessagesOptions,
-} from 'src/stores/nostr/types';
-import { createUserActions } from 'src/stores/nostr/userActions';
+} from '#src/stores/nostr/types.ts';
+import { createUserActions } from '#src/stores/nostr/userActions.ts';
 import {
   applyContactProfileEventStateToMetaValue,
   applyContactRelayListEventStateToMetaValue,
@@ -120,12 +128,15 @@ import {
   resolveIncomingChatInboxStateValue,
   resolvePrivateMessagesLiveReconnectSinceValue,
   shouldPreserveExistingGroupRelaysValue,
-} from 'src/stores/nostr/valueUtils';
-import { useRelayStore } from 'src/stores/relayStore';
-import type { ChatGroupEpochKey, MessageRelayStatus } from 'src/types/chat';
-import type { ContactRecord } from 'src/types/contact';
-import { buildBlossomUploadAuthorization, requireBlossomServerUrl } from 'src/utils/blossomServer';
-import { ref } from 'vue';
+} from '#src/stores/nostr/valueUtils.ts';
+import { useRelayStore } from '#src/stores/relayStore.ts';
+import type { ChatGroupEpochKey, MessageRelayStatus } from '#src/types/chat.ts';
+import type { ContactRecord } from '#src/types/contact.ts';
+import {
+  buildBlossomUploadAuthorization,
+  requireBlossomServerUrl,
+} from '#src/utils/blossomServer.ts';
+import { ref } from '#src/lib/state/reactivity.ts';
 
 export type {
   StartupDisplaySnapshot,
@@ -135,7 +146,7 @@ export type {
   StartupStepStatus,
   StartupTimedSnapshot,
   StartupTrackId,
-} from 'src/stores/nostr/startupState';
+} from '#src/stores/nostr/startupState.ts';
 export type {
   AuthMethod,
   CreateGroupChatResult,
@@ -156,15 +167,15 @@ export type {
   RelaySaveStatus,
   RotateGroupEpochResult,
   UserProfileLookupResult,
-} from 'src/stores/nostr/types';
+} from '#src/stores/nostr/types.ts';
 
 export type NostrNpubValidationResult = NpubValidationResult;
 export type NostrNsecValidationResult = NsecValidationResult;
 export type NostrPrivateKeyValidationResult = PrivateKeyValidationResult;
-export { __nostrStoreTestUtils } from 'src/stores/nostr/testUtils';
+export { __nostrStoreTestUtils } from '#src/stores/nostr/testUtils.ts';
 
 export const useNostrStore = defineStore('nostrStore', () => {
-  const ndk = new NDK(createAppNdkOptions());
+  const ndk = new NostrClient(createAppClientOptions());
   const chatStore = useChatStore();
   const nip65RelayStore = useNip65RelayStore();
   const relayStore = useRelayStore();
@@ -180,7 +191,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     showProgress: false,
   });
   const developerDiagnosticsEnabled = ref(
-    readDeveloperDiagnosticsEnabledFromStorage(DEVELOPER_DIAGNOSTICS_STORAGE_KEY)
+    readDeveloperDiagnosticsEnabledFromStorage(DEVELOPER_DIAGNOSTICS_STORAGE_KEY),
   );
   const developerDiagnosticsVersion = ref(0);
   const developerTraceVersion = ref(0);
@@ -195,7 +206,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   const isAppForeground = ref(false);
   const isReconnectHealing = ref(false);
   const reconnectHealingStatusLabel = ref<string | null>(null);
-  let cachedSigner: NDKSigner | null = null;
+  let cachedSigner: NostrSigner | null = null;
   let cachedSignerSessionKey: string | null = null;
   const configuredRelayUrls = new Set<string>();
   const relayConnectPromises = new Map<string, Promise<void>>();
@@ -233,18 +244,18 @@ export const useNostrStore = defineStore('nostrStore', () => {
   let getPrivateMessagesIngestQueueRuntime: () => Promise<void> = () => Promise.resolve();
   let subscribePrivateMessagesForLoggedInUserRuntime: (
     force?: boolean,
-    options?: SubscribePrivateMessagesOptions
+    options?: SubscribePrivateMessagesOptions,
   ) => Promise<void> = async () => {
     throw new Error('Private messages subscription runtime is not initialized.');
   };
   let refreshPrivateMessagesLiveSubscriptionRuntime: (
-    options?: RefreshPrivateMessagesLiveSubscriptionOptions
+    options?: RefreshPrivateMessagesLiveSubscriptionOptions,
   ) => Promise<RefreshPrivateMessagesLiveSubscriptionResult> = async () => {
     throw new Error('Private messages subscription refresh runtime is not initialized.');
   };
   let subscribeGroupMembershipRosterUpdatesRuntime: (
     seedRelayUrls?: string[],
-    force?: boolean
+    force?: boolean,
   ) => Promise<void> = async () => {
     throw new Error('Group roster subscription runtime is not initialized.');
   };
@@ -267,7 +278,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   let resetReconnectHealingRuntimeStateRuntime: () => void = () => {};
   let runReconnectHealingRuntime: (
     reason: ReconnectHealingReason,
-    options?: ReconnectHealingRunOptions
+    options?: ReconnectHealingRunOptions,
   ) => Promise<void> = async () => {
     throw new Error('Reconnect healing runtime is not initialized.');
   };
@@ -275,7 +286,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   let startAppLifecycleRuntimeRuntime: () => void = () => {};
   let resetOutboundMessageReplayRuntimeStateRuntime: () => void = () => {};
   let startOutboundMessageReplayRuntime: () => Promise<void> = async () => {};
-  let getOrCreateSignerRuntime: () => Promise<NDKSigner> = async () => {
+  let getOrCreateSignerRuntime: () => Promise<NostrSigner> = async () => {
     throw new Error('Relay connection runtime is not initialized.');
   };
   let getPrivateKeyHexRuntime: () => string | null = () => {
@@ -297,13 +308,13 @@ export const useNostrStore = defineStore('nostrStore', () => {
   let queueBackgroundGroupContactRefreshRuntime: (
     groupPublicKey: string,
     fallbackName: string,
-    seedRelayUrls?: string[]
+    seedRelayUrls?: string[],
   ) => void = () => {};
   let startPrivateMessagesStartupBackfillRuntime: (
     loggedInPubkeyHex: string,
     recipientPubkeys: string[],
     relayUrls: string[],
-    liveSince: number
+    liveSince: number,
   ) => void = () => {
     throw new Error('Private messages backfill runtime is not initialized.');
   };
@@ -314,7 +325,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     options?: {
       force?: boolean;
       seedRelayUrls?: string[];
-    }
+    },
   ) => Promise<void> = async () => {
     throw new Error('Group epoch history runtime is not initialized.');
   };
@@ -323,14 +334,14 @@ export const useNostrStore = defineStore('nostrStore', () => {
     options?: {
       force?: boolean;
       seedRelayUrls?: string[];
-    }
+    },
   ) => Promise<void> = async () => {
     throw new Error('Private messages for recipient runtime is not initialized.');
   };
   let repairMissingMessageDependencyRuntime: (
     chatPublicKey: string,
     targetEventId: string,
-    options: RepairMissingMessageDependencyOptions
+    options: RepairMissingMessageDependencyOptions,
   ) => Promise<boolean> = async () => {
     throw new Error('Missing message dependency repair runtime is not initialized.');
   };
@@ -339,28 +350,28 @@ export const useNostrStore = defineStore('nostrStore', () => {
   let upsertIncomingGroupInviteRequestChatRuntime: (
     groupPublicKey: string,
     createdAt: string,
-    preview?: Pick<ContactRecord, 'name' | 'meta'> | null
+    preview?: Pick<ContactRecord, 'name' | 'meta'> | null,
   ) => Promise<void> = async () => {
     throw new Error('Group invite runtime is not initialized.');
   };
   let publishGroupIdentitySecretRuntime: (
     groupPublicKey: string,
     encryptedPrivateKey: string,
-    seedRelayUrls?: string[]
+    seedRelayUrls?: string[],
   ) => Promise<RelaySaveStatus> = async () => {
     throw new Error('Private state runtime is not initialized.');
   };
   let publishGroupMembershipFollowSetRuntime: (
     groupPublicKey: string,
     memberPublicKeys: string[],
-    seedRelayUrls?: string[]
+    seedRelayUrls?: string[],
   ) => Promise<RelaySaveStatus> = async () => {
     throw new Error('Private state runtime is not initialized.');
   };
   let publishGroupMembershipRosterFollowSetRuntime: (
     groupPublicKey: string,
     memberPublicKeys: string[],
-    seedRelayUrls?: string[]
+    seedRelayUrls?: string[],
   ) => Promise<RelaySaveStatus> = async () => {
     throw new Error('Private state runtime is not initialized.');
   };
@@ -391,7 +402,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   } = createTrackedContactStateRuntime();
 
   function shouldApplyContactProfileEvent(
-    event: Pick<NDKEvent, 'created_at' | 'id' | 'pubkey'>
+    event: Pick<ClientEvent, 'created_at' | 'id' | 'pubkey'>,
   ): boolean {
     const normalizedPubkey = inputSanitizerService.normalizeHexKey(event.pubkey);
     if (!normalizedPubkey || isPubkeyBlockedRuntime(normalizedPubkey)) {
@@ -402,7 +413,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   }
 
   function shouldApplyContactRelayListEvent(
-    event: Pick<NDKEvent, 'created_at' | 'id' | 'pubkey'>
+    event: Pick<ClientEvent, 'created_at' | 'id' | 'pubkey'>,
   ): boolean {
     const normalizedPubkey = inputSanitizerService.normalizeHexKey(event.pubkey);
     if (!normalizedPubkey || isPubkeyBlockedRuntime(normalizedPubkey)) {
@@ -479,9 +490,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     ensureStoredEventSince,
     flushPendingEventSinceUpdate,
     getFilterSince,
-    getPrivateMessagesBackfillResumeState,
     getPrivateMessagesEpochSwitchSince,
-    getPrivateMessagesStartupFloorSince,
     getPrivateMessagesStartupLiveSince,
 
     normalizeTimestamp,
@@ -490,13 +499,11 @@ export const useNostrStore = defineStore('nostrStore', () => {
     readPrivatePreferencesFromStorage,
 
     resetEventSinceForFreshLogin,
-    setMessageHistoryRestoreDays,
 
     sha256Hex,
     toComparableTimestamp,
     updateStoredEventSinceFromCreatedAt,
     updateStoredPrivateMessagesLastReceivedFromCreatedAt,
-    writePrivateMessagesBackfillState,
     writePrivatePreferencesToStorage,
   } = createStorageSessionRuntime({
     eventSince,
@@ -546,13 +553,13 @@ export const useNostrStore = defineStore('nostrStore', () => {
     return resolvePrivateMessagesLiveReconnectSinceValue({
       liveCoverageAt: privateMessagesSubscriptionLiveCoverageAt.value,
       lastEventTime: readStoredPrivateMessagesLastReceivedCreatedAt(),
-      startupFloorSince: getPrivateMessagesStartupFloorSince(baseUnixTime),
+      initialLiveSince: getPrivateMessagesStartupLiveSince(baseUnixTime),
       lookbackSeconds: PRIVATE_MESSAGES_LIVE_RECONNECT_LOOKBACK_SECONDS,
     });
   }
 
   function refreshPrivateMessagesLiveSubscriptionForReconnect(
-    options: { forceRecreate?: boolean; sinceMode?: 'reconnect' | 'startup' } = {}
+    options: { forceRecreate?: boolean; sinceMode?: 'reconnect' | 'startup' } = {},
   ): Promise<RefreshPrivateMessagesLiveSubscriptionResult> {
     return refreshPrivateMessagesLiveSubscriptionRuntime({
       forceRecreate: options.forceRecreate,
@@ -567,7 +574,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     GroupIdentitySecretContent,
     'epoch_number' | 'epoch_privkey'
   > {
-    const epochSigner = NDKPrivateKeySigner.generate();
+    const epochSigner = NostrPrivateKeySigner.generate();
     return {
       epoch_number: 0,
       epoch_privkey: epochSigner.privateKey,
@@ -618,7 +625,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     conflict: {
       higherEpochEntry: ChatGroupEpochKey;
       olderHigherEpochEntry: ChatGroupEpochKey | null;
-    }
+    },
   ): void {
     const logKey = [
       inputSanitizerService.normalizeHexKey(groupPublicKey) ?? groupPublicKey,
@@ -643,7 +650,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
           conflict.higherEpochEntry.invitation_created_at ??
           null,
         createdAt: createdAt ?? null,
-      }
+      },
     );
   }
 
@@ -652,7 +659,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     epochNumber: number,
     epochPublicKey: string | null,
     createdAt: string | null,
-    conflict: ChatGroupEpochKey
+    conflict: ChatGroupEpochKey,
   ): void {
     const logKey = [
       'conflicting-epoch-number',
@@ -675,7 +682,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
         conflictingEpochPublicKey: conflict.epoch_public_key,
         conflictingEpochCreatedAt: conflict.invitation_created_at ?? null,
         createdAt: createdAt ?? null,
-      }
+      },
     );
   }
 
@@ -690,7 +697,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   async function upsertIncomingGroupInviteRequestChat(
     groupPublicKey: string,
     createdAt: string,
-    preview: Pick<ContactRecord, 'name' | 'meta'> | null = null
+    preview: Pick<ContactRecord, 'name' | 'meta'> | null = null,
   ): Promise<void> {
     return upsertIncomingGroupInviteRequestChatRuntime(groupPublicKey, createdAt, preview);
   }
@@ -700,15 +707,16 @@ export const useNostrStore = defineStore('nostrStore', () => {
     const publishedRelayUrls = normalizeRelayStatusUrls(
       relayStatuses
         .filter((entry) => entry.direction === 'outbound' && entry.status === 'published')
-        .map((entry) => entry.relay_url)
+        .map((entry) => entry.relay_url),
     );
     const failedRelayUrls = normalizeRelayStatusUrls(
       relayStatuses
         .filter((entry) => entry.direction === 'outbound' && entry.status === 'failed')
-        .map((entry) => entry.relay_url)
+        .map((entry) => entry.relay_url),
     );
     const firstFailure = relayStatuses.find(
-      (entry) => entry.direction === 'outbound' && entry.status === 'failed' && entry.detail?.trim()
+      (entry) =>
+        entry.direction === 'outbound' && entry.status === 'failed' && entry.detail?.trim(),
     );
 
     return {
@@ -720,8 +728,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
   }
 
   function compareReplaceableEventState(
-    first: Pick<NDKEvent, 'created_at' | 'id'> | null | undefined,
-    second: Pick<NDKEvent, 'created_at' | 'id'> | null | undefined
+    first: Pick<ClientEvent, 'created_at' | 'id'> | null | undefined,
+    second: Pick<ClientEvent, 'created_at' | 'id'> | null | undefined,
   ): number {
     const firstCreatedAt = Number(first?.created_at ?? 0);
     const secondCreatedAt = Number(second?.created_at ?? 0);
@@ -737,7 +745,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   const resolveGroupDisplayName = resolveGroupDisplayNameValue;
 
   async function ensurePrivatePreferences(
-    options: { publishIfCreated?: boolean } = {}
+    options: { publishIfCreated?: boolean } = {},
   ): Promise<PrivatePreferences> {
     const existing = readPrivatePreferencesFromStorage();
     if (existing) {
@@ -794,7 +802,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
       getPrivateMessagesIngestQueueRuntime().catch((error) => {
         console.error(
           'Failed while draining private message ingest queue before EOSE checks',
-          error
+          error,
         );
       }),
   });
@@ -873,7 +881,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   function logSubscription(
     name: string,
     phase: string,
-    details: Record<string, unknown> = {}
+    details: Record<string, unknown> = {},
   ): void {
     logDeveloperTrace('info', `subscription:${name}`, phase, details);
   }
@@ -902,7 +910,18 @@ export const useNostrStore = defineStore('nostrStore', () => {
       isAppForeground.value = value;
     },
     setVisibleChatId: (chatId) => {
+      const previous = chatStore.visibleChatId;
       chatStore.setVisibleChatId(chatId);
+      if (chatId && chatId !== previous) {
+        void chatStore
+          .markAsRead(chatId)
+          .then((cursor) => {
+            if (cursor) scheduleContactCursorPublish(chatId, cursor);
+          })
+          .catch(() => {
+            /* A later focus or incoming message retries the read cursor. */
+          });
+      }
     },
   });
   resetAppLifecycleRuntimeStateRuntime = resetAppLifecycleRuntimeStateImpl;
@@ -1048,7 +1067,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   });
   getOrCreateSignerRuntime = getOrCreateSignerImpl;
 
-  async function getOrCreateSigner(): Promise<NDKSigner> {
+  async function getOrCreateSigner(): Promise<NostrSigner> {
     return getOrCreateSignerRuntime();
   }
   const {
@@ -1126,6 +1145,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
 
   const {
     queueEpochDrivenPrivateMessagesSubscriptionRefresh,
+    queueContactProfileSubscriptionRefresh,
     queueTrackedContactSubscriptionsRefresh,
   } = createSubscriptionRefreshRuntime({
     getPendingPrivateMessagesEpochSubscriptionRefreshOptions: () =>
@@ -1160,6 +1180,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
 
   const {
     fetchMyRelayList,
+    applyOwnPrivateRelayList,
+    applyOwnRelayList,
     publishMyRelayList,
     resetMyRelayListRuntimeState,
     restoreMyRelayList,
@@ -1242,12 +1264,12 @@ export const useNostrStore = defineStore('nostrStore', () => {
       publishGroupMembershipRosterFollowSet: (
         groupPublicKey,
         memberPublicKeys,
-        seedRelayUrls = []
+        seedRelayUrls = [],
       ) =>
         publishGroupMembershipRosterFollowSetRuntime(
           groupPublicKey,
           memberPublicKeys,
-          seedRelayUrls
+          seedRelayUrls,
         ),
       toIsoTimestampFromUnix,
       toStoredNostrEvent,
@@ -1292,6 +1314,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
     getPrivateMessagesIngestQueue,
     queuePrivateMessageIngestion,
     resetPrivateMessagesIngestRuntimeState,
+    resumePendingPrivateMessages,
+    repairRestoredOutgoingChats,
   } = createPrivateMessagesIngestRuntime({
     appendRelayStatusesToMessageEvent,
     applyPendingIncomingDeletionsForMessage,
@@ -1322,8 +1346,11 @@ export const useNostrStore = defineStore('nostrStore', () => {
     normalizeThrottleMs,
     normalizeTimestamp,
     persistIncomingGroupEpochTicket,
+    processIncomingCallSignal: (peer, signal) => useCallStore().receiveSignal(peer, signal),
+    processIncomingRoomSignal: (peer, signal) => useCallRoomStore().receive(peer, signal),
     processIncomingDeletionRumorEvent,
     processIncomingReactionRumorEvent,
+    queueChatProfileRefresh: () => queueContactProfileSubscriptionRefresh(),
     queueBackgroundGroupContactRefresh: (groupPublicKey, fallbackName, seedRelayUrls) => {
       queueBackgroundGroupContactRefreshRuntime(groupPublicKey, fallbackName, seedRelayUrls);
     },
@@ -1356,11 +1383,11 @@ export const useNostrStore = defineStore('nostrStore', () => {
     if (!loggedInPubkeyHex || ownerPubkey !== loggedInPubkeyHex) {
       return false;
     }
-    if (!eventId || input.event.kind !== NDKKind.GiftWrap) {
+    if (!eventId || input.event.kind !== NostrKind.GiftWrap) {
       return true;
     }
 
-    const wrappedEvent = new NDKEvent(ndk, {
+    const wrappedEvent = new ClientEvent(ndk, {
       ...input.event,
       id: eventId,
     });
@@ -1437,7 +1464,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     queuePrivateMessageIngestion,
     refreshAllStoredContacts: () => refreshAllStoredContactsRuntime(),
     relaySignature,
-    resolvePrivateMessageReadRelayUrls: resolveLoggedInReadRelayUrls,
+    resolvePrivateMessageReadRelayUrls,
     schedulePostPrivateMessagesEoseChecks,
     setPrivateMessagesRestoreThrottleMs: (value) => {
       privateMessagesRestoreThrottleMs = value;
@@ -1446,13 +1473,13 @@ export const useNostrStore = defineStore('nostrStore', () => {
       loggedInPubkeyHex,
       recipientPubkeys,
       relayUrls,
-      liveSince
+      liveSince,
     ) => {
       startPrivateMessagesStartupBackfillRuntime(
         loggedInPubkeyHex,
         recipientPubkeys,
         relayUrls,
-        liveSince
+        liveSince,
       );
     },
     subscribeWithReqLogging,
@@ -1472,13 +1499,13 @@ export const useNostrStore = defineStore('nostrStore', () => {
     repairMissingMessageDependency: repairMissingMessageDependencyImpl,
     resetPrivateMessagesBackfillRuntimeState: resetPrivateMessagesBackfillRuntimeStateImpl,
     resolveMissingMessageDependencyRepair: resolveMissingMessageDependencyRepairImpl,
+    prioritizeThreadHistory,
     restoreGroupEpochHistory: restoreGroupEpochHistoryImpl,
     restorePrivateMessagesForRecipient: restorePrivateMessagesForRecipientImpl,
     startPrivateMessagesStartupBackfill: startPrivateMessagesStartupBackfillImpl,
     stopPrivateMessagesBackfill: stopPrivateMessagesBackfillImpl,
   } = createPrivateMessagesBackfillRuntime({
     ensureLiveRecipientSubscription: () => subscribePrivateMessagesForLoggedInUserImpl(),
-    getLiveRecipientSince,
     beginStartupInternalTask,
     buildFilterSinceDetails,
     buildFilterUntilDetails,
@@ -1492,24 +1519,20 @@ export const useNostrStore = defineStore('nostrStore', () => {
     flushPrivateMessagesUiRefreshNow,
     formatSubscriptionLogValue,
     getLoggedInPublicKeyHex,
-    isStartupRestoring: () => isRestoringStartupState.value,
-    getPrivateMessagesBackfillResumeState,
     getPrivateMessagesIngestQueue: () => getPrivateMessagesIngestQueueRuntime(),
-    getPrivateMessagesStartupFloorSince,
     logSubscription,
     ndk,
     normalizeThrottleMs,
     queuePrivateMessageIngestion,
     relaySignature,
     resolveGroupChatEpochEntries,
-    resolvePrivateMessageReadRelayUrls: resolveLoggedInReadRelayUrls,
+    resolvePrivateMessageReadRelayUrls,
     schedulePostPrivateMessagesEoseChecks,
     subscribeWithReqLogging,
     toOptionalIsoTimestampFromUnix,
     updateStoredEventSinceFromCreatedAt,
     updateStoredPrivateMessagesLastReceivedFromCreatedAt,
     updateStartupInternalTask,
-    writePrivateMessagesBackfillState,
   });
   repairMissingMessageDependencyRuntime = repairMissingMessageDependencyImpl;
   resetPrivateMessagesBackfillRuntimeStateRuntime = resetPrivateMessagesBackfillRuntimeStateImpl;
@@ -1520,11 +1543,14 @@ export const useNostrStore = defineStore('nostrStore', () => {
   stopPrivateMessagesBackfillRuntime = stopPrivateMessagesBackfillImpl;
 
   const {
+    setVisibleProfileTargets,
     hasActiveContactHydration,
     resetContactSubscriptionsRuntimeState,
     subscribeContactProfileUpdates,
     subscribeContactRelayListUpdates,
   } = createContactSubscriptionsRuntime({
+    applyOwnPrivateRelayList,
+    applyOwnRelayList,
     applyContactProfileEventStateToMeta,
     applyContactRelayListEventStateToMeta,
     buildContactProfileEventState,
@@ -1568,7 +1594,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   let refreshContactByPublicKeyRuntime: (
     pubkeyHex: string,
     fallbackName?: string,
-    lifecycle?: Record<string, unknown>
+    lifecycle?: Record<string, unknown>,
   ) => Promise<unknown> = async () => {
     throw new Error('Contact profile runtime is not initialized.');
   };
@@ -1781,6 +1807,14 @@ export const useNostrStore = defineStore('nostrStore', () => {
   publishGroupMembershipFollowSetRuntime = publishGroupMembershipFollowSetImpl;
   publishGroupMembershipRosterFollowSetRuntime = publishGroupMembershipRosterFollowSetImpl;
 
+  const { getIrohRelays, getIrohRelaySettings, saveIrohRelaySettings } = createIrohSettingsRuntime({
+    ensurePrivatePreferences,
+    publishPrivatePreferences,
+    readPrivatePreferencesFromStorage,
+    writePrivatePreferencesToStorage,
+    getOwnPubkey: getLoggedInPublicKeyHex,
+  });
+
   const { getBlossomServerUrl, saveBlossomServerUrl } = createBlossomSettingsRuntime({
     ensurePrivatePreferences,
     publishPrivatePreferences,
@@ -1915,7 +1949,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     const serverUrl = requireBlossomServerUrl(input.serverUrl);
     const createdAt = Math.floor(Date.now() / 1000);
     const authorization = buildBlossomUploadAuthorization(serverUrl, input.sha256, createdAt);
-    const authEvent = new NDKEvent(ndk, {
+    const authEvent = new ClientEvent(ndk, {
       kind: 24242,
       created_at: createdAt,
       pubkey: loggedInPubkeyHex,
@@ -1968,6 +2002,10 @@ export const useNostrStore = defineStore('nostrStore', () => {
     relayStatusVersion,
     resetContactSubscriptionsRuntimeState,
     resetEventSinceForFreshLogin,
+    resetCalls: () => {
+      useCallStore().reset();
+      useCallRoomStore().reset();
+    },
     resetGroupRosterSubscriptionRuntimeState,
     resetMyRelayListRuntimeState,
     resetMuteListRuntimeState: () => {
@@ -2195,13 +2233,42 @@ export const useNostrStore = defineStore('nostrStore', () => {
     processIncomingReactionDeletion,
     resolveLoggedInPublishRelayUrls,
     resolveLoggedInReadRelayUrls,
+    startPrivateMessagesHistoryRestore,
     subscribePrivateMessagesForLoggedInUser: (force, options) =>
       subscribePrivateMessagesForLoggedInUserRuntime(force, options),
     toOptionalIsoTimestampFromUnix,
   });
   refreshDeveloperPendingQueuesRuntime = refreshDeveloperPendingQueues;
 
+  const { sendCallSignal, sendRoomSignal } = createCallSignalingRuntime({
+    ndk,
+    getOwnPubkey: getLoggedInPublicKeyHex,
+    isBlocked: (peer) => isPubkeyBlockedRuntime(peer),
+    refreshRelays: refreshContactRelayList,
+    getAppRelays: getAppRelayUrls,
+    sendRumor: sendGiftWrappedRumor,
+  });
+
   return {
+    searchProfiles: async (
+      query: string,
+      signal: AbortSignal,
+      onResults: (results: ProfileSearchResult[]) => void,
+    ) => {
+      const owner = getLoggedInPublicKeyHex();
+      const relayUrls = await resolveLoggedInReadRelayUrls();
+      if (signal.aborted || owner !== getLoggedInPublicKeyHex()) return 'complete' as const;
+      return searchRelayProfiles(ndk, query, relayUrls, {
+        signal,
+        onResults: (results) => {
+          if (owner === getLoggedInPublicKeyHex()) onResults(results);
+        },
+        isBlocked: (key) => isPubkeyBlockedRuntime(key),
+        resolveNip05: getNip05Data,
+      });
+    },
+    sendCallSignal,
+    sendRoomSignal,
     clearPrivateKey: clearPrivateKeyImpl,
     createRemoteSignerNostrConnectLogin: createRemoteSignerNostrConnectLoginImpl,
     createGroupChat,
@@ -2221,12 +2288,30 @@ export const useNostrStore = defineStore('nostrStore', () => {
     getDeveloperDiagnosticsSnapshot,
     getNip05Data,
     hasNip07Extension,
-    initializeSessionState,
+    async initializeSessionState(seedRelayUrls: string[] = []) {
+      await initializeSessionState(seedRelayUrls);
+      const account = getLoggedInPublicKeyHex();
+      if (account) {
+        void resumePendingPrivateMessages(ndk, account).catch(() =>
+          console.warn('Unable to resume pending messages'),
+        );
+        void repairRestoredOutgoingChats(account).catch(() =>
+          console.warn('Unable to restore conversation visibility'),
+        );
+      }
+    },
     ingestAndroidRelayNotificationEvent,
     getLoggedInPublicKeyHex,
     getPrivateKeyHex: getPrivateKeyHexRuntime,
     refreshDeveloperPendingQueues,
-    refreshPrivateMessages,
+    async refreshPrivateMessages() {
+      const account = getLoggedInPublicKeyHex();
+      if (account)
+        void resumePendingPrivateMessages(ndk, account).catch(() =>
+          console.warn('Unable to resume pending messages'),
+        );
+      await refreshPrivateMessages();
+    },
     refreshPrivateMessagesLiveSubscriptionForReconnect,
     getRelayConnectionState,
     isRelayConnectionPending,
@@ -2244,7 +2329,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     blockPubkey: (
       pubkey: string,
       seedRelayUrls?: string[],
-      options?: { fallbackName?: string; type?: 'user' | 'group' }
+      options?: { fallbackName?: string; type?: 'user' | 'group' },
     ) => setPubkeyBlocked(pubkey, true, seedRelayUrls, options),
     isPubkeyBlocked,
     isPubkeyMuted,
@@ -2269,13 +2354,13 @@ export const useNostrStore = defineStore('nostrStore', () => {
     restoreMuteList,
     restoreContactCursorState,
     restoreGroupIdentitySecrets,
+    prioritizeThreadHistory,
     restoreGroupEpochHistory: restoreGroupEpochHistoryRuntime,
     restoreMyRelayList,
     restorePrivateMessagesForRecipient: restorePrivateMessagesForRecipientRuntime,
     restorePrivateContactList,
     restorePrivatePreferences,
     restoreStartupState,
-    setMessageHistoryRestoreDays,
     setAppLifecycleRouteChatId: (chatId: string | null) => {
       setAppLifecycleRouteChatIdRuntime(chatId);
     },
@@ -2286,7 +2371,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     repairMissingMessageDependency: (
       chatPublicKey: string,
       targetEventId: string,
-      options: RepairMissingMessageDependencyOptions
+      options: RepairMissingMessageDependencyOptions,
     ) => repairMissingMessageDependencyRuntime(chatPublicKey, targetEventId, options),
     restartPrivateMessagesDiagnosticsSubscription,
     retryDirectMessageRelay,
@@ -2297,13 +2382,16 @@ export const useNostrStore = defineStore('nostrStore', () => {
     ensureBlossomUploadAuthentication,
     getBlossomServerUrl,
     saveBlossomServerUrl,
+    getIrohRelays,
+    getIrohRelaySettings,
+    saveIrohRelaySettings,
     signBlossomUploadAuthHeader,
     sendDirectMessageDeletion,
     sendDirectMessageReaction,
     unblockPubkey: (
       pubkey: string,
       seedRelayUrls?: string[],
-      options?: { fallbackName?: string; type?: 'user' | 'group' }
+      options?: { fallbackName?: string; type?: 'user' | 'group' },
     ) => setPubkeyBlocked(pubkey, false, seedRelayUrls, options),
     unmutePubkey: (pubkey: string, seedRelayUrls?: string[]) =>
       setPubkeyMuted(pubkey, false, seedRelayUrls),
@@ -2322,6 +2410,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     updateLoggedInUserRelayList,
     setDeveloperDiagnosticsEnabled,
     syncLoggedInContactProfile,
+    setVisibleProfileTargets,
     syncRecentChatContacts,
     startupDisplay,
     startupSteps,

@@ -1,4 +1,4 @@
-import { isPackagedAppRuntime } from 'src/utils/runtimePlatform';
+import { isPackagedAppRuntime } from '#src/utils/runtimePlatform.ts';
 
 const THEME_MODE_STORAGE_KEY = 'ui-theme-mode';
 const PANEL_OPACITY_STORAGE_KEY = 'ui-panel-opacity';

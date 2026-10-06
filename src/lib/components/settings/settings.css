@@ -1,0 +1,533 @@
+.settings-shell .settings-item {
+  min-height: 56px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--nc-border);
+  border-radius: 0;
+  gap: 16px;
+  text-align: left;
+}
+.settings-shell .settings-item > span {
+  flex: 1;
+}
+.settings-shell .sidebar-header h1 {
+  font-weight: 600;
+}
+.settings-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--nc-border);
+  min-height: 57px;
+  flex-shrink: 0;
+}
+.settings-detail-header h2 {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+.settings-body {
+  padding: 18px;
+  overflow: auto;
+  flex: 1;
+  min-width: 0;
+}
+.settings-card {
+  border: 1px solid var(--nc-border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--nc-sidebar) 92%, transparent);
+  padding: 16px;
+  margin-bottom: 16px;
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.settings-card h3,
+.settings-card p {
+  margin: 0;
+}
+.settings-card h3 {
+  font-size: 16px;
+  font-weight: 500;
+}
+.settings-card small,
+.settings-caption {
+  color: var(--nc-text-secondary);
+  font-size: 12px;
+}
+.settings-card label:not(.settings-switch) {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.settings-card input:not([type='checkbox']):not([type='radio']),
+.settings-card textarea,
+.settings-card select {
+  width: 100%;
+  border-radius: 4px;
+  background: transparent;
+  min-width: 0;
+}
+.settings-card input:disabled {
+  opacity: 0.5;
+}
+.settings-card textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+.settings-card .settings-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-switch input {
+  accent-color: var(--q-primary);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.settings-switch span {
+  display: grid;
+  gap: 4px;
+}
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-actions .primary,
+.settings-actions .outline {
+  border-radius: 4px;
+  padding: 8px 14px;
+}
+.settings-actions.end {
+  justify-content: flex-end;
+}
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.settings-card summary {
+  cursor: pointer;
+  font-weight: 500;
+  padding: 4px 0;
+}
+.settings-card details[open] > summary {
+  margin-bottom: 16px;
+}
+.settings-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  max-height: 460px;
+  overflow: auto;
+}
+.settings-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--nc-border);
+  margin: -18px -18px 18px;
+  overflow-x: auto;
+}
+.settings-tabs button {
+  padding: 15px 20px;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.settings-tabs button[aria-selected='true'] {
+  color: var(--q-primary);
+  border-color: var(--q-primary);
+}
+.settings-relay {
+  border: 1px solid var(--nc-border);
+  border-radius: 4px;
+  padding: 12px;
+  min-width: 0;
+}
+.settings-relay-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.settings-relay-head .relay-url {
+  flex: 1;
+  overflow-wrap: anywhere;
+  min-width: 120px;
+}
+.settings-relay-head label {
+  display: flex !important;
+  align-items: center;
+  gap: 5px;
+}
+.settings-relay-head input {
+  accent-color: var(--q-primary);
+}
+.settings-dialog {
+  color: var(--nc-text);
+  background: var(--nc-panel-sidebar-bg);
+  border: 1px solid var(--nc-border);
+  border-radius: 12px;
+  width: min(460px, calc(100vw - 32px));
+  padding: 24px;
+}
+.settings-dialog::backdrop {
+  background: #0009;
+}
+.settings-dialog h2 {
+  font-size: 20px;
+}
+.settings-dialog .settings-actions {
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+.settings-dialog img {
+  max-width: 100%;
+  display: block;
+  margin: 16px auto;
+}
+.settings-key {
+  font-family: monospace;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  user-select: all;
+}
+.update-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--q-primary);
+  border-radius: 50%;
+}
+@media (max-width: 767px) {
+  .settings-body {
+    padding: 12px;
+  }
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+  .settings-tabs {
+    margin: -12px -12px 12px;
+  }
+  .settings-tabs button {
+    padding: 12px;
+  }
+  .settings-detail-header {
+    padding: 8px;
+  }
+}
+.settings-shell .sidebar-header {
+  height: 58px;
+  border-bottom: 1px solid var(--nc-border);
+  background: var(--nc-panel-header-bg);
+}
+.settings-shell .settings-item {
+  gap: 34px;
+}
+.settings-shell .settings-item > svg {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.settings-shell .settings-item > span {
+  margin: 0;
+}
+.settings-shell .settings-item:hover {
+  background: var(--nc-hover);
+}
+.settings-shell .settings-item.active {
+  color: var(--nc-active-text);
+}
+.settings-shell .danger-text {
+  color: #f39aa0;
+}
+.settings-detail-header {
+  min-height: 50px;
+  background: var(--nc-panel-header-bg);
+}
+.settings-detail-header > svg {
+  width: 20px;
+  height: 20px;
+  color: var(--nc-text-secondary);
+}
+.settings-card hr {
+  border: 0;
+  border-top: 1px solid var(--nc-border);
+  width: 100%;
+  margin: 0;
+}
+.theme-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.settings-card .settings-select-field {
+  position: relative;
+  width: min(100%, 360px);
+  display: block;
+}
+.settings-select-field > span {
+  position: absolute;
+  top: 4px;
+  left: 12px;
+  font-size: 11px;
+  color: var(--nc-text-secondary);
+  pointer-events: none;
+}
+.settings-card .settings-select-field > select {
+  height: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--nc-search-bg);
+  padding: 15px 12px 0;
+}
+.settings-switch input[role='switch'] {
+  appearance: none;
+  position: relative;
+  border: 0;
+  border-radius: 12px;
+  width: 34px;
+  height: 14px;
+  padding: 0;
+  margin: 5px 8px;
+  background: var(--nc-text-secondary);
+  opacity: 0.65;
+  cursor: pointer;
+  overflow: visible;
+}
+.settings-switch input[role='switch']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -3px;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  box-shadow: 0 1px 4px #0005;
+  transition: transform 0.15s;
+}
+.settings-switch input[role='switch']:checked {
+  background: color-mix(in srgb, var(--q-primary) 60%, transparent);
+  opacity: 1;
+}
+.settings-switch input[role='switch']:checked::before {
+  transform: translateX(14px);
+  background: var(--q-primary);
+}
+.settings-switch input[role='switch']:focus-visible {
+  outline: 2px solid var(--q-primary);
+  outline-offset: 5px;
+}
+.settings-switch input[role='switch']:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+.profile-toolbar {
+  height: 36px;
+  margin-bottom: 12px;
+}
+.profile-toolbar button {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.profile-toolbar .primary {
+  border-radius: 14px;
+  padding: 8px 16px;
+}
+.profile-toolbar .link {
+  padding: 8px 16px;
+}
+.profile-public-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--nc-search-bg);
+  border-radius: 12px;
+  height: 40px;
+  padding: 0 10px;
+  margin-bottom: 36px;
+  min-width: 0;
+}
+.profile-public-key > div {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.2;
+}
+.profile-public-key small {
+  font-size: 11px;
+  color: var(--nc-text-secondary);
+}
+.profile-public-key .settings-key {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: inherit;
+}
+.profile-key-format {
+  border: 1px solid var(--q-primary);
+  border-radius: 12px;
+  color: var(--q-primary);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  padding: 2px 8px;
+}
+.profile-sections {
+  border: 1px solid var(--nc-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--nc-sidebar) 92%, transparent);
+}
+.profile-sections > details + details {
+  border-top: 1px solid var(--nc-border);
+}
+.profile-sections > details > summary {
+  padding: 12px 20px;
+  min-height: 49px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 34px;
+}
+.profile-sections > details > summary::before {
+  content: '›';
+  font-size: 24px;
+  font-weight: 400;
+  width: 18px;
+  line-height: 1;
+}
+.profile-sections > details[open] > summary::before {
+  transform: rotate(90deg);
+}
+.profile-sections summary .icon-button {
+  height: 24px;
+  width: 26px;
+  margin-left: -25px;
+}
+.profile-fields {
+  padding: 16px 26px 12px;
+  display: grid;
+  gap: 14px;
+}
+.profile-field {
+  display: block;
+  position: relative;
+}
+.profile-field > span {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  font-size: 14px;
+  color: var(--nc-text-secondary);
+  pointer-events: none;
+  transition: all 0.12s;
+}
+.profile-field.filled > span,
+.profile-field:focus-within > span {
+  top: 5px;
+  font-size: 11px;
+}
+.profile-field input,
+.profile-field textarea {
+  height: 40px;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  background: var(--nc-search-bg);
+  padding: 15px 12px 2px;
+  min-width: 0;
+}
+.profile-field textarea {
+  resize: vertical;
+  min-height: 40px;
+}
+.profile-field input:focus,
+.profile-field textarea:focus {
+  outline: 1px solid var(--q-primary);
+}
+.profile-fields .settings-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.profile-fields .settings-switch span {
+  display: grid;
+  gap: 4px;
+}
+.profile-fields small {
+  font-size: 12px;
+  color: var(--nc-text-secondary);
+}
+.profile-fields h4 {
+  margin: 0;
+}
+.profile-birthday {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 767px) {
+  .theme-setting {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .settings-select-field {
+    width: 100% !important;
+  }
+  .profile-fields {
+    padding: 12px;
+  }
+  .profile-sections > details > summary {
+    gap: 16px;
+  }
+  .profile-sections summary .icon-button {
+    margin-left: 0;
+  }
+  .settings-detail-header {
+    min-height: 50px;
+  }
+}
+.theme-card {
+  gap: 18px;
+}
+.settings-card,
+.profile-sections {
+  border-color: color-mix(in srgb, var(--nc-text) 30%, transparent);
+}
+.theme-card hr {
+  border-color: color-mix(in srgb, var(--nc-text) 30%, transparent);
+}
+.profile-fields {
+  margin: 6px 12px 12px;
+  padding: 12px 14px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--nc-sidebar) 88%, var(--nc-border) 12%);
+}
+.profile-field textarea {
+  display: block;
+  resize: none;
+}
+.language-card {
+  max-width: 560px;
+  gap: 18px;
+}
+.language-card .settings-select-field {
+  width: 100%;
+}
+.notification-toggle > span {
+  order: -1;
+  flex: 1;
+}
+.notification-card > .settings-switch {
+  gap: 18px;
+}
+.notification-toggle > span {
+  font-size: 16px;
+}

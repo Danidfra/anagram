@@ -1,5 +1,5 @@
-import { createPinia, setActivePinia } from 'pinia';
-import { MissingContactRelaysError, useMessageStore } from 'src/stores/messageStore';
+import { createPinia, setActivePinia } from '#src/lib/state/store.ts';
+import { MissingContactRelaysError, useMessageStore } from '#src/stores/messageStore.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const CHAT_ID = 'c'.repeat(64);
@@ -28,6 +28,8 @@ const serviceMocks = vi.hoisted(() => ({
     visibleChatId: null as string | null,
   },
   nostrStore: {
+    getLoggedInPublicKeyHex: vi.fn(() => 'a'.repeat(64)),
+    refreshContactByPublicKey: vi.fn().mockResolvedValue(undefined),
     ensureRespondedPubkeyIsContact: vi.fn().mockResolvedValue(undefined),
     sendDirectMessage: vi.fn().mockResolvedValue({ id: 'gift-wrap' }),
   },
@@ -37,27 +39,27 @@ const serviceMocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('src/services/chatDataService', () => ({
+vi.mock('#src/services/chatDataService.ts', () => ({
   chatDataService: serviceMocks.chatDataService,
 }));
 
-vi.mock('src/services/contactsService', () => ({
+vi.mock('#src/services/contactsService.ts', () => ({
   contactsService: serviceMocks.contactsService,
 }));
 
-vi.mock('src/services/nostrEventDataService', () => ({
+vi.mock('#src/services/nostrEventDataService.ts', () => ({
   nostrEventDataService: serviceMocks.nostrEventDataService,
 }));
 
-vi.mock('src/stores/chatStore', () => ({
+vi.mock('#src/stores/chatStore.ts', () => ({
   useChatStore: () => serviceMocks.chatStore,
 }));
 
-vi.mock('src/stores/nostrStore', () => ({
+vi.mock('#src/stores/nostrStore.ts', () => ({
   useNostrStore: () => serviceMocks.nostrStore,
 }));
 
-vi.mock('src/stores/relayStore', () => ({
+vi.mock('#src/stores/relayStore.ts', () => ({
   useRelayStore: () => serviceMocks.relayStore,
 }));
 
@@ -135,7 +137,7 @@ describe('messageStore send', () => {
         });
         serviceMocks.chatDataService.getMessageById.mockResolvedValue(created);
         return created;
-      }
+      },
     );
     serviceMocks.chatDataService.getMessageById.mockResolvedValue(makeMessageRow());
 
@@ -151,6 +153,37 @@ describe('messageStore send', () => {
 
   afterEach(() => {
     Reflect.deleteProperty(globalThis, 'window');
+  });
+
+  it('persists a call summary and sends its private tag through the normal DM flow', async () => {
+    const history = {
+      id: '12345678-1234-1234-1234-123456789012',
+      mode: 'audio' as const,
+      reason: 'declined' as const,
+      duration: 0,
+      connected: false,
+    };
+    await useMessageStore().sendCallHistory(CHAT_ID, history);
+    expect(serviceMocks.chatDataService.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Audio call · Declined',
+        meta: expect.objectContaining({ call_history: history }),
+      }),
+    );
+    expect(serviceMocks.nostrStore.sendDirectMessage).toHaveBeenCalledWith(
+      CHAT_ID,
+      'Audio call · Declined',
+      expect.any(Array),
+      expect.objectContaining({
+        publishSelfCopy: true,
+        additionalTags: [['anagram-call', '1', history.id, 'audio', 'declined', '0', '0']],
+      }),
+    );
+    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue(
+      makeChatRow({ type: 'group' }),
+    );
+    expect(await useMessageStore().sendCallHistory(CHAT_ID, history)).toBeNull();
+    expect(serviceMocks.nostrStore.sendDirectMessage).toHaveBeenCalledOnce();
   });
 
   it('adds a DM to thread state before persistence or publish start', () => {
@@ -178,7 +211,7 @@ describe('messageStore send', () => {
         meta: {
           current_epoch_public_key: EPOCH_PUBLIC_KEY,
         },
-      })
+      }),
     );
     const createMessage = createDeferred<ReturnType<typeof makeMessageRow>>();
     serviceMocks.chatDataService.createMessage.mockReturnValue(createMessage.promise);
@@ -204,7 +237,7 @@ describe('messageStore send', () => {
 
     const sendError = await store.sendMessage(CHAT_ID, 'still here').then(
       () => null,
-      (error: unknown) => error
+      (error: unknown) => error,
     );
 
     expect(sendError).toBeInstanceOf(MissingContactRelaysError);
@@ -214,6 +247,28 @@ describe('messageStore send', () => {
 
     expect(store.getMessages(CHAT_ID).map((message) => message.text)).toEqual(['still here']);
     expect(serviceMocks.nostrStore.sendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it('discovers recipient relays before asking for a fallback during fresh hydration', async () => {
+    serviceMocks.contactsService.getContactByPublicKey.mockResolvedValueOnce({
+      public_key: CHAT_ID,
+      relays: [],
+      sendMessagesToAppRelays: false,
+    });
+    const store = useMessageStore();
+    await store.sendMessage(CHAT_ID, 'discover first');
+    expect(serviceMocks.nostrStore.refreshContactByPublicKey).toHaveBeenCalledWith(
+      CHAT_ID,
+      CHAT_ID,
+      { refreshRelayList: true, relayListSeedRelayUrls: ['wss://app.example'] },
+    );
+    expect(serviceMocks.nostrStore.sendDirectMessage).toHaveBeenCalledWith(
+      CHAT_ID,
+      'discover first',
+      ['wss://contact.example'],
+      expect.anything(),
+    );
+    expect(store.getMessages(CHAT_ID)).toHaveLength(1);
   });
 
   it('retries a missing-relay send against the already created local message', async () => {
@@ -231,7 +286,7 @@ describe('messageStore send', () => {
       ['wss://fallback.example'],
       expect.objectContaining({
         localMessageId: 11,
-      })
+      }),
     );
     expect(store.getMessages(CHAT_ID)).toHaveLength(1);
   });
@@ -249,7 +304,7 @@ describe('messageStore send', () => {
     const store = useMessageStore();
 
     await expect(store.sendMessage(CHAT_ID, 'not persisted')).rejects.toThrow(
-      'Failed to persist outbound message.'
+      'Failed to persist outbound message.',
     );
 
     expect(store.getMessages(CHAT_ID).map((message) => message.text)).toEqual(['not persisted']);
@@ -258,7 +313,7 @@ describe('messageStore send', () => {
 
   it('rejects a continuation row that belongs to another chat', async () => {
     serviceMocks.chatDataService.getMessageById.mockResolvedValue(
-      makeMessageRow({ chat_public_key: 'd'.repeat(64) })
+      makeMessageRow({ chat_public_key: 'd'.repeat(64) }),
     );
     const store = useMessageStore();
 
@@ -266,7 +321,7 @@ describe('messageStore send', () => {
       store.sendMessage(CHAT_ID, 'wrong chat', null, {
         continueFromMessageId: 11,
         relayUrls: ['wss://fallback.example'],
-      })
+      }),
     ).rejects.toThrow('Cannot continue an outbound message from a different chat.');
 
     expect(serviceMocks.nostrStore.sendDirectMessage).not.toHaveBeenCalled();

@@ -1,4 +1,8 @@
-import NDK, { NDKNip07Signer, NDKPrivateKeySigner, type NDKSigner } from '@nostr-dev-kit/ndk';
+import NostrClient, {
+  NostrNip07Signer,
+  NostrPrivateKeySigner,
+  type NostrSigner,
+} from '#src/lib/nostr/client.ts';
 import {
   clearAndroidPrivateKeyMemoryOnlySession,
   isAndroidSecurePrivateKeyStorageAvailable,
@@ -6,7 +10,7 @@ import {
   readAndroidSecurePrivateKeyHex,
   removeAndroidSecurePrivateKeyHex,
   writeAndroidSecurePrivateKeyHex,
-} from 'src/services/androidSecurePrivateKeyStorage';
+} from '#src/services/androidSecurePrivateKeyStorage.ts';
 import {
   clearElectronPrivateKeyMemoryOnlySession,
   isElectronSecurePrivateKeyStorageAvailable,
@@ -14,28 +18,28 @@ import {
   readElectronSecurePrivateKeyHex,
   removeElectronSecurePrivateKeyHex,
   writeElectronSecurePrivateKeyHex,
-} from 'src/services/electronSecurePrivateKeyStorage';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
+} from '#src/services/electronSecurePrivateKeyStorage.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import {
   AUTH_METHOD_STORAGE_KEY,
   NIP46_SIGNER_PAYLOAD_STORAGE_KEY,
   PRIVATE_KEY_STORAGE_KEY,
   PUBLIC_KEY_STORAGE_KEY,
-} from 'src/stores/nostr/constants';
+} from '#src/stores/nostr/constants.ts';
 import {
   createNip46AuthRuntime,
   getNip46SessionSnapshotFromPayload,
-} from 'src/stores/nostr/nip46AuthRuntime';
-import { hasStorage } from 'src/stores/nostr/shared';
+} from '#src/stores/nostr/nip46AuthRuntime.ts';
+import { hasStorage } from '#src/stores/nostr/shared.ts';
 import type {
   AuthMethod,
   Nip46LoginResult,
   Nip46NostrConnectLogin,
   Nip46SessionSnapshot,
   SubscribePrivateMessagesOptions,
-} from 'src/stores/nostr/types';
-import { clearPersistedAppState } from 'src/utils/logoutCleanup';
-import type { Ref } from 'vue';
+} from '#src/stores/nostr/types.ts';
+import { clearPersistedAppState } from '#src/utils/logoutCleanup.ts';
+import type { Ref } from '#src/lib/state/reactivity.ts';
 
 interface RestoreRuntimeState {
   restoreContactCursorStatePromise: Promise<void> | null;
@@ -64,7 +68,7 @@ interface AuthSessionRuntimeDeps {
   hasNip07Extension: () => boolean;
   isRestoringStartupState: Ref<boolean>;
   loggedInvalidGroupEpochConflictKeys: { clear: () => void };
-  ndk: NDK;
+  ndk: NostrClient;
   pendingContactCursorPublishStates: { clear: () => void };
   pendingContactCursorPublishTimers: Map<string, ReturnType<typeof globalThis.setTimeout>>;
   pendingEventSinceState: {
@@ -76,6 +80,7 @@ interface AuthSessionRuntimeDeps {
   relayConnectPromises: { clear: () => void };
   relayStatusVersion: Ref<number>;
   resetContactSubscriptionsRuntimeState: (reason?: string) => void;
+  resetCalls?: () => void;
   resetEventSinceForFreshLogin: () => void;
   resetGroupRosterSubscriptionRuntimeState: (reason?: string) => void;
   resetMyRelayListRuntimeState: (reason?: string) => void;
@@ -93,14 +98,14 @@ interface AuthSessionRuntimeDeps {
   resetStartupStepTracking: () => void;
   resetTrackedContactEventState: () => void;
   restoreRuntimeState: RestoreRuntimeState;
-  setCachedSigner: (signer: NDKSigner | null) => void;
+  setCachedSigner: (signer: NostrSigner | null) => void;
   setCachedSignerSessionKey: (sessionKey: string | null) => void;
   setPendingPrivateMessagesEpochSubscriptionRefreshOptions: (
-    options: SubscribePrivateMessagesOptions | null
+    options: SubscribePrivateMessagesOptions | null,
   ) => void;
   setPrivateMessagesEpochSubscriptionRefreshQueue: (queue: Promise<void>) => void;
   setPrivateMessagesEpochSubscriptionRefreshTimerId: (
-    timerId: ReturnType<typeof globalThis.setTimeout> | null
+    timerId: ReturnType<typeof globalThis.setTimeout> | null,
   ) => void;
   setRestoreStartupStatePromise: (promise: Promise<void> | null) => void;
   setSyncLoggedInContactProfilePromise: (promise: Promise<void> | null) => void;
@@ -137,6 +142,7 @@ export function createAuthSessionRuntime({
   relayConnectPromises,
   relayStatusVersion,
   resetContactSubscriptionsRuntimeState,
+  resetCalls,
   resetEventSinceForFreshLogin,
   resetGroupRosterSubscriptionRuntimeState,
   resetMyRelayListRuntimeState,
@@ -197,7 +203,7 @@ export function createAuthSessionRuntime({
   function derivePublicKeyFromPrivateKeyHex(privateKeyHex: string): string | null {
     try {
       return inputSanitizerService.normalizeHexKey(
-        new NDKPrivateKeySigner(privateKeyHex, ndk).pubkey
+        new NostrPrivateKeySigner(privateKeyHex, ndk).pubkey,
       );
     } catch {
       return null;
@@ -265,7 +271,7 @@ export function createAuthSessionRuntime({
 
   async function persistSecurePrivateKeyHex(
     privateKeyHex: string,
-    pubkeyHex: string
+    pubkeyHex: string,
   ): Promise<boolean> {
     try {
       await writeSecurePrivateKeyHex(privateKeyHex);
@@ -378,7 +384,7 @@ export function createAuthSessionRuntime({
   function setStoredAuthSession(
     authMethod: AuthMethod,
     pubkeyHex: string,
-    privateKeyHex?: string
+    privateKeyHex?: string,
   ): void {
     if (!hasStorage()) {
       return;
@@ -424,7 +430,8 @@ export function createAuthSessionRuntime({
   }
 
   function clearPrivateKey(options: { clearSecureStorage?: boolean } = {}): void {
-    const activeSigner = ndk.signer as (NDKSigner & { stop?: () => void }) | undefined;
+    resetCalls?.();
+    const activeSigner = ndk.signer as (NostrSigner & { stop?: () => void }) | undefined;
     activeSigner?.stop?.();
     cachedPrivateKeyHex = null;
     loadPrivateKeyHexPromise = null;
@@ -480,7 +487,7 @@ export function createAuthSessionRuntime({
       return false;
     }
 
-    const signer = new NDKPrivateKeySigner(normalized, ndk);
+    const signer = new NostrPrivateKeySigner(normalized, ndk);
     clearPrivateKey({ clearSecureStorage: false });
     resetEventSinceForFreshLogin();
     cachedPrivateKeyHex = normalized;
@@ -504,7 +511,7 @@ export function createAuthSessionRuntime({
       throw new Error('No NIP-07 extension detected. Install or enable one to continue.');
     }
 
-    const signer = new NDKNip07Signer(undefined, ndk);
+    const signer = new NostrNip07Signer(undefined, ndk);
     const user = await signer.blockUntilReady();
     user.ndk = ndk;
     const pubkeyHex = inputSanitizerService.normalizeHexKey(user.pubkey ?? signer.pubkey);
@@ -532,6 +539,7 @@ export function createAuthSessionRuntime({
   });
 
   async function loginWithRemoteSignerBunker(input: {
+    signal?: AbortSignal;
     connectionToken: string;
     onAuthUrl?: (url: string) => void;
   }): Promise<Nip46LoginResult> {

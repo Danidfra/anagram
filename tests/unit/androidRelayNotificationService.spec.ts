@@ -1,8 +1,8 @@
-import { NDKPrivateKeySigner } from '@nostr-dev-kit/ndk';
+import { NostrPrivateKeySigner } from '#src/lib/nostr/client.ts';
 import {
   createAndroidNotificationRelayCandidates,
   createDefaultAndroidNotificationRelaySelection,
-} from 'src/services/androidNotificationRelaySelectionService';
+} from '#src/services/androidNotificationRelaySelectionService.ts';
 import {
   __androidRelayNotificationServiceTestUtils,
   createAndroidNotificationConversationSignature,
@@ -14,7 +14,7 @@ import {
   readAndroidRelayConversationDetailsPreference,
   refreshAndroidRelayNotificationListener,
   requestAndroidRelayNotificationsAfterLogin,
-} from 'src/services/androidRelayNotificationService';
+} from '#src/services/androidRelayNotificationService.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const moduleMocks = vi.hoisted(() => ({
@@ -79,7 +79,7 @@ const moduleMocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@capacitor/core', () => ({
+vi.mock('#src/lib/platform/legacyNative.ts', () => ({
   Capacitor: {
     getPlatform: () => 'android',
     isNativePlatform: () => true,
@@ -87,27 +87,27 @@ vi.mock('@capacitor/core', () => ({
   registerPlugin: () => moduleMocks.plugin,
 }));
 
-vi.mock('src/services/androidSecurePrivateKeyStorage', () => ({
+vi.mock('#src/services/androidSecurePrivateKeyStorage.ts', () => ({
   readAndroidSecurePrivateKeyHex: vi.fn(async () => null),
 }));
 
-vi.mock('src/services/chatDataService', () => ({
+vi.mock('#src/services/chatDataService.ts', () => ({
   chatDataService: {
     init: vi.fn(async () => {}),
     listChats: vi.fn(async () => moduleMocks.chats),
   },
 }));
 
-vi.mock('src/services/contactsService', () => ({
+vi.mock('#src/services/contactsService.ts', () => ({
   contactsService: {
     init: vi.fn(async () => {}),
     listContacts: vi.fn(async () => moduleMocks.contacts),
   },
 }));
 
-vi.mock('src/stores/nostrStore', () => ({
+vi.mock('#src/stores/nostrStore.ts', () => ({
   useNostrStore: () => ({
-    getLoggedInPublicKeyHex: () => new NDKPrivateKeySigner(moduleMocks.privateKey).pubkey,
+    getLoggedInPublicKeyHex: () => new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey,
     getPrivateKeyHex: () => moduleMocks.privateKey,
     getRelayConnectionState: () => 'connected',
     ingestAndroidRelayNotificationEvent: moduleMocks.ingestAndroidRelayNotificationEvent,
@@ -115,14 +115,14 @@ vi.mock('src/stores/nostrStore', () => ({
   }),
 }));
 
-vi.mock('src/stores/nip65RelayStore', () => ({
+vi.mock('#src/stores/nip65RelayStore.ts', () => ({
   useNip65RelayStore: () => ({
     init: vi.fn(),
     relayEntries: moduleMocks.userRelayEntries,
   }),
 }));
 
-vi.mock('src/stores/relayStore', () => ({
+vi.mock('#src/stores/relayStore.ts', () => ({
   useRelayStore: () => ({
     init: vi.fn(),
     relayEntries: moduleMocks.appRelayEntries,
@@ -152,7 +152,7 @@ describe('androidRelayNotificationService', () => {
     localStorageValues.set(
       'ui-android-relay-notifications-selected-relays',
       JSON.stringify({
-        [new NDKPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://relay.example'],
+        [new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://relay.example'],
       })
     );
     vi.stubGlobal('window', {
@@ -184,7 +184,7 @@ describe('androidRelayNotificationService', () => {
 
     expect(watchPlan).toEqual({
       ownerPubkey: OWNER_PUBKEY,
-      relays: ['ws://localhost:8080/nostr/', 'wss://group-relay.example/', 'wss://relay.example/'],
+      relays: ['ws://localhost:8080/nostr', 'wss://group-relay.example/', 'wss://relay.example/'],
       recipientPubkeys: [OWNER_PUBKEY, GROUP_EPOCH_PUBKEY],
     });
     expect(Object.keys(watchPlan)).toEqual(['ownerPubkey', 'relays', 'recipientPubkeys']);
@@ -260,7 +260,7 @@ describe('androidRelayNotificationService', () => {
   });
 
   it('ingests and acknowledges encrypted events from the native Android inbox', async () => {
-    const ownerPubkey = new NDKPrivateKeySigner(moduleMocks.privateKey).pubkey;
+    const ownerPubkey = new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey;
     const eventId = 'aa'.repeat(32);
     moduleMocks.pendingEvents.push({
       id: eventId,
@@ -304,7 +304,7 @@ describe('androidRelayNotificationService', () => {
   });
 
   it('retains a native Android event when app ingestion requests a retry', async () => {
-    const ownerPubkey = new NDKPrivateKeySigner(moduleMocks.privateKey).pubkey;
+    const ownerPubkey = new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey;
     const eventId = 'dd'.repeat(32);
     moduleMocks.ingestAndroidRelayNotificationEvent.mockResolvedValue(false);
     moduleMocks.pendingEvents.push({
@@ -329,7 +329,7 @@ describe('androidRelayNotificationService', () => {
   });
 
   it('queues the full native batch and acknowledges later successes independently', async () => {
-    const ownerPubkey = new NDKPrivateKeySigner(moduleMocks.privateKey).pubkey;
+    const ownerPubkey = new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey;
     const retryEventId = '12'.repeat(32);
     const successfulEventId = '34'.repeat(32);
     let resolveRetryEvent: ((value: boolean) => void) | null = null;
@@ -579,7 +579,7 @@ describe('androidRelayNotificationService', () => {
     expect(configuration?.showConversationDetails).toBe(false);
     expect(configuration?.recipientKeys).toEqual([
       {
-        recipientPubkey: new NDKPrivateKeySigner(moduleMocks.privateKey).pubkey,
+        recipientPubkey: new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey,
         privateKey: moduleMocks.privateKey,
       },
     ]);
@@ -611,7 +611,7 @@ describe('androidRelayNotificationService', () => {
     localStorageValues.set(
       'ui-android-relay-notifications-selected-relays',
       JSON.stringify({
-        [new NDKPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://selected-app.example'],
+        [new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://selected-app.example'],
       })
     );
 
@@ -626,7 +626,7 @@ describe('androidRelayNotificationService', () => {
     localStorageValues.set(
       'ui-android-relay-notifications-selected-relays',
       JSON.stringify({
-        [new NDKPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://removed-relay.example'],
+        [new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://removed-relay.example'],
       })
     );
 

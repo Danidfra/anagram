@@ -1,4 +1,4 @@
-import { Notify } from 'quasar';
+import { Notify } from '#src/lib/platform/ui.ts';
 
 function resolveErrorMessage(error: unknown, fallbackMessage: string): string {
   if (error instanceof Error) {

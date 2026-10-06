@@ -1,8 +1,8 @@
-import { t } from 'src/i18n';
-import type { Message, MessageRelayStatus } from 'src/types/chat';
-import { isMessageRelayStatus } from 'src/utils/messageRelayStatus';
-import { uniqueRelayUrls } from 'src/utils/relayUrls';
-import { type ComputedRef, computed, type Ref } from 'vue';
+import { t } from '#src/i18n.ts';
+import type { Message, MessageRelayStatus } from '#src/types/chat.ts';
+import { isMessageRelayStatus } from '#src/utils/messageRelayStatus.ts';
+import { uniqueRelayUrls } from '#src/utils/relayUrls.ts';
+import { type ComputedRef, computed, type Ref } from '#src/lib/state/reactivity.ts';
 
 export interface StatusSegment {
   key:

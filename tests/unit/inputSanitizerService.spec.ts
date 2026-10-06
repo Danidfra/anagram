@@ -1,5 +1,5 @@
-import { nip19 } from '@nostr-dev-kit/ndk';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
+import { nip19 } from '#src/lib/nostr/client.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import { describe, expect, it } from 'vitest';
 
 describe('inputSanitizerService', () => {

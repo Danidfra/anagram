@@ -1,4 +1,4 @@
-import type { MessageAttachmentMetadata } from 'src/types/chat';
+import type { MessageAttachmentMetadata } from '#src/types/chat.ts';
 import {
   buildAttachmentMessageMeta,
   buildAttachmentMessageText,
@@ -7,7 +7,7 @@ import {
   buildNip92ImetaTag,
   extractMediaAttachmentsFromTags,
   readImageAttachmentsFromMeta,
-} from 'src/utils/messageAttachments';
+} from '#src/utils/messageAttachments.ts';
 import { describe, expect, it } from 'vitest';
 
 describe('message attachment helpers', () => {

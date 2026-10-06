@@ -1,20 +1,20 @@
-import NDK, { NDKEvent, NDKPrivateKeySigner, NDKUser, type NostrEvent } from '@nostr-dev-kit/ndk';
-import { contactsService } from 'src/services/contactsService';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { GROUP_PRIVATE_KEY_CONTACT_META_KEY } from 'src/stores/nostr/constants';
+import NostrClient, { ClientEvent, NostrPrivateKeySigner, NostrUser, type NostrEvent } from '#src/lib/nostr/client.ts';
+import { contactsService } from '#src/services/contactsService.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { GROUP_PRIVATE_KEY_CONTACT_META_KEY } from '#src/stores/nostr/constants.ts';
 import type {
   GroupIdentitySecretContent,
   PublishGroupMemberChangesResult,
   RelayPublishStatusesResult,
   RelaySaveStatus,
   RotateGroupEpochResult,
-} from 'src/stores/nostr/types';
+} from '#src/stores/nostr/types.ts';
 import {
   normalizeRelayStatusUrlsValue,
   resolveGroupPublishRelayUrlsValue,
-} from 'src/stores/nostr/valueUtils';
-import type { MessageRelayStatus } from 'src/types/chat';
-import type { ContactRecord } from 'src/types/contact';
+} from '#src/stores/nostr/valueUtils.ts';
+import type { MessageRelayStatus } from '#src/types/chat.ts';
+import type { ContactRecord } from '#src/types/contact.ts';
 
 interface GroupEpochPublishRuntimeDeps {
   appendRelayStatusesToGroupMemberTicketEvent: (
@@ -51,11 +51,11 @@ interface GroupEpochPublishRuntimeDeps {
   getAppRelayUrls: () => string[];
   getLoggedInPublicKeyHex: () => string | null;
   giftWrapSignedEvent: (
-    signedEvent: NDKEvent,
-    recipient: NDKUser,
-    signer: NDKPrivateKeySigner
-  ) => Promise<NDKEvent>;
-  ndk: NDK;
+    signedEvent: ClientEvent,
+    recipient: NostrUser,
+    signer: NostrPrivateKeySigner
+  ) => Promise<ClientEvent>;
+  ndk: NostrClient;
   normalizeEventId: (value: unknown) => string | null;
   persistIncomingGroupEpochTicket: (
     groupPublicKey: string,
@@ -69,7 +69,7 @@ interface GroupEpochPublishRuntimeDeps {
     }
   ) => Promise<void>;
   publishEventWithRelayStatuses: (
-    event: NDKEvent,
+    event: ClientEvent,
     relayUrls: string[],
     scope?: 'recipient' | 'self'
   ) => Promise<RelayPublishStatusesResult>;
@@ -89,7 +89,7 @@ interface GroupEpochPublishRuntimeDeps {
     seedRelayUrls?: string[]
   ) => Promise<RelaySaveStatus>;
   toIsoTimestampFromUnix: (value: number | undefined) => string;
-  toStoredNostrEvent: (event: NDKEvent) => Promise<NostrEvent | null>;
+  toStoredNostrEvent: (event: ClientEvent) => Promise<NostrEvent | null>;
 }
 
 export function createGroupEpochPublishRuntime({
@@ -190,7 +190,19 @@ export function createGroupEpochPublishRuntime({
 
     const publishedRelayUrls = new Set<string>();
     if (shouldRotateEpoch) {
-      const nextEpochSigner = NDKPrivateKeySigner.generate();
+      // The identity backup is replaceable and only contains the current epoch.
+      // Archive the outgoing epoch as a self-addressed, encrypted ticket before
+      // replacing it, including epoch zero and groups created by older clients.
+      // A fresh owner session can then recover both sides of historical threads.
+      const previousEpochBackup = await sendGroupEpochTicket(
+        normalizedGroupPublicKey,
+        normalizedOwnerPublicKey,
+        seedRelayUrls
+      );
+      if (previousEpochBackup.publishedRelayUrls.length === 0) {
+        throw new Error('Could not back up the previous group epoch. Retry the membership change when a group relay is available.');
+      }
+      const nextEpochSigner = NostrPrivateKeySigner.generate();
       const nextEpochNumber = epochNumber + 1;
       if (!Number.isInteger(nextEpochNumber) || nextEpochNumber < 0) {
         throw new Error('Failed to generate the next group epoch.');
@@ -485,7 +497,7 @@ export function createGroupEpochPublishRuntime({
       throw new Error('Missing current epoch state for this group.');
     }
 
-    const groupSigner = new NDKPrivateKeySigner(secret.group_privkey, ndk);
+    const groupSigner = new NostrPrivateKeySigner(secret.group_privkey, ndk);
     const signerUser = await groupSigner.user();
     if (inputSanitizerService.normalizeHexKey(signerUser.pubkey) !== normalizedGroupPublicKey) {
       throw new Error('Decrypted group private key does not match the group public key.');
@@ -497,7 +509,7 @@ export function createGroupEpochPublishRuntime({
     }
 
     const createdAt = Math.floor(Date.now() / 1000);
-    const epochTicketEvent = new NDKEvent(ndk, {
+    const epochTicketEvent = new ClientEvent(ndk, {
       kind: 1014,
       created_at: createdAt,
       pubkey: normalizedGroupPublicKey,
@@ -533,7 +545,7 @@ export function createGroupEpochPublishRuntime({
 
     try {
       await ensureRelayConnections(relayUrls);
-      const recipient = new NDKUser({ pubkey: normalizedMemberPublicKey });
+      const recipient = new NostrUser({ pubkey: normalizedMemberPublicKey });
       const giftWrapEvent = await giftWrapSignedEvent(epochTicketEvent, recipient, groupSigner);
       publishResult = await publishEventWithRelayStatuses(giftWrapEvent, relayUrls, 'recipient');
     } catch (error) {

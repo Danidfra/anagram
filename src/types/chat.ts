@@ -1,5 +1,5 @@
-import type { NostrEvent } from '@nostr-dev-kit/ndk';
-import type { ContactGroupMember } from 'src/types/contact';
+import type { NostrEvent } from '#src/lib/nostr/client.ts';
+import type { ContactGroupMember } from '#src/types/contact.ts';
 
 export type ChatInboxState = 'accepted' | 'blocked';
 export type ChatType = 'user' | 'group';

@@ -1,22 +1,22 @@
-import NDK, {
+import NostrClient, {
   giftWrap,
   isValidPubkey,
-  NDKEvent,
-  NDKKind,
-  NDKPrivateKeySigner,
-  NDKRelayList,
-  NDKRelaySet,
-  NDKRelayStatus,
-  type NDKSigner,
-  NDKUser,
-  type NDKUserProfile,
+  ClientEvent,
+  NostrKind,
+  NostrPrivateKeySigner,
+  NostrRelayList,
+  NostrRelaySet,
+  NostrRelayStatus,
+  type NostrSigner,
+  NostrUser,
+  type NostrUserProfile,
   type NostrEvent,
   serializeProfile,
-} from '@nostr-dev-kit/ndk';
-import { contactsService } from 'src/services/contactsService';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { RELAY_PUBLISH_TIMEOUT_MS } from 'src/stores/nostr/constants';
-import { getOrCreateOutboundGiftWrap } from 'src/stores/nostr/outboundGiftWrap';
+} from '#src/lib/nostr/client.ts';
+import { contactsService } from '#src/services/contactsService.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { RELAY_PUBLISH_TIMEOUT_MS } from '#src/stores/nostr/constants.ts';
+import { getOrCreateOutboundGiftWrap } from '#src/stores/nostr/outboundGiftWrap.ts';
 import type {
   GiftWrappedRumorPublishResult,
   GroupIdentitySecretContent,
@@ -25,8 +25,8 @@ import type {
   RelayPublishStatusesResult,
   RelaySaveStatus,
   SendGiftWrappedRumorOptions,
-} from 'src/stores/nostr/types';
-import type { MessageRelayStatus } from 'src/types/chat';
+} from '#src/stores/nostr/types.ts';
+import type { MessageRelayStatus } from '#src/types/chat.ts';
 
 interface RelayPublishRuntimeDeps {
   appendRelayStatusesToMessageEvent: (
@@ -46,8 +46,8 @@ interface RelayPublishRuntimeDeps {
   ensureRelayConnections: (relayUrls: string[]) => Promise<void>;
   getRelayConnectionAttemptBlockReason: (relayUrl: string) => string | null;
   getLoggedInPublicKeyHex: () => string | null;
-  getOrCreateSigner: () => Promise<NDKSigner>;
-  ndk: NDK;
+  getOrCreateSigner: () => Promise<NostrSigner>;
+  ndk: NostrClient;
   normalizeEventId: (value: unknown) => string | null;
   normalizeRelayStatusUrl: (value: string) => string | null;
   normalizeRelayStatusUrls: (relayUrls: string[]) => string[];
@@ -56,7 +56,7 @@ interface RelayPublishRuntimeDeps {
     seedRelayUrls?: string[]
   ) => string[];
   resolveLoggedInPublishRelayUrls: (seedRelayUrls?: string[]) => Promise<string[]>;
-  toStoredNostrEvent: (event: NDKEvent) => Promise<NostrEvent | null>;
+  toStoredNostrEvent: (event: ClientEvent) => Promise<NostrEvent | null>;
   toUnixTimestamp: (value: string | undefined) => number;
   updateStoredEventSinceFromCreatedAt: (value: unknown) => void;
 }
@@ -79,6 +79,7 @@ export function createRelayPublishRuntime({
   toUnixTimestamp,
   updateStoredEventSinceFromCreatedAt,
 }: RelayPublishRuntimeDeps) {
+  const groupProfilePublishTimes = new Map<string, number>();
   function buildOutboundRelayStatuses(
     relayUrls: string[],
     publishedRelayUrls: Set<string>,
@@ -141,7 +142,7 @@ export function createRelayPublishRuntime({
     );
   }
 
-  function extractRelayUrlsFromEvent(event: NDKEvent): string[] {
+  function extractRelayUrlsFromEvent(event: ClientEvent): string[] {
     return normalizeRelayStatusUrls([
       event.relay?.url ?? '',
       ...event.onRelays.map((relay) => relay.url),
@@ -149,7 +150,7 @@ export function createRelayPublishRuntime({
   }
 
   async function publishSignedEventToRelays(
-    event: NDKEvent,
+    event: ClientEvent,
     relayUrls: string[]
   ): Promise<{
     publishedRelayUrls: Set<string>;
@@ -167,9 +168,9 @@ export function createRelayPublishRuntime({
       }
     }
 
-    const relaySet = NDKRelaySet.fromRelayUrls(eligibleRelayUrls, ndk, false);
+    const relaySet = NostrRelaySet.fromRelayUrls(eligibleRelayUrls, ndk, false);
     const relays = Array.from(relaySet.relays).filter((relay) => {
-      if (relay.status >= NDKRelayStatus.CONNECTED) {
+      if (relay.status >= NostrRelayStatus.CONNECTED) {
         return true;
       }
 
@@ -288,7 +289,7 @@ export function createRelayPublishRuntime({
   }
 
   async function publishEventWithRelayStatuses(
-    event: NDKEvent,
+    event: ClientEvent,
     relayUrls: string[],
     scope: 'recipient' | 'self'
   ): Promise<RelayPublishStatusesResult> {
@@ -320,7 +321,7 @@ export function createRelayPublishRuntime({
   }
 
   async function publishReplaceableEventWithRelayStatuses(
-    event: NDKEvent,
+    event: ClientEvent,
     relayUrls: string[],
     scope: 'recipient' | 'self'
   ): Promise<RelayPublishStatusesResult> {
@@ -363,7 +364,7 @@ export function createRelayPublishRuntime({
       senderPubkey: string,
       recipientPubkey: string,
       createdAt: number
-    ) => NDKEvent,
+    ) => ClientEvent,
     options: SendGiftWrappedRumorOptions = {}
   ): Promise<GiftWrappedRumorPublishResult> {
     const recipientInput = recipientPublicKey.trim();
@@ -392,7 +393,7 @@ export function createRelayPublishRuntime({
     const signer = await getOrCreateSigner();
     const shouldPublishSelfCopy = options.publishSelfCopy !== false;
     const createdAt = toUnixTimestamp(options.createdAt);
-    const recipient = new NDKUser({ pubkey: normalizedRecipientPubkey });
+    const recipient = new NostrUser({ pubkey: normalizedRecipientPubkey });
     const recipientRumorEvent = createRumorEvent(
       signer.pubkey,
       normalizedRecipientPubkey,
@@ -442,7 +443,7 @@ export function createRelayPublishRuntime({
     try {
       const recipientGiftWrapEvent =
         options.localMessageId && recipientRumorNostrEvent
-          ? new NDKEvent(
+          ? new ClientEvent(
               ndk,
               await getOrCreateOutboundGiftWrap(recipientRumorNostrEvent, 'recipient', () =>
                 giftWrap(recipientRumorEvent, recipient, signer, { rumorKind })
@@ -472,7 +473,7 @@ export function createRelayPublishRuntime({
       if (selfRelayUrls.length > 0) {
         try {
           await ensureRelayConnections(selfRelayUrls);
-          const senderRecipient = new NDKUser({ pubkey: signer.pubkey });
+          const senderRecipient = new NostrUser({ pubkey: signer.pubkey });
           const selfRumorEvent = createRumorEvent(
             signer.pubkey,
             normalizedRecipientPubkey,
@@ -480,7 +481,7 @@ export function createRelayPublishRuntime({
           );
           const selfGiftWrapEvent =
             options.localMessageId && recipientRumorNostrEvent
-              ? new NDKEvent(
+              ? new ClientEvent(
                   ndk,
                   await getOrCreateOutboundGiftWrap(recipientRumorNostrEvent, 'self', () =>
                     giftWrap(selfRumorEvent, senderRecipient, signer, { rumorKind })
@@ -548,10 +549,10 @@ export function createRelayPublishRuntime({
     await ensureRelayConnections(relayList);
 
     const signer = await getOrCreateSigner();
-    const profileEvent = new NDKEvent(ndk, {
-      content: serializeProfile(metadata as NDKUserProfile),
+    const profileEvent = new ClientEvent(ndk, {
+      content: serializeProfile(metadata as NostrUserProfile),
       created_at: Math.floor(Date.now() / 1000),
-      kind: NDKKind.Metadata,
+      kind: NostrKind.Metadata,
       pubkey: signer.pubkey,
       tags: [],
     });
@@ -611,15 +612,23 @@ export function createRelayPublishRuntime({
 
     await ensureRelayConnections(relayUrls);
 
-    const groupSigner = new NDKPrivateKeySigner(decryptedSecret.group_privkey, ndk);
+    const groupSigner = new NostrPrivateKeySigner(decryptedSecret.group_privkey, ndk);
     const signerUser = await groupSigner.user();
     if (inputSanitizerService.normalizeHexKey(signerUser.pubkey) !== normalizedGroupPublicKey) {
       throw new Error('Decrypted group private key does not match the group public key.');
     }
 
-    const metadataEvent = new NDKEvent(ndk, {
-      kind: NDKKind.Metadata,
-      created_at: Math.floor(Date.now() / 1000),
+    // Consecutive group edits can occur within one second. Reserve a timestamp
+    // newer than both the restored profile and this session's previous publish.
+    const profileCreatedAt = Math.max(
+      Math.floor(Date.now() / 1000),
+      (groupContact.meta.profile_event_created_at ?? 0) + 1,
+      (groupProfilePublishTimes.get(normalizedGroupPublicKey) ?? 0) + 1
+    );
+    groupProfilePublishTimes.set(normalizedGroupPublicKey, profileCreatedAt);
+    const metadataEvent = new ClientEvent(ndk, {
+      kind: NostrKind.Metadata,
+      created_at: profileCreatedAt,
       content: JSON.stringify(metadata),
     } as NostrEvent);
     await metadataEvent.sign(groupSigner);
@@ -691,13 +700,13 @@ export function createRelayPublishRuntime({
 
     await ensureRelayConnections(relayUrls);
 
-    const groupSigner = new NDKPrivateKeySigner(decryptedSecret.group_privkey, ndk);
+    const groupSigner = new NostrPrivateKeySigner(decryptedSecret.group_privkey, ndk);
     const signerUser = await groupSigner.user();
     if (inputSanitizerService.normalizeHexKey(signerUser.pubkey) !== normalizedGroupPublicKey) {
       throw new Error('Decrypted group private key does not match the group public key.');
     }
 
-    const relayListEvent = new NDKRelayList(ndk);
+    const relayListEvent = new NostrRelayList(ndk);
     relayListEvent.pubkey = normalizedGroupPublicKey;
     relayListEvent.created_at = Math.floor(Date.now() / 1000);
     relayListEvent.content = '';

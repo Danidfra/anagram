@@ -4,7 +4,7 @@ import {
   normalizeDesktopMessageLayoutPreference,
   readDesktopMessageLayoutPreference,
   saveDesktopMessageLayoutPreference,
-} from 'src/utils/themeStorage';
+} from '#src/utils/themeStorage.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 class TestCustomEvent<T = unknown> extends Event {

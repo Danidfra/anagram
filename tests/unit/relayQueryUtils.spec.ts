@@ -1,11 +1,11 @@
-import { NDKRelaySet } from '@nostr-dev-kit/ndk';
+import { NostrRelaySet } from '#src/lib/nostr/client.ts';
 import {
   createReadyRelaySet,
   fetchEventsWithRelayTimeout,
   fetchEventWithRelayTimeout,
   RelayQueryTimeoutError,
   RelayQueryUnavailableError,
-} from 'src/stores/nostr/relayQueryUtils';
+} from '#src/stores/nostr/relayQueryUtils.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 describe('relayQueryUtils', () => {
@@ -14,7 +14,7 @@ describe('relayQueryUtils', () => {
   });
 
   it('builds a relay set from currently connected relays only', () => {
-    const fromRelayUrls = vi.spyOn(NDKRelaySet, 'fromRelayUrls').mockReturnValue({} as never);
+    const fromRelayUrls = vi.spyOn(NostrRelaySet, 'fromRelayUrls').mockReturnValue({} as never);
     const ndk = {
       pool: {
         relays: new Map([
@@ -31,7 +31,7 @@ describe('relayQueryUtils', () => {
   });
 
   it('does not query disconnected relays when the pool is already known', () => {
-    const fromRelayUrls = vi.spyOn(NDKRelaySet, 'fromRelayUrls').mockReturnValue({} as never);
+    const fromRelayUrls = vi.spyOn(NostrRelaySet, 'fromRelayUrls').mockReturnValue({} as never);
     const ndk = {
       pool: {
         relays: new Map([['wss://slow.example/', { connected: false }]]),

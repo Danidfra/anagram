@@ -1,9 +1,9 @@
 import {
   createReconnectHealingRuntime,
   type ReconnectHealingChatTarget,
-} from 'src/stores/nostr/reconnectHealingRuntime';
+} from '#src/stores/nostr/reconnectHealingRuntime.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from 'vue';
+import { ref } from '#src/lib/state/reactivity.ts';
 
 const GROUP_PUBLIC_KEY = 'a'.repeat(64);
 const GROUP_EPOCH_PUBLIC_KEY = 'b'.repeat(64);

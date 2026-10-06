@@ -1,5 +1,5 @@
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import type { ContactRelay } from 'src/types/contact';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import type { ContactRelay } from '#src/types/contact.ts';
 
 export function resolvePreferredContactRelayUrls(relays: ContactRelay[] | undefined): string[] {
   const contactRelays = Array.isArray(relays) ? relays : [];

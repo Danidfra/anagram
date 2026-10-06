@@ -1,5 +1,5 @@
-import { nip19 } from '@nostr-dev-kit/ndk';
-import { buildMessageTextParts } from 'src/utils/messageTextParts';
+import { nip19 } from '#src/lib/nostr/client.ts';
+import { buildMessageTextParts } from '#src/utils/messageTextParts.ts';
 import { describe, expect, it } from 'vitest';
 
 describe('message text parts', () => {

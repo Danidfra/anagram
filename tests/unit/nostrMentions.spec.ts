@@ -1,4 +1,4 @@
-import { nip19 } from '@nostr-dev-kit/ndk';
+import { nip19 } from '#src/lib/nostr/client.ts';
 import {
   buildGroupMemberMentionProfiles,
   buildMentionMetadata,
@@ -8,7 +8,7 @@ import {
   formatNostrMentionsForDisplay,
   parseNostrMentions,
   serializeMentionDraft,
-} from 'src/utils/nostrMentions';
+} from '#src/utils/nostrMentions.ts';
 import { describe, expect, it } from 'vitest';
 
 const ALICE_PUBKEY = 'a'.repeat(64);

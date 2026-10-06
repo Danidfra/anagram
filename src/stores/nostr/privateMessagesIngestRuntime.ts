@@ -1,27 +1,34 @@
-import { giftUnwrap, type NDKEvent, NDKKind } from '@nostr-dev-kit/ndk';
-import { type ChatRow, chatDataService } from 'src/services/chatDataService';
-import { contactsService } from 'src/services/contactsService';
-import { inputSanitizerService } from 'src/services/inputSanitizerService';
-import { nostrEventDataService } from 'src/services/nostrEventDataService';
-import { CHAT_REQUEST_CLEARED_AT_META_KEY } from 'src/stores/nostr/constants';
+import { disposeCryptoWorker } from '#src/lib/nostr/cryptoWorker.ts';
+import { messageInbox, type InboxRecord } from '#src/lib/nostr/inbox.ts';
+import { yieldToMainThread } from '#src/utils/backgroundTasks.ts';
+import { giftUnwrap, ClientEvent, NostrKind } from '#src/lib/nostr/client.ts';
+import { type ChatRow, chatDataService } from '#src/services/chatDataService.ts';
+import { contactsService } from '#src/services/contactsService.ts';
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { nostrEventDataService } from '#src/services/nostrEventDataService.ts';
+import { CHAT_REQUEST_CLEARED_AT_META_KEY } from '#src/stores/nostr/constants.ts';
 import type {
   GroupEpochContext,
   PrivateMessagesIngestRuntimeDeps,
-} from 'src/stores/nostr/privateMessagesIngestTypes';
-import { isPlainRecord } from 'src/stores/nostr/shared';
-import { resolveLatestReadBoundaryAtValue } from 'src/stores/nostr/valueUtils';
-import type { NostrEventDirection } from 'src/types/chat';
-import type { ContactRecord } from 'src/types/contact';
+} from '#src/stores/nostr/privateMessagesIngestTypes.ts';
+import { isPlainRecord } from '#src/stores/nostr/shared.ts';
+import { resolveLatestReadBoundaryAtValue } from '#src/stores/nostr/valueUtils.ts';
+import { CALL_SIGNAL_KIND } from '#src/types/call.ts';
+import type { NostrEventDirection } from '#src/types/chat.ts';
+import type { ContactRecord } from '#src/types/contact.ts';
+import { callHistoryFromTags } from '#src/utils/callHistory.ts';
+import { parseRoomSignal } from '#src/utils/callRoom.ts';
+import { parseCallSignal } from '#src/utils/callSignal.ts';
 import {
   buildImageAttachmentPreviewText,
   extractMediaAttachmentsFromTags,
-} from 'src/utils/messageAttachments';
+} from '#src/utils/messageAttachments.ts';
 import {
   buildEditedMessageMeta,
   messageEditReferencesEventId,
   readMessageEditTargetEventId,
-} from 'src/utils/messageEdits';
-import { buildMentionMetadata, formatGroupMentionsForDisplay } from 'src/utils/nostrMentions';
+} from '#src/utils/messageEdits.ts';
+import { buildMentionMetadata, formatGroupMentionsForDisplay } from '#src/utils/nostrMentions.ts';
 
 export function createPrivateMessagesIngestRuntime({
   appendRelayStatusesToMessageEvent,
@@ -53,9 +60,12 @@ export function createPrivateMessagesIngestRuntime({
   normalizeThrottleMs,
   normalizeTimestamp,
   persistIncomingGroupEpochTicket,
+  processIncomingCallSignal,
+  processIncomingRoomSignal,
   processIncomingDeletionRumorEvent,
   processIncomingReactionRumorEvent,
   queueBackgroundGroupContactRefresh,
+  queueChatProfileRefresh,
   queuePrivateMessagesUiRefresh,
   readReplyTargetEventId,
   refreshReplyPreviewsForTargetMessage,
@@ -82,19 +92,41 @@ export function createPrivateMessagesIngestRuntime({
   const foregroundIngestTasks: QueuedIngestTask[] = [];
   const backgroundIngestTasks: QueuedIngestTask[] = [];
   let privateMessagesIngestQueue = Promise.resolve();
+  let resolveDrained: (() => void) | null = null;
   let ingestQueueGeneration = 0;
   let activeIngestWorkerGeneration: number | null = null;
 
+  let profileRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  function queueNewChatProfile() {
+    if (!queueChatProfileRefresh || profileRefreshTimer) return;
+    profileRefreshTimer = setTimeout(() => {
+      profileRefreshTimer = undefined;
+      queueChatProfileRefresh();
+    }, 100);
+  }
   function getPrivateMessagesIngestQueue(): Promise<void> {
     return privateMessagesIngestQueue;
   }
 
   function resetPrivateMessagesIngestRuntimeState(): void {
+    clearTimeout(profileRefreshTimer);
+    profileRefreshTimer = undefined;
+    disposeCryptoWorker();
     ingestQueueGeneration += 1;
+    spoolRunning = false;
+    wakeSpool?.();
+    commitTail = Promise.resolve();
+    stagedChats.clear();
+    stagedEvents.clear();
+    hotInbox.clear();
+    for (const waiting of spoolWaiters.values()) waiting.forEach((resolve) => resolve(false));
+    spoolWaiters.clear();
     const abandonedTasks = [...foregroundIngestTasks, ...backgroundIngestTasks];
     foregroundIngestTasks.length = 0;
     backgroundIngestTasks.length = 0;
     activeIngestWorkerGeneration = null;
+    resolveDrained?.();
+    resolveDrained = null;
     privateMessagesIngestQueue = Promise.resolve();
     for (const task of abandonedTasks) {
       task.resolve(false);
@@ -109,6 +141,7 @@ export function createPrivateMessagesIngestRuntime({
     activeIngestWorkerGeneration = generation;
     void (async () => {
       try {
+        let sliceStarted = performance.now();
         while (ingestQueueGeneration === generation) {
           const task = foregroundIngestTasks.shift() ?? backgroundIngestTasks.shift();
           if (!task) {
@@ -120,10 +153,16 @@ export function createPrivateMessagesIngestRuntime({
           }
 
           task.resolve(await task.run());
+          if (performance.now() - sliceStarted >= 8) {
+            await yieldToMainThread();
+            sliceStarted = performance.now();
+          }
         }
       } finally {
         if (activeIngestWorkerGeneration === generation) {
           activeIngestWorkerGeneration = null;
+          resolveDrained?.();
+          resolveDrained = null;
         }
         if (
           ingestQueueGeneration === generation &&
@@ -161,7 +200,7 @@ export function createPrivateMessagesIngestRuntime({
 
   function isIncomingActivityAfterSeenBoundary(
     createdAt: string,
-    lastSeenActivityAt: string | null
+    lastSeenActivityAt: string | null,
   ): boolean {
     return toComparableTimestamp(createdAt) > toComparableTimestamp(lastSeenActivityAt);
   }
@@ -172,7 +211,7 @@ export function createPrivateMessagesIngestRuntime({
 
   function isFallbackNotificationTitle(
     value: string,
-    chat: Pick<ChatRow, 'public_key' | 'type'>
+    chat: Pick<ChatRow, 'public_key' | 'type'>,
   ): boolean {
     const normalizedValue = value.trim().toLowerCase();
     const normalizedPublicKey = chat.public_key.trim().toLowerCase();
@@ -197,7 +236,7 @@ export function createPrivateMessagesIngestRuntime({
   function resolveIncomingNotificationTitle(
     chat: Pick<ChatRow, 'name' | 'public_key' | 'type'>,
     contact: ContactRecord | null,
-    fallbackPublicKey: string
+    fallbackPublicKey: string,
   ): string {
     const candidateTitles = [
       chat.name,
@@ -217,61 +256,282 @@ export function createPrivateMessagesIngestRuntime({
     return chat.type === 'group' ? 'Group' : 'Chat';
   }
 
-  function queuePrivateMessageIngestion(
-    wrappedEvent: NDKEvent,
+  const inbox = messageInbox;
+  let spoolRunning = false;
+  let spoolWrites = 0;
+  let foregroundArrivalVersion = 0;
+  let wakeSpool: (() => void) | undefined;
+  // Decrypt/stage one event at a time, with at most eight uncommitted messages.
+  // Commits remain ordered so edits, deletes, counters and relay coverage agree.
+  let commitTail: Promise<void> = Promise.resolve();
+  const stagedChats = new Map<string, ChatRow>();
+  const stagedEvents = new Set<string>();
+  // Only the next small page stays in memory. Overflow drains from the journal.
+  const hotInbox = new Map<string, { record: InboxRecord; durable: Promise<boolean> }>();
+  const spoolWaiters = new Map<string, Array<(value: boolean) => void>>();
+  async function queuePrivateMessageIngestion(
+    wrappedEvent: ClientEvent,
     loggedInPubkeyHex: string,
-    options: {
-      priority?: IngestPriority;
-      uiThrottleMs?: number;
-    } = {}
+    options: { priority?: IngestPriority; uiThrottleMs?: number; reprocess?: boolean } = {},
   ): Promise<boolean> {
     const uiThrottleMs =
       typeof options.uiThrottleMs === 'number'
         ? normalizeThrottleMs(options.uiThrottleMs)
         : getPrivateMessagesRestoreThrottleMs();
-
+    // Runtime mocks do not have a raw event. Keep the injected test seam usable.
+    if (typeof indexedDB === 'undefined' || typeof wrappedEvent.rawEvent !== 'function') {
+      if (!resolveDrained)
+        privateMessagesIngestQueue = new Promise<void>((resolve) => {
+          resolveDrained = resolve;
+        });
+      const generation = ingestQueueGeneration;
+      return new Promise<boolean>((resolve) => {
+        const task = {
+          generation,
+          resolve,
+          run: async () => {
+            try {
+              return (
+                (await processIncomingPrivateMessage(wrappedEvent, loggedInPubkeyHex, {
+                  uiThrottleMs,
+                })) !== false
+              );
+            } catch {
+              return false;
+            }
+          },
+        };
+        (options.priority === 'foreground' ? foregroundIngestTasks : backgroundIngestTasks).push(
+          task,
+        );
+        startPrivateMessagesIngestWorker(generation);
+      });
+    }
     const generation = ingestQueueGeneration;
-    const ingestionResult = new Promise<boolean>((resolve) => {
-      const task: QueuedIngestTask = {
-        generation,
-        resolve,
-        run: async () => {
-          try {
-            const shouldAcknowledge = await processIncomingPrivateMessage(
-              wrappedEvent,
-              loggedInPubkeyHex,
-              {
-                uiThrottleMs,
-              }
-            );
-            return shouldAcknowledge !== false;
-          } catch (error) {
-            console.error('Failed to process incoming private message', error);
-            return false;
-          }
-        },
-      };
-      const queue =
-        options.priority === 'foreground' ? foregroundIngestTasks : backgroundIngestTasks;
-      queue.push(task);
-      startPrivateMessagesIngestWorker(generation);
+    const client = wrappedEvent.ndk;
+    const key = `${loggedInPubkeyHex}:${wrappedEvent.id}`;
+    const alreadyQueued = spoolWaiters.has(key);
+    const result = new Promise<boolean>((resolve) => {
+      const waiting = spoolWaiters.get(key) ?? [];
+      waiting.push(resolve);
+      spoolWaiters.set(key, waiting);
     });
-    const previousQueue = privateMessagesIngestQueue;
-    privateMessagesIngestQueue = Promise.all([previousQueue, ingestionResult]).then(
-      () => undefined
-    );
-    return ingestionResult;
+    if (alreadyQueued) {
+      if (options.reprocess) {
+        await result;
+        if (generation !== ingestQueueGeneration) return false;
+        return queuePrivateMessageIngestion(wrappedEvent, loggedInPubkeyHex, options);
+      }
+      return result;
+    }
+    if (!resolveDrained)
+      privateMessagesIngestQueue = new Promise<void>((resolve) => {
+        resolveDrained = resolve;
+      });
+    const record: InboxRecord = {
+      account: loggedInPubkeyHex,
+      id: wrappedEvent.id,
+      event: wrappedEvent.rawEvent(),
+      priority: options.priority === 'foreground' ? 0 : 1,
+      queuedAt: Date.now(),
+      throttle: uiThrottleMs,
+      ...(options.reprocess ? { reprocess: true } : {}),
+      relayUrls: wrappedEvent.onRelays.map((r) => r.url),
+    };
+    spoolWrites++;
+    // Start the journal concurrently. Immediate processing does not wait for its
+    // write/read round trip; acknowledgement still requires durable success.
+    const durable = inbox
+      .put(record)
+      .then(
+        () => true,
+        () => false,
+      )
+      .finally(() => {
+        spoolWrites--;
+        wakeSpool?.();
+      });
+    if (hotInbox.size < 64) hotInbox.set(key, { record, durable });
+    else if (record.priority === 0) {
+      const background = [...hotInbox].find(([, item]) => item.record.priority === 1);
+      if (background) {
+        hotInbox.delete(background[0]);
+        hotInbox.set(key, { record, durable });
+      }
+    }
+    if (record.priority === 0) foregroundArrivalVersion++;
+    wakeSpool?.();
+    if (!spoolRunning) {
+      commitTail = Promise.resolve();
+      spoolRunning = true;
+      void (async () => {
+        const pending = new Set<Promise<void>>();
+        const activeIds = new Set<string>();
+        const deferredIds = new Set<string>();
+        let failed = false;
+        try {
+          while (generation === ingestQueueGeneration) {
+            if (failed) return;
+            const awakened = new Promise<void>((resolve) => {
+              wakeSpool = resolve;
+            });
+            const batchArrivalVersion = foregroundArrivalVersion;
+            const hot = [...hotInbox.values()]
+              .filter(
+                ({ record }) => record.account === loggedInPubkeyHex && !activeIds.has(record.id),
+              )
+              .sort((a, b) => a.record.priority - b.record.priority);
+            const batch = hot.length
+              ? hot.slice(0, 32).map(({ record }) => record)
+              : (await inbox.next(loggedInPubkeyHex, 32, deferredIds)).filter(
+                  (record) => !activeIds.has(record.id),
+                );
+            if (!batch.length) {
+              if (pending.size) {
+                await Promise.race([...pending, awakened]);
+                continue;
+              }
+              if (spoolWrites) {
+                await yieldToMainThread();
+                continue;
+              }
+              break;
+            }
+            for (const record of batch) {
+              if (generation !== ingestQueueGeneration || failed) break;
+              if (pending.size >= 8) await Promise.race(pending);
+              if (failed) break;
+              let releaseStage!: () => void;
+              const staged = new Promise<void>((resolve) => {
+                releaseStage = resolve;
+              });
+              activeIds.add(record.id);
+              const hotKey = `${loggedInPubkeyHex}:${record.id}`;
+              const journal = hotInbox.get(hotKey)?.durable;
+              hotInbox.delete(hotKey);
+              const job = (async () => {
+                let accepted = false;
+                try {
+                  const event = new ClientEvent(client, record.event);
+                  event.onRelays = (record.relayUrls ?? []).map((url) =>
+                    client!.pool.getRelay(url, false),
+                  );
+                  event.relay = event.onRelays[0];
+                  accepted =
+                    !record.reprocess && (await inbox.hasProcessed(loggedInPubkeyHex, record.id));
+                  if (generation !== ingestQueueGeneration) return;
+                  if (!accepted)
+                    accepted =
+                      (await processIncomingPrivateMessage(event, loggedInPubkeyHex, {
+                        uiThrottleMs: record.throttle,
+                        onStaged: releaseStage,
+                      })) !== false;
+                  if (generation !== ingestQueueGeneration) return;
+                  if (journal && !(await journal)) throw new Error('Ciphertext journal failed');
+                  if (generation !== ingestQueueGeneration) return;
+                  if (accepted) await inbox.complete(loggedInPubkeyHex, record.id);
+                  else deferredIds.add(record.id);
+                } catch {
+                  accepted = false;
+                  failed = true;
+                  console.error(
+                    'Failed to persist private message; encrypted inbox retained for retry',
+                  );
+                } finally {
+                  releaseStage();
+                }
+                const itemKey = `${loggedInPubkeyHex}:${record.id}`;
+                spoolWaiters.get(itemKey)?.forEach((resolve) => resolve(accepted));
+                spoolWaiters.delete(itemKey);
+              })();
+              pending.add(job);
+              void job.finally(() => {
+                pending.delete(job);
+                activeIds.delete(record.id);
+              });
+              await staged;
+              await yieldToMainThread();
+              // Re-read the priority index when live traffic arrives mid-history-page.
+              if (foregroundArrivalVersion !== batchArrivalVersion) break;
+            }
+            if (failed) return;
+          }
+        } catch (error) {
+          console.error('Message inbox failed');
+        } finally {
+          await Promise.all(pending);
+          if (generation !== ingestQueueGeneration) return;
+          spoolRunning = false;
+          hotInbox.clear();
+          for (const waiting of spoolWaiters.values()) waiting.forEach((resolve) => resolve(false));
+          spoolWaiters.clear();
+          resolveDrained?.();
+          resolveDrained = null;
+        }
+      })();
+    }
+    return result;
+  }
+
+  async function repairRestoredOutgoingChats(account: string): Promise<void> {
+    const generation = ingestQueueGeneration;
+    const rows = await chatDataService.listChats();
+    for (const row of rows) {
+      if (generation !== ingestQueueGeneration) return;
+      if (
+        row.meta.inbox_state === 'blocked' ||
+        row.meta.inbox_state === 'accepted' ||
+        row.meta.accepted_at ||
+        row.meta[CHAT_REQUEST_CLEARED_AT_META_KEY]
+      )
+        continue;
+      // Seek the author index; never load a conversation's message history.
+      const outgoing = await chatDataService.findLatestMessageByAuthor(row.public_key, account);
+      if (generation !== ingestQueueGeneration) return;
+      if (outgoing) {
+        const [current, contact] = await Promise.all([
+          chatDataService.getChatByPublicKey(row.public_key),
+          contactsService.getContactByPublicKey(row.public_key),
+        ]);
+        if (generation !== ingestQueueGeneration) return;
+        if (
+          current &&
+          current.meta.inbox_state !== 'blocked' &&
+          !current.meta[CHAT_REQUEST_CLEARED_AT_META_KEY] &&
+          !contact?.meta.blocked
+        )
+          await chatStore.acceptChat(row.public_key, { acceptedAt: outgoing.created_at });
+      }
+      await yieldToMainThread();
+    }
+  }
+
+  async function resumePendingPrivateMessages(
+    client: ClientEvent['ndk'],
+    account: string,
+  ): Promise<void> {
+    if (typeof indexedDB === 'undefined') return;
+    const [record] = await inbox.next(account, 1);
+    if (!record) return;
+    const event = new ClientEvent(client, record.event);
+    event.onRelays = (record.relayUrls ?? []).map((url) => client!.pool.getRelay(url, false));
+    await queuePrivateMessageIngestion(event, account, {
+      priority: record.priority === 0 ? 'foreground' : 'background',
+      uiThrottleMs: record.throttle,
+    });
   }
 
   async function processIncomingPrivateMessage(
-    wrappedEvent: NDKEvent,
+    wrappedEvent: ClientEvent,
     loggedInPubkeyHex: string,
     options: {
       uiThrottleMs?: number;
-    } = {}
+      onStaged?: () => void;
+    } = {},
   ): Promise<boolean | undefined> {
+    const processingGeneration = ingestQueueGeneration;
     const wrappedRelayUrls = extractRelayUrlsFromEvent(wrappedEvent);
-    if (wrappedEvent.kind !== NDKKind.GiftWrap) {
+    if (wrappedEvent.kind !== NostrKind.GiftWrap) {
       logInboundEvent('drop', {
         reason: 'unsupported-wrapper-kind',
         ...buildInboundTraceDetails({
@@ -285,7 +545,7 @@ export function createPrivateMessagesIngestRuntime({
 
     const recipientContext = await resolveIncomingPrivateMessageRecipientContext(
       wrappedEvent,
-      loggedInPubkeyHex
+      loggedInPubkeyHex,
     );
     if (!recipientContext) {
       logInboundEvent('drop', {
@@ -299,9 +559,10 @@ export function createPrivateMessagesIngestRuntime({
       return false;
     }
 
-    let rumorEvent: NDKEvent;
+    let rumorEvent: ClientEvent;
     try {
       rumorEvent = await giftUnwrap(wrappedEvent, undefined, recipientContext.unwrapSigner);
+      if (processingGeneration !== ingestQueueGeneration) return false;
     } catch (error) {
       logDeveloperTrace('warn', 'inbound', 'unwrap-failed', {
         error,
@@ -346,6 +607,27 @@ export function createPrivateMessagesIngestRuntime({
           recipients,
         }),
       });
+      return;
+    }
+
+    // Call controls never enter chat, contact, message, unread, or notification persistence.
+    // Only one-to-one rumors addressed to the active account can negotiate a call.
+    if (rumorEvent.kind === CALL_SIGNAL_KIND) {
+      if (
+        !isSelfSentMessage &&
+        !recipientContext.groupChatPublicKey &&
+        recipientContext.recipientPubkey === loggedInPubkeyHex &&
+        recipients.length === 1 &&
+        recipients[0] === loggedInPubkeyHex &&
+        !isPubkeyBlocked(senderPubkeyHex)
+      ) {
+        const signal = parseCallSignal(rumorEvent.content, rumorEvent.created_at);
+        if (signal) await processIncomingCallSignal?.(senderPubkeyHex, signal);
+        else {
+          const roomSignal = parseRoomSignal(rumorEvent.content, rumorEvent.created_at);
+          if (roomSignal) await processIncomingRoomSignal?.(senderPubkeyHex, roomSignal);
+        }
+      }
       return;
     }
 
@@ -406,17 +688,29 @@ export function createPrivateMessagesIngestRuntime({
 
     let preflightContact: ContactRecord | null | undefined;
     let preflightChat: ChatRow | null | undefined;
+    let preflightMessage:
+      Awaited<ReturnType<typeof chatDataService.getMessageByEventIdOrEditReference>> | undefined;
+    const canReadMessageContext =
+      rumorEvent.kind === NostrKind.PrivateDirectMessage &&
+      !readMessageEditTargetEventId(rumorEvent.tags) &&
+      !stagedEvents.has(rumorEvent.id);
     if (!isSelfSentMessage) {
       await Promise.all([chatDataService.init(), contactsService.init()]);
-      const [blockedContact, blockedSenderContact, blockedChat] = await Promise.all([
+      const [blockedContact, blockedSenderContact, context] = await Promise.all([
         contactsService.getContactByPublicKey(chatPubkey),
         senderPubkeyHex === chatPubkey
           ? Promise.resolve(null)
           : contactsService.getContactByPublicKey(senderPubkeyHex),
-        chatDataService.getChatByPublicKey(chatPubkey),
+        canReadMessageContext
+          ? chatDataService.getIncomingMessageContext(chatPubkey, rumorEvent.id)
+          : chatDataService
+              .getChatByPublicKey(chatPubkey)
+              .then((chat) => ({ chat, existingMessage: undefined })),
       ]);
+      const blockedChat = context.chat;
       preflightContact = blockedContact;
       preflightChat = blockedChat;
+      preflightMessage = context.existingMessage;
       if (
         blockedContact?.meta.blocked === true ||
         blockedSenderContact?.meta.blocked === true ||
@@ -438,6 +732,15 @@ export function createPrivateMessagesIngestRuntime({
       }
     }
 
+    if (
+      rumorEvent.kind !== NostrKind.PrivateDirectMessage ||
+      readMessageEditTargetEventId(rumorEvent.tags) ||
+      stagedEvents.has(rumorEvent.id)
+    ) {
+      await commitTail;
+      if (processingGeneration !== ingestQueueGeneration) return false;
+    }
+
     const uiThrottleMs = normalizeThrottleMs(options.uiThrottleMs);
 
     const rumorNostrEvent = await toStoredNostrEvent(rumorEvent);
@@ -454,7 +757,7 @@ export function createPrivateMessagesIngestRuntime({
       ...buildSubscriptionEventDetails(rumorEvent),
     });
 
-    if (rumorEvent.kind === NDKKind.EventDeletion) {
+    if (rumorEvent.kind === NostrKind.EventDeletion) {
       logInboundEvent('route', {
         route: 'deletion',
         direction,
@@ -475,7 +778,7 @@ export function createPrivateMessagesIngestRuntime({
       return;
     }
 
-    if (rumorEvent.kind === NDKKind.Reaction) {
+    if (rumorEvent.kind === NostrKind.Reaction) {
       logInboundEvent('route', {
         route: 'reaction',
         direction,
@@ -508,7 +811,7 @@ export function createPrivateMessagesIngestRuntime({
       }
       const epochNumber = verificationResult.epochNumber ?? 0;
       const epochPublicKey = derivePublicKeyFromPrivateKey(
-        verificationResult.epochPrivateKey ?? ''
+        verificationResult.epochPrivateKey ?? '',
       );
 
       await contactsService.init();
@@ -519,7 +822,7 @@ export function createPrivateMessagesIngestRuntime({
       const conflictingEpochNumber = findConflictingKnownGroupEpochNumber(
         existingGroupChat,
         epochNumber,
-        epochPublicKey ?? ''
+        epochPublicKey ?? '',
       );
       if (conflictingEpochNumber) {
         logConflictingIncomingEpochNumber(
@@ -527,14 +830,14 @@ export function createPrivateMessagesIngestRuntime({
           epochNumber,
           epochPublicKey ?? '',
           incomingEpochCreatedAt,
-          conflictingEpochNumber
+          conflictingEpochNumber,
         );
         logInboundEvent('drop', {
           reason: 'conflicting-epoch-public-key',
           epochNumber,
           epochPublicKey: formatSubscriptionLogValue(epochPublicKey),
           conflictingEpochPublicKey: formatSubscriptionLogValue(
-            conflictingEpochNumber.epoch_public_key
+            conflictingEpochNumber.epoch_public_key,
           ),
           conflictingEpochCreatedAt: conflictingEpochNumber.invitation_created_at ?? null,
           createdAt: incomingEpochCreatedAt,
@@ -575,7 +878,7 @@ export function createPrivateMessagesIngestRuntime({
         groupName: fallbackGroupName,
         deliveryRecipientPubkey: formatSubscriptionLogValue(recipientContext.recipientPubkey),
         signedEventId: formatSubscriptionLogValue(
-          verificationResult.signedEvent?.id ?? loggedEvent.id ?? null
+          verificationResult.signedEvent?.id ?? loggedEvent.id ?? null,
         ),
         ...buildInboundTraceDetails({
           wrappedEvent,
@@ -597,9 +900,10 @@ export function createPrivateMessagesIngestRuntime({
           accepted: wasAcceptedGroup,
           invitationCreatedAt: incomingEpochCreatedAt,
           seedRelayUrls: wrappedRelayUrls,
-        }
+        },
       );
       queueBackgroundGroupContactRefresh(senderPubkeyHex, fallbackGroupName, wrappedRelayUrls);
+      queueNewChatProfile();
 
       if (!wasAcceptedGroup) {
         await upsertIncomingGroupInviteRequestChat(
@@ -613,7 +917,7 @@ export function createPrivateMessagesIngestRuntime({
             : {
                 name: fallbackGroupName,
                 meta: {},
-              }
+              },
         );
       }
 
@@ -644,7 +948,7 @@ export function createPrivateMessagesIngestRuntime({
       }
 
       try {
-        const { useMessageStore } = await import('src/stores/messageStore');
+        const { useMessageStore } = await import('#src/stores/messageStore.ts');
         await useMessageStore().upsertPersistedMessage(epochNoticeMessage);
       } catch (error) {
         console.error('Failed to sync incoming epoch notice into live state', error);
@@ -652,7 +956,7 @@ export function createPrivateMessagesIngestRuntime({
       return;
     }
 
-    if (rumorEvent.kind !== NDKKind.PrivateDirectMessage) {
+    if (rumorEvent.kind !== NostrKind.PrivateDirectMessage) {
       logInboundEvent('drop', {
         reason: 'unsupported-rumor-kind',
         direction,
@@ -695,7 +999,14 @@ export function createPrivateMessagesIngestRuntime({
 
     const rumorEventId = normalizeEventId(rumorNostrEvent?.id ?? rumorEvent.id);
     if (rumorEventId) {
-      const existingMessage = await chatDataService.getMessageByEventId(rumorEventId);
+      const existingOrEditedMessage =
+        preflightMessage !== undefined
+          ? preflightMessage
+          : await chatDataService.getMessageByEventIdOrEditReference(rumorEventId);
+      const existingMessage =
+        normalizeEventId(existingOrEditedMessage?.event_id) === rumorEventId
+          ? existingOrEditedMessage
+          : null;
       if (existingMessage) {
         await appendRelayStatusesToMessageEvent(existingMessage.id, receivedRelayStatuses, {
           event: rumorNostrEvent ?? undefined,
@@ -709,13 +1020,13 @@ export function createPrivateMessagesIngestRuntime({
           refreshedExistingMessage,
           {
             uiThrottleMs,
-          }
+          },
         );
         updatedExistingMessage = await applyPendingIncomingDeletionsForMessage(
           updatedExistingMessage,
           {
             uiThrottleMs,
-          }
+          },
         );
         await refreshReplyPreviewsForTargetMessage(updatedExistingMessage, {
           uiThrottleMs,
@@ -738,19 +1049,18 @@ export function createPrivateMessagesIngestRuntime({
         return;
       }
 
-      const existingEditedMessage =
-        await chatDataService.getMessageByEventIdOrEditReference(rumorEventId);
+      const existingEditedMessage = existingOrEditedMessage;
       if (
         existingEditedMessage &&
         messageEditReferencesEventId(existingEditedMessage.meta, rumorEventId)
       ) {
         let refreshedEditedMessage = await applyPendingIncomingReactionsForMessage(
           existingEditedMessage,
-          { uiThrottleMs }
+          { uiThrottleMs },
         );
         refreshedEditedMessage = await applyPendingIncomingDeletionsForMessage(
           refreshedEditedMessage,
-          { uiThrottleMs }
+          { uiThrottleMs },
         );
         if (rumorNostrEvent) {
           await nostrEventDataService.upsertEvent({
@@ -797,7 +1107,7 @@ export function createPrivateMessagesIngestRuntime({
         ? findHigherKnownGroupEpochConflict(
             existingChat ?? resolvedGroupEpochContext.chat,
             incomingEpochNumber,
-            createdAt
+            createdAt,
           )
         : null;
       if (higherEpochConflict?.olderHigherEpochEntry) {
@@ -806,17 +1116,17 @@ export function createPrivateMessagesIngestRuntime({
           incomingEpochNumber,
           resolvedGroupEpochContext.epochEntry.epoch_public_key,
           createdAt,
-          higherEpochConflict
+          higherEpochConflict,
         );
         logInboundEvent('drop', {
           reason: 'invalid-epoch-number',
           epochNumber: incomingEpochNumber,
           epochPublicKey: formatSubscriptionLogValue(
-            resolvedGroupEpochContext.epochEntry.epoch_public_key
+            resolvedGroupEpochContext.epochEntry.epoch_public_key,
           ),
           higherEpochNumber: higherEpochConflict.higherEpochEntry.epoch_number,
           higherEpochPublicKey: formatSubscriptionLogValue(
-            higherEpochConflict.higherEpochEntry.epoch_public_key
+            higherEpochConflict.higherEpochEntry.epoch_public_key,
           ),
           higherEpochCreatedAt:
             higherEpochConflict.olderHigherEpochEntry.invitation_created_at ??
@@ -838,10 +1148,13 @@ export function createPrivateMessagesIngestRuntime({
       }
     }
 
-    const incomingChatInboxState = resolveIncomingChatInboxStateValue({
-      chat: existingChat,
-      isAcceptedContact,
-    });
+    const incomingChatInboxState =
+      existingChat?.meta.inbox_state === 'blocked' || contact?.meta.blocked === true
+        ? 'blocked'
+        : resolveIncomingChatInboxStateValue({
+            chat: existingChat,
+            isAcceptedContact: isAcceptedContact || isSelfSentMessage,
+          });
     if (
       !isSelfSentMessage &&
       (incomingChatInboxState === 'blocked' || contact?.meta.blocked === true)
@@ -862,7 +1175,9 @@ export function createPrivateMessagesIngestRuntime({
     }
 
     const existingRequestClearedAt = normalizeTimestamp(
-      isPlainRecord(existingChat?.meta) ? existingChat.meta[CHAT_REQUEST_CLEARED_AT_META_KEY] : null
+      isPlainRecord(existingChat?.meta)
+        ? existingChat.meta[CHAT_REQUEST_CLEARED_AT_META_KEY]
+        : null,
     );
     if (
       incomingChatInboxState === 'request' &&
@@ -909,8 +1224,12 @@ export function createPrivateMessagesIngestRuntime({
               : {}),
           },
         });
+    if (createdChat) queueNewChatProfile();
     let chat =
-      existingChat ?? createdChat ?? (await chatDataService.getChatByPublicKey(chatPubkey));
+      stagedChats.get(chatPubkey) ??
+      existingChat ??
+      createdChat ??
+      (await chatDataService.getChatByPublicKey(chatPubkey));
     if (!chat) {
       logInboundEvent('drop', {
         reason: 'chat-create-failed',
@@ -943,18 +1262,18 @@ export function createPrivateMessagesIngestRuntime({
 
     const isBlockedChat = incomingChatInboxState === 'blocked';
     const contactLastSeenIncomingActivityAt = normalizeTimestamp(
-      isPlainRecord(contact?.meta) ? contact.meta.last_seen_incoming_activity_at : null
+      isPlainRecord(contact?.meta) ? contact.meta.last_seen_incoming_activity_at : null,
     );
     const chatLastSeenReceivedActivityAt = normalizeTimestamp(
-      isPlainRecord(chat.meta) ? chat.meta[lastSeenReceivedActivityAtMetaKey] : null
+      isPlainRecord(chat.meta) ? chat.meta[lastSeenReceivedActivityAtMetaKey] : null,
     );
     const chatLastOutgoingMessageAt = normalizeTimestamp(
-      isPlainRecord(chat.meta) ? chat.meta.last_outgoing_message_at : null
+      isPlainRecord(chat.meta) ? chat.meta.last_outgoing_message_at : null,
     );
     const effectiveLastSeenIncomingActivityAt = resolveLatestReadBoundaryAtValue(
       contactLastSeenIncomingActivityAt,
       chatLastSeenReceivedActivityAt,
-      chatLastOutgoingMessageAt
+      chatLastOutgoingMessageAt,
     );
     const replyPreview = replyTargetEventId
       ? await buildReplyPreviewFromTargetEvent(
@@ -965,14 +1284,16 @@ export function createPrivateMessagesIngestRuntime({
           {
             referenceCreatedAt: rumorEvent.created_at,
             seedRelayUrls: wrappedRelayUrls,
-          }
+          },
         )
       : null;
     const attachments = extractMediaAttachmentsFromTags(rumorEvent.tags);
     const editTargetEventId = readMessageEditTargetEventId(rumorEvent.tags);
+    const callHistory = !resolvedGroupChatPublicKey ? callHistoryFromTags(rumorEvent.tags) : null;
     let messageMeta: Record<string, unknown> = {
       source: 'nostr',
-      kind: NDKKind.PrivateDirectMessage,
+      ...(callHistory ? { call_history: callHistory } : {}),
+      kind: NostrKind.PrivateDirectMessage,
       wrapper_event_id: wrappedEvent.id ?? '',
       ...buildMentionMetadata(messageText, loggedInPubkeyHex),
       ...(replyPreview ? { reply: replyPreview } : {}),
@@ -992,16 +1313,11 @@ export function createPrivateMessagesIngestRuntime({
     }
 
     if (!editTargetMessage) {
-      const chatMessages = await chatDataService.listMessages(chat.public_key);
-      editTargetMessage =
-        chatMessages.find((candidate) => {
-          return (
-            candidate.author_public_key.trim().toLowerCase() === senderPubkeyHex &&
-            Boolean(candidate.event_id) &&
-            Boolean(candidate.meta.deleted) &&
-            isSameNostrSecond(candidate.created_at, createdAt)
-          );
-        }) ?? null;
+      editTargetMessage = await chatDataService.findDeletedMessageInSecond(
+        chat.public_key,
+        senderPubkeyHex,
+        createdAt,
+      );
     }
 
     if (editTargetMessage?.event_id && rumorEventId) {
@@ -1044,7 +1360,7 @@ export function createPrivateMessagesIngestRuntime({
             chat.public_key,
             messagePreviewText,
             chat.last_message_at,
-            chat.unread_count
+            chat.unread_count,
           );
         }
         if (uiThrottleMs > 0) {
@@ -1077,50 +1393,6 @@ export function createPrivateMessagesIngestRuntime({
     if (editTargetEventId) {
       messageMeta = buildEditedMessageMeta({}, messageMeta, editTargetEventId, editedAt);
     }
-    const createdMessage = await chatDataService.createMessage({
-      chat_public_key: chat.public_key,
-      author_public_key: senderPubkeyHex,
-      message: messageText,
-      created_at: createdAt,
-      event_id: rumorEventId,
-      meta: messageMeta,
-    });
-    if (!createdMessage) {
-      logInboundEvent('drop', {
-        reason: 'message-create-failed',
-        direction,
-        ...buildInboundTraceDetails({
-          wrappedEvent,
-          rumorEvent,
-          loggedInPubkeyHex,
-          senderPubkeyHex,
-          chatPubkey,
-          relayUrls: wrappedRelayUrls,
-          recipients,
-        }),
-      });
-      return;
-    }
-
-    await chatStore.recordIncomingActivity(chat.public_key, createdAt);
-    let nextMessageRow = await applyPendingIncomingReactionsForMessage(createdMessage, {
-      uiThrottleMs,
-    });
-    nextMessageRow = await applyPendingIncomingDeletionsForMessage(nextMessageRow, {
-      uiThrottleMs,
-    });
-    await refreshReplyPreviewsForTargetMessage(nextMessageRow, {
-      uiThrottleMs,
-    });
-
-    if (rumorNostrEvent) {
-      await nostrEventDataService.upsertEvent({
-        event: rumorNostrEvent,
-        direction,
-        relay_statuses: receivedRelayStatuses,
-      });
-    }
-
     const currentUnreadCount = Math.max(0, Number(chat.unread_count ?? 0));
     const attachmentPreviewText = buildImageAttachmentPreviewText(messageText, messageMeta);
     const messagePreviewText = resolvedGroupChatPublicKey
@@ -1128,7 +1400,7 @@ export function createPrivateMessagesIngestRuntime({
       : attachmentPreviewText;
     const isAfterSeenBoundary = isIncomingActivityAfterSeenBoundary(
       createdAt,
-      effectiveLastSeenIncomingActivityAt
+      effectiveLastSeenIncomingActivityAt,
     );
     const shouldIncrementUnreadCount =
       !isSelfSentMessage &&
@@ -1144,152 +1416,193 @@ export function createPrivateMessagesIngestRuntime({
           : currentUnreadCount;
     const shouldUpdateChatPreview = shouldUseIncomingMessagePreview(
       createdAt,
-      chat.last_message_at
+      chat.last_message_at,
     );
     const nextPreviewAt = shouldUpdateChatPreview
       ? resolveIncomingPreviewTimestamp(createdAt, chat.last_message_at)
       : chat.last_message_at;
-    const currentGroupEpochEntry = resolvedGroupChatPublicKey
-      ? resolveCurrentGroupChatEpochEntry(chat)
-      : null;
-    const hasValidInvitation = Boolean(resolvedGroupEpochContext?.epochEntry);
-    const invitationCreatedAt =
-      resolvedGroupEpochContext?.epochEntry?.invitation_created_at ?? null;
-    const isCurrentEpochRecipient =
-      Boolean(currentGroupEpochEntry?.epoch_public_key) &&
-      currentGroupEpochEntry?.epoch_public_key ===
-        resolvedGroupEpochContext?.epochEntry?.epoch_public_key;
-
+    // Publish verified content to reactive state before any message write. The
+    // ingestion promise still represents the durable commit for EOSE coverage.
+    const { useMessageStore } = await import('#src/stores/messageStore.ts');
     if (shouldUpdateChatPreview) {
-      await chatDataService.updateChatPreview(
-        chat.public_key,
-        messagePreviewText,
-        nextPreviewAt,
-        nextUnreadCount
-      );
-    } else if (nextUnreadCount !== currentUnreadCount) {
-      await chatDataService.updateChatUnreadCount(chat.public_key, nextUnreadCount);
+      chatStore.applyIncomingMessage({
+        publicKey: chat.public_key,
+        authorPublicKey: senderPubkeyHex,
+        fallbackName: deriveChatName(contact, chatPubkey),
+        messageText: messagePreviewText,
+        at: nextPreviewAt,
+        unreadCount: nextUnreadCount,
+        messageMeta,
+        meta: { ...chat.meta, ...(contact?.meta.picture ? { picture: contact.meta.picture } : {}) },
+      });
     }
-
-    logInboundEvent('private-message-received', {
-      direction,
-      messageId: createdMessage.id,
-      messageLength: messageText.length,
-      isGroupMessage: Boolean(resolvedGroupChatPublicKey),
-      rumor: loggedRumorEvent,
-      ...(resolvedGroupChatPublicKey
-        ? {
-            groupChatPubkey: formatSubscriptionLogValue(resolvedGroupChatPublicKey),
-            epochRecipientPubkey: formatSubscriptionLogValue(recipientContext.recipientPubkey),
-            hasValidInvitation,
-            invitationCreatedAt,
-            isCurrentEpochRecipient,
-          }
+    useMessageStore().stageIncomingMessage({
+      chat_public_key: chat.public_key,
+      author_public_key: senderPubkeyHex,
+      message: messageText,
+      created_at: createdAt,
+      event_id: rumorEventId,
+      meta: messageMeta,
+    });
+    const previousCommit = commitTail;
+    const stagedChat = {
+      ...chat,
+      unread_count: nextUnreadCount,
+      ...(shouldUpdateChatPreview
+        ? { last_message: messagePreviewText, last_message_at: nextPreviewAt }
         : {}),
-      ...buildInboundTraceDetails({
-        wrappedEvent,
-        rumorEvent,
-        loggedInPubkeyHex,
-        senderPubkeyHex,
-        chatPubkey,
-        relayUrls: wrappedRelayUrls,
-        recipients,
-      }),
-    });
+    };
+    stagedChats.set(chat.public_key, stagedChat);
+    if (rumorEventId) stagedEvents.add(rumorEventId);
+    const commit = (async () => {
+      await previousCommit;
+      await yieldToMainThread();
+      if (processingGeneration !== ingestQueueGeneration) return false;
+      const createdMessage = await chatDataService.createMessage({
+        chat_activity: {
+          incomingAt: createdAt,
+          unreadCount: nextUnreadCount,
+          ...(shouldUpdateChatPreview
+            ? { preview: { text: messagePreviewText, at: nextPreviewAt } }
+            : {}),
+        },
+        chat_public_key: chat.public_key,
+        author_public_key: senderPubkeyHex,
+        message: messageText,
+        created_at: createdAt,
+        event_id: rumorEventId,
+        meta: messageMeta,
+      });
+      if (!createdMessage) throw new Error('Incoming message persistence failed');
+      if (processingGeneration !== ingestQueueGeneration) return false;
 
-    logInboundEvent('message-persisted', {
-      persistence: 'created',
-      direction,
-      messageId: nextMessageRow.id,
-      chatId: chat.id,
-      effectiveLastSeenIncomingActivityAt,
-      unreadCount: nextUnreadCount,
-      updatedPreview: shouldUpdateChatPreview,
-      uiThrottleMs,
-      ...buildInboundTraceDetails({
-        wrappedEvent,
-        rumorEvent,
-        loggedInPubkeyHex,
-        senderPubkeyHex,
-        chatPubkey,
-        relayUrls: wrappedRelayUrls,
-        recipients,
-      }),
-    });
+      let nextMessageRow = await applyPendingIncomingReactionsForMessage(createdMessage, {
+        uiThrottleMs,
+      });
+      nextMessageRow = await applyPendingIncomingDeletionsForMessage(nextMessageRow, {
+        uiThrottleMs,
+      });
+      await refreshReplyPreviewsForTargetMessage(nextMessageRow, {
+        uiThrottleMs,
+      });
+      if (processingGeneration !== ingestQueueGeneration) return false;
 
-    if (resolvedGroupChatPublicKey) {
-      logInboundEvent('group-message-received', {
+      if (rumorNostrEvent) {
+        await nostrEventDataService.upsertEvent({
+          event: rumorNostrEvent,
+          direction,
+          relay_statuses: receivedRelayStatuses,
+        });
+      }
+
+      const currentGroupEpochEntry = resolvedGroupChatPublicKey
+        ? resolveCurrentGroupChatEpochEntry(chat)
+        : null;
+      const hasValidInvitation = Boolean(resolvedGroupEpochContext?.epochEntry);
+      const invitationCreatedAt =
+        resolvedGroupEpochContext?.epochEntry?.invitation_created_at ?? null;
+      const isCurrentEpochRecipient =
+        Boolean(currentGroupEpochEntry?.epoch_public_key) &&
+        currentGroupEpochEntry?.epoch_public_key ===
+          resolvedGroupEpochContext?.epochEntry?.epoch_public_key;
+
+      logInboundEvent('private-message-received', {
         direction,
-        messageId: nextMessageRow.id,
+        messageId: createdMessage.id,
         messageLength: messageText.length,
-        groupChatPubkey: formatSubscriptionLogValue(resolvedGroupChatPublicKey),
-        epochRecipientPubkey: formatSubscriptionLogValue(recipientContext.recipientPubkey),
-        authorPubkey: formatSubscriptionLogValue(senderPubkeyHex),
-        hasValidInvitation,
-        invitationCreatedAt,
-        isCurrentEpochRecipient,
+        isGroupMessage: Boolean(resolvedGroupChatPublicKey),
         rumor: loggedRumorEvent,
+        ...(resolvedGroupChatPublicKey
+          ? {
+              groupChatPubkey: formatSubscriptionLogValue(resolvedGroupChatPublicKey),
+              epochRecipientPubkey: formatSubscriptionLogValue(recipientContext.recipientPubkey),
+              hasValidInvitation,
+              invitationCreatedAt,
+              isCurrentEpochRecipient,
+            }
+          : {}),
         ...buildInboundTraceDetails({
           wrappedEvent,
           rumorEvent,
           loggedInPubkeyHex,
           senderPubkeyHex,
-          chatPubkey: resolvedGroupChatPublicKey,
+          chatPubkey,
           relayUrls: wrappedRelayUrls,
           recipients,
         }),
       });
-    }
 
-    if (
-      !isSelfSentMessage &&
-      !isBlockedChat &&
-      isAfterSeenBoundary &&
-      (await shouldNotifyForAcceptedChatOnly(chat.public_key, chat.meta ?? {}))
-    ) {
-      showIncomingMessageBrowserNotification({
-        chatPubkey: chat.public_key,
-        title: resolveIncomingNotificationTitle(chat, contact, chatPubkey),
-        messageText: messagePreviewText,
-        iconUrl: contact?.meta.picture?.trim() || undefined,
+      logInboundEvent('message-persisted', {
+        persistence: 'created',
+        direction,
+        messageId: nextMessageRow.id,
+        chatId: chat.id,
+        effectiveLastSeenIncomingActivityAt,
+        unreadCount: nextUnreadCount,
+        updatedPreview: shouldUpdateChatPreview,
+        uiThrottleMs,
+        ...buildInboundTraceDetails({
+          wrappedEvent,
+          rumorEvent,
+          loggedInPubkeyHex,
+          senderPubkeyHex,
+          chatPubkey,
+          relayUrls: wrappedRelayUrls,
+          recipients,
+        }),
       });
-    }
 
-    if (uiThrottleMs > 0) {
-      queuePrivateMessagesUiRefresh({
-        throttleMs: uiThrottleMs,
-        reloadChats: true,
-        reloadMessages: true,
-      });
-      return;
-    }
-
-    try {
-      if (shouldUpdateChatPreview) {
-        chatStore.applyIncomingMessage({
-          publicKey: chat.public_key,
-          authorPublicKey: senderPubkeyHex,
-          fallbackName: deriveChatName(contact, chatPubkey),
-          messageText: messagePreviewText,
-          at: nextPreviewAt,
-          unreadCount: nextUnreadCount,
-          messageMeta,
-          meta: {
-            ...(chat.meta ?? {}),
-            ...(contact?.meta.picture ? { picture: contact.meta.picture } : {}),
-            ...(Array.isArray(contact?.meta.group_members)
-              ? { group_members: contact.meta.group_members }
-              : {}),
-          },
+      if (resolvedGroupChatPublicKey) {
+        logInboundEvent('group-message-received', {
+          direction,
+          messageId: nextMessageRow.id,
+          messageLength: messageText.length,
+          groupChatPubkey: formatSubscriptionLogValue(resolvedGroupChatPublicKey),
+          epochRecipientPubkey: formatSubscriptionLogValue(recipientContext.recipientPubkey),
+          authorPubkey: formatSubscriptionLogValue(senderPubkeyHex),
+          hasValidInvitation,
+          invitationCreatedAt,
+          isCurrentEpochRecipient,
+          rumor: loggedRumorEvent,
+          ...buildInboundTraceDetails({
+            wrappedEvent,
+            rumorEvent,
+            loggedInPubkeyHex,
+            senderPubkeyHex,
+            chatPubkey: resolvedGroupChatPublicKey,
+            relayUrls: wrappedRelayUrls,
+            recipients,
+          }),
         });
-      } else if (nextUnreadCount !== currentUnreadCount) {
-        await chatStore.setUnreadCount(chat.public_key, nextUnreadCount);
       }
 
-      const { useMessageStore } = await import('src/stores/messageStore');
+      if (
+        !isSelfSentMessage &&
+        !isBlockedChat &&
+        isAfterSeenBoundary &&
+        (await shouldNotifyForAcceptedChatOnly(chat.public_key, chat.meta ?? {}))
+      ) {
+        showIncomingMessageBrowserNotification({
+          chatPubkey: chat.public_key,
+          title: resolveIncomingNotificationTitle(chat, contact, chatPubkey),
+          messageText: messagePreviewText,
+          iconUrl: contact?.meta.picture?.trim() || undefined,
+        });
+      }
+
       await useMessageStore().upsertPersistedMessage(nextMessageRow);
-    } catch (error) {
-      console.error('Failed to sync incoming private message into live state', error);
+    })();
+    commitTail = commit.then(() => undefined);
+    // The tail rejection is observed here as well as by the event's durable result.
+    void commitTail.catch(() => {});
+    options.onStaged?.();
+    try {
+      return await commit;
+    } finally {
+      if (processingGeneration === ingestQueueGeneration) {
+        if (stagedChats.get(chat.public_key) === stagedChat) stagedChats.delete(chat.public_key);
+        if (rumorEventId) stagedEvents.delete(rumorEventId);
+      }
     }
   }
 
@@ -1297,5 +1610,7 @@ export function createPrivateMessagesIngestRuntime({
     getPrivateMessagesIngestQueue,
     queuePrivateMessageIngestion,
     resetPrivateMessagesIngestRuntimeState,
+    resumePendingPrivateMessages,
+    repairRestoredOutgoingChats,
   };
 }

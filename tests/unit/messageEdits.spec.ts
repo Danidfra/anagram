@@ -5,7 +5,7 @@ import {
   messageEditReferencesEventId,
   readEditedMessageMetadata,
   readMessageEditTargetEventId,
-} from 'src/utils/messageEdits';
+} from '#src/utils/messageEdits.ts';
 import { describe, expect, it } from 'vitest';
 
 describe('message edit helpers', () => {
@@ -25,7 +25,7 @@ describe('message edit helpers', () => {
       derivePublicKeyFromPrivateKey: () => null,
       findGroupChatEpochContextByRecipientPubkey: async () => null,
       getOrCreateSigner: async () => ({}) as never,
-      ndk: new NDK(),
+      ndk: new NostrClient(),
       readEpochNumberTag: () => null,
       readFirstTagValue: () => null,
     });
@@ -77,5 +77,5 @@ describe('message edit helpers', () => {
   });
 });
 
-import NDK from '@nostr-dev-kit/ndk';
-import { createMessageEventRuntime } from 'src/stores/nostr/messageEventRuntime';
+import NostrClient from '#src/lib/nostr/client.ts';
+import { createMessageEventRuntime } from '#src/stores/nostr/messageEventRuntime.ts';
