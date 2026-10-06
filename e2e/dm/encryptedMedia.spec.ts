@@ -142,10 +142,10 @@ async function useBlossomServer(user: BootstrappedUser, serverUrl: string): Prom
     )
     .toBe(true);
   await user.page.goto('/#/settings/media-data-storage');
-  const serverInput = user.page.getByTestId('settings-blossom-server-input');
+  const serverInput = user.page.getByTestId('settings-private-media-input');
   await expect(serverInput).toBeVisible();
   await serverInput.fill(serverUrl);
-  const saveButton = user.page.getByTestId('settings-blossom-save');
+  const saveButton = user.page.getByTestId('settings-private-media-save');
   // The preference is restored from the account's relays, so a rerun may already have it saved.
   if (await saveButton.isDisabled()) {
     await expect(serverInput).toHaveValue(serverUrl);
@@ -153,7 +153,7 @@ async function useBlossomServer(user: BootstrappedUser, serverUrl: string): Prom
   }
 
   await saveButton.click();
-  await expect(user.page.getByText('Blossom server saved.', { exact: true })).toBeVisible({
+  await expect(user.page.getByText('Encrypted photo server saved.', { exact: true })).toBeVisible({
     timeout: 12_000,
   });
 }

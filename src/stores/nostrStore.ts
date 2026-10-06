@@ -124,7 +124,11 @@ import {
 import { useRelayStore } from 'src/stores/relayStore';
 import type { ChatGroupEpochKey, MessageRelayStatus } from 'src/types/chat';
 import type { ContactRecord } from 'src/types/contact';
-import { buildBlossomUploadAuthorization, requireBlossomServerUrl } from 'src/utils/blossomServer';
+import {
+  type BlossomAuthAction,
+  buildBlossomUploadAuthorization,
+  requireBlossomServerUrl,
+} from 'src/utils/blossomServer';
 import { ref } from 'vue';
 
 export type {
@@ -1781,7 +1785,12 @@ export const useNostrStore = defineStore('nostrStore', () => {
   publishGroupMembershipFollowSetRuntime = publishGroupMembershipFollowSetImpl;
   publishGroupMembershipRosterFollowSetRuntime = publishGroupMembershipRosterFollowSetImpl;
 
-  const { getBlossomServerUrl, saveBlossomServerUrl } = createBlossomSettingsRuntime({
+  const {
+    getBlossomServerUrl,
+    getPrivateMediaBlossomServerUrl,
+    saveBlossomServerUrl,
+    savePrivateMediaBlossomServerUrl,
+  } = createBlossomSettingsRuntime({
     ensurePrivatePreferences,
     publishPrivatePreferences,
     readPrivatePreferencesFromStorage,
@@ -1906,6 +1915,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
   async function signBlossomUploadAuthHeader(input: {
     serverUrl: string;
     sha256: string;
+    action?: BlossomAuthAction;
   }): Promise<string> {
     const loggedInPubkeyHex = getLoggedInPublicKeyHex();
     if (!loggedInPubkeyHex) {
@@ -1914,7 +1924,12 @@ export const useNostrStore = defineStore('nostrStore', () => {
 
     const serverUrl = requireBlossomServerUrl(input.serverUrl);
     const createdAt = Math.floor(Date.now() / 1000);
-    const authorization = buildBlossomUploadAuthorization(serverUrl, input.sha256, createdAt);
+    const authorization = buildBlossomUploadAuthorization(
+      serverUrl,
+      input.sha256,
+      createdAt,
+      input.action
+    );
     const authEvent = new NDKEvent(ndk, {
       kind: 24242,
       created_at: createdAt,
@@ -2296,7 +2311,9 @@ export const useNostrStore = defineStore('nostrStore', () => {
     sendDirectMessage,
     ensureBlossomUploadAuthentication,
     getBlossomServerUrl,
+    getPrivateMediaBlossomServerUrl,
     saveBlossomServerUrl,
+    savePrivateMediaBlossomServerUrl,
     signBlossomUploadAuthHeader,
     sendDirectMessageDeletion,
     sendDirectMessageReaction,

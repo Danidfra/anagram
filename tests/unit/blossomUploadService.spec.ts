@@ -1,10 +1,13 @@
 import {
   hasKnownImageSignature,
+  prepareEncryptedImage,
   uploadBlossomMedia,
   uploadEncryptedImage,
+  uploadPreparedEncryptedImage,
   validateBlossomMediaFile,
   validateEncryptedImageFile,
   validateOutgoingMediaFile,
+  verifyPrivateMediaServer,
 } from 'src/services/blossomUploadService';
 import { decryptMediaBytes, sha256Hex } from 'src/utils/mediaCrypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -323,6 +326,169 @@ describe('blossomUploadService', () => {
         uploadEncryptedImage(imageFile('image/svg+xml', 'x.svg'), UPLOAD_OPTIONS)
       ).rejects.toThrow('Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.');
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('failure and retry', () => {
+    it('never sends plaintext after a failed encrypted upload', async () => {
+      const fetchMock = vi.fn(async () => new Response('down', { status: 503 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(uploadEncryptedImage(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow('down');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      expect(new TextDecoder().decode(readRequestBody(init))).not.toContain('PRIVATE-IMAGE-BYTES');
+      expect(new Headers(init.headers).get('Content-Type')).toBe('application/octet-stream');
+    });
+
+    it('retries the same ciphertext, key and nonce without re-encrypting', async () => {
+      const prepared = await prepareEncryptedImage(imageFile());
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response('busy', { status: 503 }))
+        .mockImplementationOnce(async (_url: string, init?: RequestInit) => {
+          const body = readRequestBody(init);
+          return descriptorResponse(await sha256Hex(body), body.byteLength);
+        });
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(uploadPreparedEncryptedImage(prepared, UPLOAD_OPTIONS)).rejects.toThrow('busy');
+      const { attachment } = await uploadPreparedEncryptedImage(prepared, UPLOAD_OPTIONS);
+
+      const firstBody = readRequestBody(fetchMock.mock.calls[0][1]);
+      const secondBody = readRequestBody(fetchMock.mock.calls[1][1]);
+      expect(secondBody).toEqual(firstBody);
+      expect(attachment.encryption).toEqual(prepared.encryption);
+      expect(attachment.sha256).toBe(prepared.sha256);
+      await expect(
+        decryptMediaBytes(secondBody, attachment.encryption?.key, attachment.encryption?.nonce)
+      ).resolves.toEqual(new Uint8Array(new TextEncoder().encode(IMAGE_TEXT)));
+    });
+
+    it('uploads to whichever server it is given and keeps the same metadata', async () => {
+      const prepared = await prepareEncryptedImage(imageFile());
+      const fetchMock = createBlossomFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const first = await uploadPreparedEncryptedImage(prepared, UPLOAD_OPTIONS);
+      const second = await uploadPreparedEncryptedImage(prepared, {
+        ...UPLOAD_OPTIONS,
+        serverUrl: 'https://other.example.com',
+      });
+
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        'https://media.example.com/upload',
+        'https://other.example.com/upload',
+      ]);
+      expect(second.attachment.encryption).toEqual(first.attachment.encryption);
+      expect(second.attachment.service).toBe('other.example.com');
+    });
+
+    it('encrypts again with fresh key material for a new send', async () => {
+      const first = await prepareEncryptedImage(imageFile());
+      const second = await prepareEncryptedImage(imageFile());
+
+      expect(second.encryption.key).not.toBe(first.encryption.key);
+      expect(second.encryption.nonce).not.toBe(first.encryption.nonce);
+    });
+  });
+
+  describe('private media server verification', () => {
+    // A Blossom server that stores blobs by hash and optionally mutates or refuses deletion.
+    function createStoringServer(options: { mutate?: boolean; allowDelete?: boolean } = {}) {
+      const blobs = new Map<string, Uint8Array>();
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          const body = readRequestBody(init);
+          const sha256 = await sha256Hex(body);
+          blobs.set(
+            sha256,
+            options.mutate ? new Uint8Array([...body.subarray(1), 0]) : new Uint8Array(body)
+          );
+          return descriptorResponse(sha256, body.byteLength);
+        }
+        const sha256 = url.split('/').pop() ?? '';
+        if (init?.method === 'DELETE') {
+          if (!options.allowDelete) {
+            return new Response('', { status: 405 });
+          }
+          blobs.delete(sha256);
+          return new Response('', { status: 200 });
+        }
+        const blob = blobs.get(sha256);
+        return blob
+          ? new Response(blob as Uint8Array<ArrayBuffer>)
+          : new Response('', { status: 404 });
+      });
+      return { blobs, fetchMock };
+    }
+
+    it('uploads, downloads, compares hashes and deletes the random probe', async () => {
+      const { blobs, fetchMock } = createStoringServer({ allowDelete: true });
+      const signUploadAuthHeader = vi.fn(
+        async (_input: { serverUrl: string; sha256: string; action?: string }) =>
+          'Nostr signed-auth'
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(
+        verifyPrivateMediaServer({ ...UPLOAD_OPTIONS, signUploadAuthHeader })
+      ).resolves.toEqual({ cleanedUp: true });
+
+      const [putUrl, putInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      expect(putUrl).toBe('https://media.example.com/upload');
+      expect(new Headers(putInit.headers).get('Content-Type')).toBe('application/octet-stream');
+      expect(readRequestBody(putInit).byteLength).toBe(32);
+      expect(fetchMock.mock.calls.map(([, init]) => init?.method ?? 'GET')).toEqual([
+        'PUT',
+        'GET',
+        'DELETE',
+      ]);
+      expect(signUploadAuthHeader.mock.calls.map(([input]) => input.action)).toEqual([
+        undefined,
+        'delete',
+      ]);
+      expect(blobs.size).toBe(0);
+    });
+
+    it('still passes when the server refuses deletion and reports that', async () => {
+      const { fetchMock } = createStoringServer({ allowDelete: false });
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(verifyPrivateMediaServer(UPLOAD_OPTIONS)).resolves.toEqual({
+        cleanedUp: false,
+      });
+    });
+
+    it('fails when the server returns different bytes than were uploaded', async () => {
+      const { fetchMock } = createStoringServer({ mutate: true, allowDelete: true });
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(verifyPrivateMediaServer(UPLOAD_OPTIONS)).rejects.toThrow(
+        'media.example.com altered the test blob'
+      );
+    });
+
+    it('fails when the upload is rejected', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('', { status: 415, headers: { 'X-Reason': 'nope' } }))
+      );
+
+      await expect(verifyPrivateMediaServer(UPLOAD_OPTIONS)).rejects.toThrow('nope');
+    });
+
+    it('fails when the blob cannot be downloaded', async () => {
+      const { fetchMock } = createStoringServer({ allowDelete: true });
+      const withoutDownload = vi.fn(async (url: string, init?: RequestInit) =>
+        init?.method === 'PUT' ? fetchMock(url, init) : new Response('', { status: 404 })
+      );
+      vi.stubGlobal('fetch', withoutDownload);
+
+      await expect(verifyPrivateMediaServer(UPLOAD_OPTIONS)).rejects.toThrow(
+        'could not return the test blob (HTTP 404)'
+      );
     });
   });
 });

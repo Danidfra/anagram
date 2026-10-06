@@ -225,6 +225,11 @@
     >
       <div class="composer__media-warning">
         <div>{{ $t('message.mediaEncryptionNotice') }}</div>
+        <div>
+          {{
+            $t('message.mediaUpload.usingPrivateMediaServer', { server: privateMediaServerUrl })
+          }}
+        </div>
         <div>{{ $t('message.mediaUpload.usingBlossomServer', { server: blossomServerUrl }) }}</div>
       </div>
 
@@ -276,11 +281,28 @@
 
       <template v-if="mediaUploadError" #actions>
         <q-btn
+          flat
+          no-caps
+          :label="$t('common.cancel')"
+          data-testid="composer-media-upload-cancel"
+          @click="handleMediaUploadDismiss"
+        />
+        <q-btn
+          v-if="failedEncryptedUpload"
+          flat
+          no-caps
+          :label="$t('message.mediaUpload.changeServer')"
+          data-testid="composer-media-upload-change-server"
+          @click="handleChangePrivateMediaServer"
+        />
+        <q-btn
+          v-if="failedEncryptedUpload"
           unelevated
           no-caps
           color="primary"
-          :label="$t('common.ok')"
-          @click="isMediaUploadDialogOpen = false"
+          :label="$t('message.mediaUpload.retry')"
+          data-testid="composer-media-upload-retry"
+          @click="handleRetryEncryptedUpload"
         />
       </template>
     </AppDialog>
@@ -290,6 +312,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useQuasar } from 'quasar';
+import { useRouter } from 'vue-router';
 import AppDialog from 'src/components/AppDialog.vue';
 import CachedAvatar from 'src/components/CachedAvatar.vue';
 import EmojiPickerPanel from 'src/components/EmojiPickerPanel.vue';
@@ -298,9 +321,11 @@ import { t } from 'src/i18n';
 import MessageAttachmentImage from 'src/components/MessageAttachmentImage.vue';
 import {
   isImageMediaFile,
+  prepareEncryptedImage,
   uploadBlossomMedia,
-  uploadEncryptedImage,
+  uploadPreparedEncryptedImage,
   validateOutgoingMediaFile,
+  type PreparedEncryptedImage,
 } from 'src/services/blossomUploadService';
 import { useChatStore } from 'src/stores/chatStore';
 import { useNostrStore } from 'src/stores/nostrStore';
@@ -322,6 +347,7 @@ const props = defineProps<{
 }>();
 
 const $q = useQuasar();
+const router = useRouter();
 const chatStore = useChatStore();
 const nostrStore = useNostrStore();
 const draft = ref('');
@@ -339,6 +365,9 @@ const isMediaUploadInProgress = ref(false);
 const pendingInlineMediaFile = ref<File | null>(null);
 const mediaUploadStatus = ref<'uploading' | 'sending'>('uploading');
 const mediaUploadError = ref('');
+// Ciphertext and key material of an image whose encrypted upload failed. Kept so a retry sends
+// the identical payload; it is never replaced by, or converted to, a plaintext upload.
+const failedEncryptedUpload = ref<PreparedEncryptedImage | null>(null);
 const shouldRefocusAfterEmojiMenuHide = ref(false);
 const activeMentionAutocompleteIndex = ref(0);
 const activeEmojiAutocompleteIndex = ref(0);
@@ -369,10 +398,12 @@ function normalizeChatIdentifier(value: string | null | undefined): string | nul
 
 const activeChatId = computed(() => normalizeChatIdentifier(props.chatId));
 const blossomServerUrl = computed(() => nostrStore.getBlossomServerUrl());
+const privateMediaServerUrl = computed(() => nostrStore.getPrivateMediaBlossomServerUrl());
 const sendButtonIcon = computed(() =>
   props.editingMessage ? 'check' : $q.screen.lt.sm ? 'north' : 'send'
 );
 const mentionProfiles = computed(() => props.mentionProfiles ?? []);
+const isEncryptedUploadActive = ref(false);
 const mediaUploadStatusMessage = computed(() => {
   if (mediaUploadError.value) {
     return mediaUploadError.value;
@@ -380,7 +411,9 @@ const mediaUploadStatusMessage = computed(() => {
 
   return mediaUploadStatus.value === 'sending'
     ? t('message.mediaUpload.sending')
-    : t('message.mediaUpload.uploadingToServer', { server: blossomServerUrl.value });
+    : t('message.mediaUpload.uploadingToServer', {
+        server: isEncryptedUploadActive.value ? privateMediaServerUrl.value : blossomServerUrl.value,
+      });
 });
 
 function setDraftValue(nextDraft: string, options: { persist?: boolean } = {}): void {
@@ -832,23 +865,64 @@ function handleComposerDrop(event: DragEvent): void {
 }
 
 async function uploadAndSendMediaFile(file: File): Promise<void> {
+  const isImage = isImageMediaFile(file);
+  failedEncryptedUpload.value = null;
+  isEncryptedUploadActive.value = isImage;
   mediaUploadStatus.value = 'uploading';
   mediaUploadError.value = '';
   isMediaUploadInProgress.value = true;
   isMediaUploadDialogOpen.value = true;
+
+  // Images are encrypted locally and sent as NIP-17 kind 15; the private-media server only
+  // receives ciphertext. Other media keeps using the regular Blossom server.
+  if (!isImage) {
+    await runMediaUpload(() =>
+      uploadBlossomMedia(file, {
+        serverUrl: blossomServerUrl.value,
+        signUploadAuthHeader: nostrStore.signBlossomUploadAuthHeader,
+      })
+    );
+    return;
+  }
+
+  let prepared: PreparedEncryptedImage;
+  try {
+    prepared = await prepareEncryptedImage(file);
+  } catch (error) {
+    reportUiError('Failed to encrypt media', error);
+    mediaUploadError.value =
+      error instanceof Error && error.message.trim()
+        ? error.message.trim()
+        : t('errors.failedUploadMedia');
+    isMediaUploadInProgress.value = false;
+    return;
+  }
+
+  await uploadPreparedImage(prepared);
+}
+
+function uploadPreparedImage(prepared: PreparedEncryptedImage): Promise<void> {
+  return runMediaUpload(
+    () =>
+      uploadPreparedEncryptedImage(prepared, {
+        serverUrl: privateMediaServerUrl.value,
+        signUploadAuthHeader: nostrStore.signBlossomUploadAuthHeader,
+      }),
+    prepared
+  );
+}
+
+async function runMediaUpload(
+  upload: () => Promise<{ attachment: MessageAttachmentMetadata }>,
+  prepared: PreparedEncryptedImage | null = null
+): Promise<void> {
   const minProgressDelay = new Promise((resolve) => window.setTimeout(resolve, 2000));
 
   try {
-    const uploadOptions = {
-      serverUrl: blossomServerUrl.value,
-      signUploadAuthHeader: nostrStore.signBlossomUploadAuthHeader,
-    };
-    // Images are encrypted locally and sent as NIP-17 kind 15; Blossom only receives ciphertext.
-    const uploadResult = isImageMediaFile(file)
-      ? await uploadEncryptedImage(file, uploadOptions)
-      : await uploadBlossomMedia(file, uploadOptions);
+    const uploadResult = await upload();
     await minProgressDelay;
     mediaUploadStatus.value = 'sending';
+    failedEncryptedUpload.value = null;
     emit('send-media', {
       attachment: uploadResult.attachment,
     });
@@ -856,6 +930,7 @@ async function uploadAndSendMediaFile(file: File): Promise<void> {
   } catch (error) {
     await minProgressDelay;
     reportUiError('Failed to upload media to Blossom', error);
+    failedEncryptedUpload.value = prepared;
     mediaUploadError.value =
       error instanceof Error && error.message.trim()
         ? error.message.trim()
@@ -863,6 +938,28 @@ async function uploadAndSendMediaFile(file: File): Promise<void> {
   } finally {
     isMediaUploadInProgress.value = false;
   }
+}
+
+function handleRetryEncryptedUpload(): void {
+  const prepared = failedEncryptedUpload.value;
+  if (!prepared || isMediaUploadInProgress.value) {
+    return;
+  }
+
+  mediaUploadStatus.value = 'uploading';
+  mediaUploadError.value = '';
+  isMediaUploadInProgress.value = true;
+  void uploadPreparedImage(prepared);
+}
+
+function handleMediaUploadDismiss(): void {
+  failedEncryptedUpload.value = null;
+  isMediaUploadDialogOpen.value = false;
+}
+
+function handleChangePrivateMediaServer(): void {
+  handleMediaUploadDismiss();
+  void router.push({ name: 'settings-media-data-storage' });
 }
 
 function handleFileAction(): void {
@@ -1096,6 +1193,7 @@ watch(
     isMediaUploadInProgress.value = false;
     pendingInlineMediaFile.value = null;
     mediaUploadError.value = '';
+    failedEncryptedUpload.value = null;
     shouldRefocusAfterEmojiMenuHide.value = false;
   },
   { immediate: true }

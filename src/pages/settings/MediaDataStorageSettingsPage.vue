@@ -3,15 +3,79 @@
     <q-card flat bordered class="media-data-card">
       <q-card-section class="media-data-card__section">
         <div>
+          <div class="text-body1">{{ $t('mediaDataStorage.privateMediaServer') }}</div>
+          <div class="text-caption text-grey-6">
+            {{ $t('mediaDataStorage.privateMediaServerDescription') }}
+          </div>
+        </div>
+
+        <q-form class="media-data-card__form" @submit.prevent="privateField.save">
+          <q-input
+            v-model="privateField.input.value"
+            outlined
+            type="url"
+            inputmode="url"
+            autocomplete="url"
+            autocapitalize="none"
+            spellcheck="false"
+            class="nc-input"
+            data-testid="settings-private-media-input"
+            :label="$t('mediaDataStorage.serverUrl')"
+            :hint="$t('mediaDataStorage.serverUrlHint')"
+            :error="Boolean(privateField.validationError.value)"
+            :error-message="privateField.validationError.value"
+            :disable="privateField.isSaving.value"
+          />
+
+          <div class="text-caption text-grey-6">{{ $t('mediaDataStorage.testServerHint') }}</div>
+
+          <div class="media-data-card__actions">
+            <q-btn
+              flat
+              no-caps
+              icon="verified"
+              data-testid="settings-private-media-test"
+              :label="$t('mediaDataStorage.testServer')"
+              :loading="isTestingPrivateServer"
+              :disable="isTestingPrivateServer || privateField.isSaving.value || !privateField.normalizedUrl.value"
+              @click="testPrivateServer"
+            />
+            <q-btn
+              flat
+              no-caps
+              icon="restart_alt"
+              data-testid="settings-private-media-restore-default"
+              :label="$t('mediaDataStorage.restoreDefault')"
+              :disable="privateField.isSaving.value || !privateField.canRestoreDefault.value"
+              @click="privateField.restoreDefault"
+            />
+            <q-btn
+              unelevated
+              no-caps
+              color="primary"
+              type="submit"
+              data-testid="settings-private-media-save"
+              :label="$t('common.save')"
+              :loading="privateField.isSaving.value"
+              :disable="!privateField.canSave.value"
+            />
+          </div>
+        </q-form>
+      </q-card-section>
+    </q-card>
+
+    <q-card flat bordered class="media-data-card">
+      <q-card-section class="media-data-card__section">
+        <div>
           <div class="text-body1">{{ $t('mediaDataStorage.blossomServer') }}</div>
           <div class="text-caption text-grey-6">
             {{ $t('mediaDataStorage.blossomServerDescription') }}
           </div>
         </div>
 
-        <q-form class="media-data-card__form" @submit.prevent="saveServer">
+        <q-form class="media-data-card__form" @submit.prevent="regularField.save">
           <q-input
-            v-model="serverUrlInput"
+            v-model="regularField.input.value"
             outlined
             type="url"
             inputmode="url"
@@ -22,9 +86,9 @@
             data-testid="settings-blossom-server-input"
             :label="$t('mediaDataStorage.serverUrl')"
             :hint="$t('mediaDataStorage.serverUrlHint')"
-            :error="Boolean(serverValidationError)"
-            :error-message="serverValidationError"
-            :disable="isSaving"
+            :error="Boolean(regularField.validationError.value)"
+            :error-message="regularField.validationError.value"
+            :disable="regularField.isSaving.value"
           />
 
           <div class="media-data-card__actions">
@@ -34,8 +98,8 @@
               icon="restart_alt"
               data-testid="settings-blossom-restore-default"
               :label="$t('mediaDataStorage.restoreDefault')"
-              :disable="isSaving || !canRestoreDefault"
-              @click="restoreDefaultServer"
+              :disable="regularField.isSaving.value || !regularField.canRestoreDefault.value"
+              @click="regularField.restoreDefault"
             />
             <q-btn
               unelevated
@@ -44,8 +108,8 @@
               type="submit"
               data-testid="settings-blossom-save"
               :label="$t('common.save')"
-              :loading="isSaving"
-              :disable="!canSave"
+              :loading="regularField.isSaving.value"
+              :disable="!regularField.canSave.value"
             />
           </div>
         </q-form>
@@ -64,81 +128,142 @@ import { computed, ref } from 'vue';
 import { useQuasar } from 'quasar';
 import SettingsDetailLayout from 'src/components/SettingsDetailLayout.vue';
 import { t } from 'src/i18n';
+import { verifyPrivateMediaServer } from 'src/services/blossomUploadService';
 import { useNostrStore } from 'src/stores/nostrStore';
 import {
   DEFAULT_BLOSSOM_SERVER_URL,
+  DEFAULT_PRIVATE_MEDIA_BLOSSOM_SERVER_URL,
+  getBlossomServerHost,
   normalizeBlossomServerUrl,
 } from 'src/utils/blossomServer';
 import { reportUiError } from 'src/utils/uiErrorHandler';
 
 const $q = useQuasar();
 const nostrStore = useNostrStore();
-const savedServerUrl = ref(nostrStore.getBlossomServerUrl());
-const serverUrlInput = ref(savedServerUrl.value);
-const isSaving = ref(false);
 
-const normalizedServerUrl = computed(() =>
-  normalizeBlossomServerUrl(serverUrlInput.value)
-);
-const serverValidationError = computed(() => {
-  if (!serverUrlInput.value.trim()) {
-    return t('mediaDataStorage.serverUrlRequired');
+interface ServerFieldConfig {
+  defaultUrl: string;
+  initialUrl: string;
+  save: (serverUrl: string) => Promise<string>;
+  savedMessageKey: string;
+  saveFailedMessageKey: string;
+  saveFailedLogMessage: string;
+}
+
+function useServerField(config: ServerFieldConfig) {
+  const savedUrl = ref(config.initialUrl);
+  const input = ref(config.initialUrl);
+  const isSaving = ref(false);
+  const normalizedUrl = computed(() => normalizeBlossomServerUrl(input.value));
+  const validationError = computed(() => {
+    if (!input.value.trim()) {
+      return t('mediaDataStorage.serverUrlRequired');
+    }
+
+    return normalizedUrl.value ? '' : t('mediaDataStorage.serverUrlInvalid');
+  });
+  const canSave = computed(
+    () => !isSaving.value && Boolean(normalizedUrl.value) && normalizedUrl.value !== savedUrl.value
+  );
+  const canRestoreDefault = computed(
+    () => input.value.trim() !== config.defaultUrl || savedUrl.value !== config.defaultUrl
+  );
+
+  async function persist(serverUrl: string): Promise<void> {
+    if (isSaving.value) {
+      return;
+    }
+
+    isSaving.value = true;
+    try {
+      const nextUrl = await config.save(serverUrl);
+      savedUrl.value = nextUrl;
+      input.value = nextUrl;
+      $q.notify({ type: 'positive', message: t(config.savedMessageKey), position: 'top' });
+    } catch (error) {
+      reportUiError(config.saveFailedLogMessage, error, t(config.saveFailedMessageKey));
+    } finally {
+      isSaving.value = false;
+    }
   }
 
-  return normalizedServerUrl.value ? '' : t('mediaDataStorage.serverUrlInvalid');
-});
-const canSave = computed(
-  () =>
-    !isSaving.value &&
-    Boolean(normalizedServerUrl.value) &&
-    normalizedServerUrl.value !== savedServerUrl.value
-);
-const canRestoreDefault = computed(
-  () =>
-    serverUrlInput.value.trim() !== DEFAULT_BLOSSOM_SERVER_URL ||
-    savedServerUrl.value !== DEFAULT_BLOSSOM_SERVER_URL
-);
+  function save(): void {
+    if (canSave.value && normalizedUrl.value) {
+      void persist(normalizedUrl.value);
+    }
+  }
 
-async function persistServer(serverUrl: string): Promise<void> {
-  if (isSaving.value) {
+  function restoreDefault(): void {
+    if (canRestoreDefault.value) {
+      void persist(config.defaultUrl);
+    }
+  }
+
+  return {
+    input,
+    isSaving,
+    normalizedUrl,
+    validationError,
+    canSave,
+    canRestoreDefault,
+    save,
+    restoreDefault,
+  };
+}
+
+const regularField = useServerField({
+  defaultUrl: DEFAULT_BLOSSOM_SERVER_URL,
+  initialUrl: nostrStore.getBlossomServerUrl(),
+  save: (serverUrl) => nostrStore.saveBlossomServerUrl(serverUrl),
+  savedMessageKey: 'mediaDataStorage.serverSaved',
+  saveFailedMessageKey: 'mediaDataStorage.serverSaveFailed',
+  saveFailedLogMessage: 'Failed to save Blossom server preference',
+});
+
+const privateField = useServerField({
+  defaultUrl: DEFAULT_PRIVATE_MEDIA_BLOSSOM_SERVER_URL,
+  initialUrl: nostrStore.getPrivateMediaBlossomServerUrl(),
+  save: (serverUrl) => nostrStore.savePrivateMediaBlossomServerUrl(serverUrl),
+  savedMessageKey: 'mediaDataStorage.privateMediaServerSaved',
+  saveFailedMessageKey: 'mediaDataStorage.privateMediaServerSaveFailed',
+  saveFailedLogMessage: 'Failed to save private media Blossom server preference',
+});
+
+const isTestingPrivateServer = ref(false);
+
+// Tests whichever URL is in the field, so a server can be verified before it is saved.
+async function testPrivateServer(): Promise<void> {
+  const serverUrl = privateField.normalizedUrl.value;
+  if (!serverUrl || isTestingPrivateServer.value) {
     return;
   }
 
-  isSaving.value = true;
+  isTestingPrivateServer.value = true;
   try {
-    const savedUrl = await nostrStore.saveBlossomServerUrl(serverUrl);
-    savedServerUrl.value = savedUrl;
-    serverUrlInput.value = savedUrl;
+    await nostrStore.ensureBlossomUploadAuthentication();
+    const { cleanedUp } = await verifyPrivateMediaServer({
+      serverUrl,
+      signUploadAuthHeader: nostrStore.signBlossomUploadAuthHeader,
+    });
     $q.notify({
-      type: 'positive',
-      message: t('mediaDataStorage.serverSaved'),
+      type: cleanedUp ? 'positive' : 'warning',
+      message: t(
+        cleanedUp
+          ? 'mediaDataStorage.testServerPassed'
+          : 'mediaDataStorage.testServerPassedNoCleanup',
+        { server: getBlossomServerHost(serverUrl) }
+      ),
       position: 'top',
     });
   } catch (error) {
     reportUiError(
-      'Failed to save Blossom server preference',
+      'Private media Blossom server check failed',
       error,
-      t('mediaDataStorage.serverSaveFailed')
+      t('mediaDataStorage.testServerFailed')
     );
   } finally {
-    isSaving.value = false;
+    isTestingPrivateServer.value = false;
   }
-}
-
-function saveServer(): void {
-  if (!canSave.value || !normalizedServerUrl.value) {
-    return;
-  }
-
-  void persistServer(normalizedServerUrl.value);
-}
-
-function restoreDefaultServer(): void {
-  if (!canRestoreDefault.value) {
-    return;
-  }
-
-  void persistServer(DEFAULT_BLOSSOM_SERVER_URL);
 }
 </script>
 

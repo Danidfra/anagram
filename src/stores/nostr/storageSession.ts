@@ -393,6 +393,15 @@ export function createStorageSessionRuntime({
       delete preferences.blossomServerUrl;
     }
 
+    const normalizedPrivateMediaServerUrl = normalizeBlossomServerUrl(
+      value.privateMediaBlossomServerUrl
+    );
+    if (normalizedPrivateMediaServerUrl) {
+      preferences.privateMediaBlossomServerUrl = normalizedPrivateMediaServerUrl;
+    } else {
+      delete preferences.privateMediaBlossomServerUrl;
+    }
+
     return preferences;
   }
 
