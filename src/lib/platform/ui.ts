@@ -1,3 +1,4 @@
+import { diagnosticText } from '#src/utils/diagnosticExport.ts';
 import { writable } from 'svelte/store';
 export const notices = writable<{ id: number; message: string; type?: string }[]>([]);
 export const Notify = {
@@ -6,6 +7,7 @@ export const Notify = {
       id: Date.now() + Math.random(),
       ...(typeof options === 'string' ? { message: options } : options),
     };
+    item.message = diagnosticText(item.message);
     notices.update((items) => [...items, item]);
     setTimeout(() => notices.update((items) => items.filter((x) => x.id !== item.id)), 6000);
     return () => notices.update((items) => items.filter((x) => x.id !== item.id));

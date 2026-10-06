@@ -51,3 +51,29 @@ describe('private diagnostic data', () => {
     expect(readDeveloperDiagnosticsEnabledFromStorage('diagnostics')).toBe(false);
   });
 });
+
+it('redacts credentials and sensitive field names before persisting or echoing traces', async () => {
+  const secret = nip19.nsecEncode(generateSecretKey());
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  append.mockClear();
+  try {
+    runtime(true).logDeveloperTrace('info', 'subscription:test', 'start', {
+      [secret]: 'field',
+      relay: 'wss://name:password@relay.test/?token=relay-access-token',
+      credentials: 'raw-credentials',
+      error: new SyntaxError('decrypted-message-fragment'),
+    });
+    const output = JSON.stringify([append.mock.calls, info.mock.calls]);
+    for (const value of [
+      secret,
+      'name:password',
+      'relay-access-token',
+      'raw-credentials',
+      'decrypted-message-fragment',
+    ])
+      expect(output).not.toContain(value);
+    expect(append).toHaveBeenCalledOnce();
+  } finally {
+    info.mockRestore();
+  }
+});

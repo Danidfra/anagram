@@ -2,8 +2,22 @@
 export function diagnosticText(value: string): string {
   return value
     .replace(/nsec1[023456789acdefghjklmnpqrstuvwxyz]+/gi, '[redacted-nsec]')
-    .replace(/\b[0-9a-f]{64}\b/gi, (key) => `${key.slice(0, 8)}…[redacted]`)
-    .replace(/(\b(?:https?|wss?):\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@');
+    .replace(/\b[0-9a-f]{64}\b/gi, '[redacted-key]')
+    .replace(/\b(?:https?|wss?|bunker|nostrconnect):\/\/[^\s"'<>]+/gi, (value) => {
+      try {
+        const url = new URL(value);
+        const credentials = Boolean(url.username || url.password);
+        const parameters = Boolean(url.search || url.hash);
+        if (!credentials && !parameters) return value;
+        url.username = '';
+        url.password = '';
+        url.search = '';
+        url.hash = '';
+        return `${url.protocol}//${credentials ? '[redacted]@' : ''}${url.host}${url.pathname}${parameters ? '?[redacted]' : ''}`;
+      } catch {
+        return '[redacted-url]';
+      }
+    });
 }
 /** Redact at the display/export boundary, including arbitrary object field names. */
 export function diagnosticJson(value: unknown): string {
@@ -12,6 +26,10 @@ export function diagnosticJson(value: unknown): string {
     if (typeof item === 'string') return diagnosticText(item);
     if (!item || typeof item !== 'object') return item;
     if (ArrayBuffer.isView(item) || item instanceof ArrayBuffer) return '[redacted-bytes]';
+    if (item instanceof SyntaxError)
+      return { name: 'SyntaxError', message: '[redacted-parser-error]' };
+    if (item instanceof Error)
+      return { name: diagnosticText(item.name), message: diagnosticText(item.message) };
     if (item instanceof Date) return item.toISOString();
     if (parents.has(item)) return '[circular]';
     if (depth > 12) return '[max-depth]';

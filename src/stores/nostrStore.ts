@@ -1,5 +1,6 @@
 import {
   searchRelayProfiles,
+  profileSearchAllowed,
   type ProfileSearchResult,
 } from '#src/stores/nostr/profileSearchRuntime.ts';
 import { Capacitor } from '#src/lib/platform/legacyNative.ts';
@@ -7,6 +8,7 @@ import NostrClient, {
   ClientEvent,
   NostrKind,
   NostrPrivateKeySigner,
+  NostrNip46Signer,
   type NostrSigner,
   type NostrEvent,
   normalizeRelayUrl,
@@ -2255,6 +2257,10 @@ export const useNostrStore = defineStore('nostrStore', () => {
       signal: AbortSignal,
       onResults: (results: ProfileSearchResult[]) => void,
     ) => {
+      const clientKey =
+        ndk.signer instanceof NostrNip46Signer ? ndk.signer.localSigner.privateKey : null;
+      if (!profileSearchAllowed(query, [getPrivateKeyHexImpl(), clientKey]))
+        return 'invalid' as const;
       const owner = getLoggedInPublicKeyHex();
       const relayUrls = await resolveLoggedInReadRelayUrls();
       if (signal.aborted || owner !== getLoggedInPublicKeyHex()) return 'complete' as const;

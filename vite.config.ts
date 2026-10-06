@@ -13,6 +13,34 @@ export default defineConfig(({ command }) => ({
       preprocess: vitePreprocess(),
       adapter: adapter({ fallback: 'index.html' }),
       serviceWorker: { register: false },
+      ...(command === 'build'
+        ? {
+            csp: {
+              mode: 'hash' as const,
+              directives: {
+                'default-src': ['self'],
+                'script-src': ['self', 'wasm-unsafe-eval'],
+                'style-src': ['self', 'unsafe-inline'],
+                'img-src': ['self', 'https:', 'data:', 'blob:'],
+                'media-src': ['self', 'https:', 'blob:', 'data:'],
+                'connect-src': [
+                  'self',
+                  'https:',
+                  'wss:',
+                  'ws://localhost:*',
+                  'ws://127.0.0.1:*',
+                  'ipc:',
+                  'http://ipc.localhost',
+                ],
+                'worker-src': ['self', 'blob:'],
+                'font-src': ['self'],
+                'object-src': ['none'],
+                'base-uri': ['none'],
+                'form-action': ['self'],
+              },
+            },
+          }
+        : {}),
       paths: { relative: false },
       version: { name: buildId },
     }),

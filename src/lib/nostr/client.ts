@@ -99,6 +99,21 @@ class Emitter {
     this.listeners.clear();
   }
 }
+// Never expose third-party signer/crypto exceptions containing input or plaintext.
+async function privateOperation<T>(operation: () => T | Promise<T>, message: string): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    throw new Error(message);
+  }
+}
+function parsePrivateJson(value: string): any {
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error('Invalid encrypted message payload');
+  }
+}
 export interface NostrSigner {
   pubkey: string;
   user(): Promise<NostrUser>;
@@ -128,6 +143,9 @@ export class NostrPrivateKeySigner implements NostrSigner {
     Object.defineProperty(this, 'privateKey', { enumerable: false });
     Object.defineProperty(this, 'secretKey', { enumerable: false });
   }
+  toJSON() {
+    return { pubkey: this.pubkey };
+  }
   static generate() {
     return new NostrPrivateKeySigner();
   }
@@ -140,17 +158,25 @@ export class NostrPrivateKeySigner implements NostrSigner {
     return this.user();
   }
   async sign(event: NostrEvent) {
-    return finalizeEvent(event, this.secretKey).sig;
+    return privateOperation(() => finalizeEvent(event, this.secretKey).sig, 'Unable to sign event');
   }
   async encrypt(user: NostrUser, value: string, scheme = 'nip44') {
-    return scheme === 'nip04'
-      ? nip04.encrypt(this.secretKey, user.pubkey, value)
-      : nip44.v2.encrypt(value, nip44.v2.utils.getConversationKey(this.secretKey, user.pubkey));
+    return privateOperation(
+      () =>
+        scheme === 'nip04'
+          ? nip04.encrypt(this.secretKey, user.pubkey, value)
+          : nip44.v2.encrypt(value, nip44.v2.utils.getConversationKey(this.secretKey, user.pubkey)),
+      'Unable to encrypt private content',
+    );
   }
   async decrypt(user: NostrUser, value: string, scheme = 'nip44') {
-    return scheme === 'nip04'
-      ? nip04.decrypt(this.secretKey, user.pubkey, value)
-      : nip44.v2.decrypt(value, nip44.v2.utils.getConversationKey(this.secretKey, user.pubkey));
+    return privateOperation(
+      () =>
+        scheme === 'nip04'
+          ? nip04.decrypt(this.secretKey, user.pubkey, value)
+          : nip44.v2.decrypt(value, nip44.v2.utils.getConversationKey(this.secretKey, user.pubkey)),
+      'Unable to decrypt private content',
+    );
   }
 }
 export class NostrNip07Signer implements NostrSigner {
@@ -172,16 +198,25 @@ export class NostrNip07Signer implements NostrSigner {
     return this.user();
   }
   async sign(event: NostrEvent) {
-    const signed = await this.extension().signEvent(event);
+    const signed = await privateOperation(
+      () => this.extension().signEvent(event),
+      'Unable to sign event',
+    );
     if (!verifyEvent(signed) || signed.id !== getEventHash(event))
       throw new Error('Signer returned an invalid event');
     return signed.sig;
   }
   async encrypt(user: NostrUser, value: string, scheme = 'nip44') {
-    return this.extension()[scheme].encrypt(user.pubkey, value);
+    return privateOperation(
+      () => this.extension()[scheme].encrypt(user.pubkey, value),
+      'Unable to encrypt private content',
+    );
   }
   async decrypt(user: NostrUser, value: string, scheme = 'nip44') {
-    return this.extension()[scheme].decrypt(user.pubkey, value);
+    return privateOperation(
+      () => this.extension()[scheme].decrypt(user.pubkey, value),
+      'Unable to decrypt private content',
+    );
   }
 }
 export class NostrNip46Signer extends Emitter implements NostrSigner {
@@ -224,6 +259,10 @@ export class NostrNip46Signer extends Emitter implements NostrSigner {
     signer.pointer = { pubkey: data.bunkerPubkey, relays: data.relayUrls, secret: null };
     return signer;
   }
+  // Session persistence is explicit; incidental serialization exposes public identity only.
+  toJSON() {
+    return { type: 'nip46', pubkey: this.pubkey, bunkerPubkey: this.bunkerPubkey };
+  }
   toPayload() {
     return JSON.stringify({
       type: 'nip46',
@@ -236,7 +275,7 @@ export class NostrNip46Signer extends Emitter implements NostrSigner {
     });
   }
   blockUntilReady() {
-    return (this.ready ??= (async () => {
+    return (this.ready ??= privateOperation(async () => {
       const options = { onauth: (url: string) => this.emit('authUrl', url) };
       if (this.pointer) {
         this.remote = BunkerSigner.fromBunker(this.localSigner.secretKey, this.pointer, options);
@@ -253,29 +292,40 @@ export class NostrNip46Signer extends Emitter implements NostrSigner {
       this.bunkerPubkey = this.remote.bp.pubkey;
       this.relayUrls = this.remote.bp.relays;
       return new NostrUser({ pubkey: this.pubkey });
-    })());
+    }, 'Unable to connect to remote signer'));
   }
   user() {
     return this.blockUntilReady();
   }
   async sign(event: NostrEvent) {
     await this.blockUntilReady();
-    const signed = await this.remote!.signEvent(event);
+    const signed = await privateOperation(
+      () => this.remote!.signEvent(event),
+      'Unable to sign event',
+    );
     if (!verifyEvent(signed) || signed.id !== getEventHash(event))
       throw new Error('Remote signer returned an invalid event');
     return signed.sig;
   }
   async encrypt(user: NostrUser, value: string, scheme = 'nip44') {
     await this.blockUntilReady();
-    return scheme === 'nip04'
-      ? this.remote!.nip04Encrypt(user.pubkey, value)
-      : this.remote!.nip44Encrypt(user.pubkey, value);
+    return privateOperation(
+      () =>
+        scheme === 'nip04'
+          ? this.remote!.nip04Encrypt(user.pubkey, value)
+          : this.remote!.nip44Encrypt(user.pubkey, value),
+      'Unable to encrypt private content',
+    );
   }
   async decrypt(user: NostrUser, value: string, scheme = 'nip44') {
     await this.blockUntilReady();
-    return scheme === 'nip04'
-      ? this.remote!.nip04Decrypt(user.pubkey, value)
-      : this.remote!.nip44Decrypt(user.pubkey, value);
+    return privateOperation(
+      () =>
+        scheme === 'nip04'
+          ? this.remote!.nip04Decrypt(user.pubkey, value)
+          : this.remote!.nip44Decrypt(user.pubkey, value),
+      'Unable to decrypt private content',
+    );
   }
   stop() {
     this.abort.abort();
@@ -449,10 +499,20 @@ export async function giftUnwrap(wrap: ClientEvent, _?: unknown, signer = wrap.n
     throw new Error('Invalid gift wrap');
   const seal = new ClientEvent(
     wrap.ndk,
-    JSON.parse(await signer.decrypt(wrap.author, wrap.content, 'nip44')),
+    parsePrivateJson(
+      await privateOperation(
+        () => signer.decrypt(wrap.author, wrap.content, 'nip44'),
+        'Unable to decrypt gift wrap',
+      ),
+    ),
   );
   if (seal.kind !== 13 || !seal.verifySignature()) throw new Error('Invalid seal');
-  const rumor: NostrEvent = JSON.parse(await signer.decrypt(seal.author, seal.content, 'nip44'));
+  const rumor: NostrEvent = parsePrivateJson(
+    await privateOperation(
+      () => signer.decrypt(seal.author, seal.content, 'nip44'),
+      'Unable to decrypt seal',
+    ),
+  );
   return new ClientEvent(wrap.ndk, normalizeRumor(rumor, seal.pubkey));
 }
 export class NostrRelayList extends ClientEvent {

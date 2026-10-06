@@ -1,3 +1,4 @@
+import { diagnosticText } from '#src/utils/diagnosticExport.ts';
 import { developerTraceDataService } from '#src/services/developerTraceDataService.ts';
 import { hasStorage } from '#src/stores/nostr/shared.ts';
 import type { DeveloperTraceEntry, DeveloperTraceLevel } from '#src/stores/nostr/types.ts';
@@ -56,17 +57,18 @@ export function createDeveloperTraceRuntime({
 
   function serializeDeveloperTraceValue(value: unknown, depth = 0): unknown {
     if (depth > 5) return '[max-depth]';
-    // Treat all long hex values as sensitive in diagnostics; public IDs remain
-    // available in shortened form. Never serialize event contents or tag values.
-    if (typeof value === 'string')
-      return value
-        .replace(/nsec1[023456789acdefghjklmnpqrstuvwxyz]+/gi, '[redacted-nsec]')
-        .replace(/\b[0-9a-f]{64}\b/gi, (key) => `${key.slice(0, 8)}…[redacted]`);
+    // Public IDs and private hex keys cannot be distinguished here: redact both.
+    if (typeof value === 'string') return diagnosticText(value);
+    if (value instanceof SyntaxError)
+      return { name: 'SyntaxError', message: '[redacted-parser-error]' };
     if (value === null || value === undefined) return null;
     if (typeof value === 'number' || typeof value === 'boolean') return value;
     if (value instanceof Date) return value.toISOString();
     if (value instanceof Error)
-      return { name: value.name, message: serializeDeveloperTraceValue(value.message, depth + 1) };
+      return {
+        name: diagnosticText(value.name),
+        message: serializeDeveloperTraceValue(value.message, depth + 1),
+      };
     if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return '[redacted-bytes]';
     if (Array.isArray(value))
       return value.slice(0, 30).map((entry) => serializeDeveloperTraceValue(entry, depth + 1));
@@ -75,8 +77,8 @@ export function createDeveloperTraceRuntime({
         Object.entries(value)
           .slice(0, 50)
           .map(([key, entry]) => [
-            key,
-            /private|secret|nsec|password|token|payload|content|tags|signer|seed|messageText/i.test(
+            diagnosticText(key),
+            /private|secret|nsec|password|token|credential|payload|content|tags|signer|seed|messageText|lastMessage/i.test(
               key,
             )
               ? '[redacted]'
@@ -143,7 +145,7 @@ export function createDeveloperTraceRuntime({
     phase: string,
     details: Record<string, unknown>,
   ): void {
-    const label = `[${scope}] ${phase}`;
+    const label = `[${diagnosticText(scope)}] ${diagnosticText(phase)}`;
     const prefixArgs = buildConsoleTracePrefixArgs(scope, phase, details);
     if (level === 'error') {
       console.error(label, ...prefixArgs, details);
@@ -179,8 +181,8 @@ export function createDeveloperTraceRuntime({
       id: `${Date.now()}-${developerTraceState.developerTraceCounter}`,
       timestamp: new Date().toISOString(),
       level,
-      scope,
-      phase,
+      scope: diagnosticText(scope),
+      phase: diagnosticText(phase),
       details: normalizedDetails,
     };
 

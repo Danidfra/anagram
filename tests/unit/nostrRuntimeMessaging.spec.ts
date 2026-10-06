@@ -816,6 +816,57 @@ describe('nostr runtime messaging logic', () => {
     ).toHaveBeenCalledWith(expectedPubkey);
   });
 
+  it('never logs keychain failure payloads containing the private key', async () => {
+    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(true);
+    const secret = NostrPrivateKeySigner.generate().privateKey;
+    androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockRejectedValue(new Error('IPC arguments ' + secret));
+    const storage = createMockStorage();
+    (globalThis as Record<string, unknown>).window = { localStorage: storage.api };
+    const { runtime } = createAuthSessionHarness();
+    await expect(runtime.savePrivateKeyHex(secret)).resolves.toBe(true);
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).not.toContain(secret);
+    expect(storage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
+  });
+
+  it('does not resurrect a logged-out key when a pending keychain read finishes', async () => {
+    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(true);
+    let complete!: (key: string) => void;
+    androidSecurePrivateKeyStorageMock.readAndroidSecurePrivateKeyHex.mockReturnValue(new Promise<string>((resolve) => { complete = resolve; }));
+    const signer = NostrPrivateKeySigner.generate();
+    const storage = createMockStorage({ [PUBLIC_KEY_STORAGE_KEY]: signer.pubkey, [AUTH_METHOD_STORAGE_KEY]: 'nsec' });
+    (globalThis as Record<string, unknown>).window = { localStorage: storage.api };
+    const { runtime } = createAuthSessionHarness();
+    const pending = runtime.loadPrivateKeyHex();
+    await flushPromises();
+    runtime.clearPrivateKey();
+    complete(signer.privateKey);
+    await expect(pending).resolves.toBeNull();
+    expect(runtime.getPrivateKeyHex()).toBeNull();
+    expect(storage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
+  });
+
+  it('orders a pending keychain write before logout removal and never revives its session', async () => {
+    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(true);
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    let stored: string | null = null;
+    androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockImplementation(async (key: string) => { await gate; stored = key; });
+    androidSecurePrivateKeyStorageMock.removeAndroidSecurePrivateKeyHex.mockImplementation(async () => { stored = null; });
+    const storage = createMockStorage();
+    (globalThis as Record<string, unknown>).window = { localStorage: storage.api };
+    const { runtime } = createAuthSessionHarness();
+    const saving = runtime.savePrivateKeyHex(NostrPrivateKeySigner.generate().privateKey);
+    await flushPromises();
+    expect(androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex).toHaveBeenCalled();
+    runtime.clearPrivateKey();
+    finish();
+    await expect(saving).resolves.toBe(false);
+    await flushPromises();
+    expect(stored).toBeNull();
+    expect(runtime.getPrivateKeyHex()).toBeNull();
+    expect(storage.store.get(AUTH_METHOD_STORAGE_KEY)).toBeUndefined();
+  });
+
   it('migrates legacy Android localStorage private keys into secure storage', async () => {
     androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
       true

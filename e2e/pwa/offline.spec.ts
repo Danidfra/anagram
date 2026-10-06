@@ -106,6 +106,11 @@ test('saved NIP-17 replies reopen offline from IndexedDB in the production app',
     peerKey = generateSecretKey(),
     own = getPublicKey(ownKey),
     peer = getPublicKey(peerKey);
+  const outgoing: string[] = [];
+  page.on('request', (request) => outgoing.push(request.url(), request.postData() ?? ''));
+  page.on('websocket', (socket) =>
+    socket.on('framesent', (frame) => outgoing.push(String(frame.payload))),
+  );
   const relay = 'ws://127.0.0.1:49999/';
   const events = [
     finalizeEvent(
@@ -171,6 +176,14 @@ test('saved NIP-17 replies reopen offline from IndexedDB in the production app',
       }),
     )
     .toBe(2);
+  expect(outgoing.length).toBeGreaterThan(0);
+  for (const value of [
+    nip19.nsecEncode(ownKey),
+    Buffer.from(ownKey).toString('hex'),
+    'Saved outgoing message',
+    'Saved incoming reply',
+  ])
+    expect(outgoing.some((entry) => entry.includes(value))).toBe(false);
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
   });
@@ -225,4 +238,91 @@ test('a newly installed worker waits while the existing app is open', async ({ p
   expect(await page.evaluate(() => navigator.serviceWorker.controller!.scriptURL)).toBe(original);
   expect(await page.evaluate(() => localStorage.getItem('pwa-draft-test'))).toBe('keep-this-draft');
   await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+});
+
+test('clean-URL redirects do not break repeat visits or offline navigation', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+  });
+  await expect
+    .poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)))
+    .toBe(true);
+  // The host redirects /index.html to /index, including during precaching.
+  expect(
+    await page.evaluate(async () => {
+      const cache = await caches.open(
+        (await caches.keys()).find((name) => name.startsWith('anagram-shell-'))!,
+      );
+      return (await cache.match('/index.html'))!.redirected;
+    }),
+  ).toBe(true);
+  for (const path of ['/', '/chats', '/']) {
+    const response = await page.goto(path);
+    expect(response?.fromServiceWorker()).toBe(true);
+    await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  }
+  await page.reload();
+  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await context.setOffline(true);
+  await page.goto('/chats/' + 'a'.repeat(64));
+  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+});
+
+test('cache read failures fall back to the network without breaking navigation', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+  });
+  await expect
+    .poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)))
+    .toBe(true);
+  const worker = context.serviceWorkers()[0];
+  await worker.evaluate(() => {
+    caches.open = async () => {
+      throw new DOMException('Storage unavailable', 'UnknownError');
+    };
+  });
+  await page.goto('/chats');
+  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await page.reload();
+  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+});
+
+test('cache write failures do not discard downloaded public assets', async ({ page, context }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+  });
+  await expect
+    .poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)))
+    .toBe(true);
+  const asset = await page.evaluate(async () => {
+    const cache = await caches.open(
+      (await caches.keys()).find((name) => name.startsWith('anagram-shell-'))!,
+    );
+    const url = (await cache.keys()).find((request) => request.url.endsWith('.png'))!.url;
+    await cache.delete(url);
+    return url;
+  });
+  await context.serviceWorkers()[0].evaluate(() => {
+    Cache.prototype.put = async () => {
+      throw new DOMException('Storage full', 'QuotaExceededError');
+    };
+  });
+  const downloaded = await page.evaluate(async (asset) => {
+    const response = await fetch(asset, { cache: 'reload' });
+    return { ok: response.ok, size: (await response.blob()).size };
+  }, asset);
+  expect(downloaded.ok).toBe(true);
+  expect(downloaded.size).toBeGreaterThan(0);
 });

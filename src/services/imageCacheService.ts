@@ -74,7 +74,7 @@ class ImageCacheService {
     }
 
     try {
-      const response = await fetch(sourceUrl);
+      const response = await fetch(sourceUrl, { credentials: 'omit', referrerPolicy: 'no-referrer' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -89,7 +89,7 @@ class ImageCacheService {
       return this.replaceObjectUrl(sourceUrl, blob);
     } catch (error) {
       this.passthroughByUrl.add(sourceUrl);
-      console.warn('Failed to cache image, using remote URL directly.', sourceUrl, error);
+      console.warn('Failed to cache image, using remote URL directly.');
       return sourceUrl;
     }
   }

@@ -38,3 +38,29 @@ describe('diagnostic exports', () => {
     expect(JSON.parse(result)).toMatchObject({ attempts: 12, phase: 'connected' });
   });
 });
+
+it('removes complete keys, URL query/fragment credentials, pairing tokens and parser snippets', () => {
+  const hex = Buffer.from(generateSecretKey()).toString('hex');
+  const result = diagnosticJson({
+    key: hex,
+    error: new SyntaxError('Unexpected token in "private message snippet"'),
+    urls: [
+      'wss://user:pass@relay.test/path?authorization=relay-credential#secret-fragment',
+      'https://signer.test/auth?token=signer-credential',
+      'bunker://' + 'a'.repeat(64) + '?secret=bunker-credential',
+      'nostrconnect://' + 'b'.repeat(64) + '?secret=pairing-credential',
+    ],
+  });
+  for (const secret of [
+    hex,
+    hex.slice(0, 8),
+    'user:pass',
+    'relay-credential',
+    'secret-fragment',
+    'signer-credential',
+    'bunker-credential',
+    'pairing-credential',
+    'private message snippet',
+  ])
+    expect(result).not.toContain(secret);
+});

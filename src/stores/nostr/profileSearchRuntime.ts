@@ -12,8 +12,14 @@ export interface ProfileSearchResult {
   eventId?: string;
 }
 export type ProfileSearchStatus = 'complete' | 'unavailable' | 'invalid';
-export const profileSearchAllowed = (query: string) =>
-  query.trim().length >= 2 && query.length <= 200 && !/nsec1/i.test(query);
+export const profileSearchAllowed = (
+  query: string,
+  privateKeys: (string | null | undefined)[] = [],
+) =>
+  query.trim().length >= 2 &&
+  query.length <= 200 &&
+  !/nsec1|bunker:\/\/|nostrconnect:\/\//i.test(query) &&
+  !privateKeys.some((key) => key && query.toLowerCase().includes(key.toLowerCase()));
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
 /** Short-lived public discovery. It never replaces the message subscriptions,

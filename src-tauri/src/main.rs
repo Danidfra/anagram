@@ -3,40 +3,76 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::Manager;
 static PRESENTATION_ID: AtomicUsize = AtomicUsize::new(0);
 
+// Native secrets are available only to the bundled main webview. Presentation
+// windows and remotely navigated pages must never inherit keychain access.
+fn trusted_app_url(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
+    ((((url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+        || (matches!(url.scheme(), "http" | "https")
+            && url.host_str() == Some("tauri.localhost")))
+        && url.port().is_none())
+        || dev_url.is_some_and(|dev| dev.origin() == url.origin()))
+        && url.username().is_empty()
+        && url.password().is_none()
+}
+fn trusted_key_context(label: &str, url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
+    label == "main" && trusted_app_url(url, dev_url)
+}
+fn authorize_key_access(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let url = window.url().map_err(|_| "Private key access denied")?;
+    let config = window.app_handle().config();
+    let dev_url = if cfg!(debug_assertions) {
+        config.build.dev_url.as_ref()
+    } else {
+        None
+    };
+    if trusted_key_context(window.label(), &url, dev_url) {
+        Ok(())
+    } else {
+        Err("Private key access denied".into())
+    }
+}
+
 fn credential() -> Result<keyring::Entry, String> {
-    keyring::Entry::new("com.nostr.anagram", "active-private-key").map_err(|e| e.to_string())
+    keyring::Entry::new("com.nostr.anagram", "active-private-key")
+        .map_err(|_| "Secure storage operation failed".to_string())
 }
 #[tauri::command]
-async fn read_private_key() -> Result<Option<String>, String> {
+async fn read_private_key(window: tauri::WebviewWindow) -> Result<Option<String>, String> {
+    authorize_key_access(&window)?;
     tauri::async_runtime::spawn_blocking(|| match credential()?.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(error.to_string()),
+        Err(_) => Err("Secure storage operation failed".into()),
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|_| "Secure storage operation failed".to_string())?
 }
 #[tauri::command]
-async fn write_private_key(private_key_hex: String) -> Result<(), String> {
+async fn write_private_key(
+    window: tauri::WebviewWindow,
+    private_key_hex: String,
+) -> Result<(), String> {
+    authorize_key_access(&window)?;
     if private_key_hex.len() != 64 || !private_key_hex.bytes().all(|c| c.is_ascii_hexdigit()) {
         return Err("Invalid private key".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         credential()?
             .set_password(&private_key_hex)
-            .map_err(|e| e.to_string())
+            .map_err(|_| "Secure storage operation failed".to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|_| "Secure storage operation failed".to_string())?
 }
 #[tauri::command]
-async fn remove_private_key() -> Result<(), String> {
+async fn remove_private_key(window: tauri::WebviewWindow) -> Result<(), String> {
+    authorize_key_access(&window)?;
     tauri::async_runtime::spawn_blocking(|| match credential()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(error.to_string()),
+        Err(_) => Err("Secure storage operation failed".into()),
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|_| "Secure storage operation failed".to_string())?
 }
 fn main() {
     tauri::Builder::default()
@@ -44,23 +80,18 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let dev_origin = if cfg!(debug_assertions) {
-                app.config().build.dev_url.as_ref().map(|url| url.origin())
+                app.config().build.dev_url.clone()
             } else {
                 None
             };
+            let navigation_origin = dev_origin.clone();
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
+                .on_navigation(move |url| trusted_app_url(url, navigation_origin.as_ref()))
                 .on_permission_request(move |webview, kind| {
                     use tauri::webview::{PermissionKind, PermissionResponse};
                     let trusted = webview
                         .url()
-                        .map(|url| {
-                            (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
-                                || (matches!(url.scheme(), "http" | "https")
-                                    && url.host_str() == Some("tauri.localhost"))
-                                || dev_origin
-                                    .as_ref()
-                                    .is_some_and(|origin| *origin == url.origin())
-                        })
+                        .map(|url| trusted_app_url(&url, dev_origin.as_ref()))
                         .unwrap_or(false);
                     if !trusted {
                         return PermissionResponse::Deny;
@@ -117,4 +148,59 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Anagram");
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::{trusted_app_url, trusted_key_context};
+    #[test]
+    fn only_app_origins_are_trusted_in_release() {
+        for url in [
+            "tauri://localhost/chats",
+            "http://tauri.localhost/chats",
+            "https://tauri.localhost/",
+        ] {
+            assert!(trusted_app_url(&url.parse().unwrap(), None));
+        }
+        for url in [
+            "https://evil.example/",
+            "https://tauri.localhost.evil.example/",
+            "https://tauri.localhost@evil.example/",
+            "https://user@tauri.localhost/",
+            "about:blank",
+            "data:text/html,hello",
+            "file:///tmp/index.html",
+            "http://127.0.0.1:5173/",
+        ] {
+            assert!(!trusted_app_url(&url.parse().unwrap(), None));
+        }
+    }
+    #[test]
+    fn presentation_windows_have_no_keychain_access() {
+        let app = "tauri://localhost/".parse().unwrap();
+        assert!(trusted_key_context("main", &app, None));
+        assert!(!trusted_key_context("call-presentation-0", &app, None));
+        assert!(!trusted_key_context("other", &app, None));
+        assert!(!trusted_key_context(
+            "main",
+            &"https://tauri.localhost:8443/".parse().unwrap(),
+            None
+        ));
+    }
+    #[test]
+    fn development_origin_must_match_exactly() {
+        let dev = "http://127.0.0.1:5173/".parse().unwrap();
+        assert!(trusted_app_url(
+            &"http://127.0.0.1:5173/chats".parse().unwrap(),
+            Some(&dev)
+        ));
+        assert!(!trusted_app_url(
+            &"http://127.0.0.1:5174/".parse().unwrap(),
+            Some(&dev)
+        ));
+        assert!(!trusted_app_url(
+            &"https://127.0.0.1:5173/".parse().unwrap(),
+            Some(&dev)
+        ));
+    }
 }

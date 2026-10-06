@@ -48,7 +48,21 @@ self.addEventListener('fetch', (event) => {
     // Serve the HTML belonging to this worker, not a newer deployment's HTML
     // whose hashed chunks may not be cached. Deep links work offline too.
     event.respondWith(
-      (async () => (await (await caches.open(cacheName)).match(shell)) ?? fetch(request))(),
+      (async () => {
+        const saved = await readCached(shell);
+        if (!saved) return fetch(request);
+        // Hosts such as `serve` redirect /index.html to /index. Cache Storage
+        // preserves that redirect flag, but navigation requests use redirect:
+        // manual and reject a redirected response with ERR_FAILED. Rebuild the
+        // response without redirect metadata, retaining the exact HTML/headers.
+        return saved.redirected
+          ? new Response(saved.body, {
+              status: saved.status,
+              statusText: saved.statusText,
+              headers: saved.headers,
+            })
+          : saved;
+      })(),
     );
     return;
   }
@@ -56,12 +70,27 @@ self.addEventListener('fetch', (event) => {
   if (!urls.has(url.href)) return;
   event.respondWith(
     (async () => {
-      const cache = await caches.open(cacheName);
-      const saved = await cache.match(url.href);
+      const saved = await readCached(url.href);
       if (saved) return saved;
       const response = await fetch(request);
-      if (response.ok && response.type === 'basic') await cache.put(url.href, response.clone());
+      if (response.ok && response.type === 'basic') {
+        try {
+          const cache = await caches.open(cacheName);
+          await cache.put(url.href, response.clone());
+        } catch {
+          // Quota/storage failures must not discard a successful network response.
+        }
+      }
       return response;
     })(),
   );
 });
+
+async function readCached(url: string): Promise<Response | undefined> {
+  try {
+    return await (await caches.open(cacheName)).match(url);
+  } catch {
+    // Cache Storage can be unavailable or evicted independently of the worker.
+    return undefined;
+  }
+}

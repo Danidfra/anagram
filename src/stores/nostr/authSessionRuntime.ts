@@ -170,6 +170,16 @@ export function createAuthSessionRuntime({
 }: AuthSessionRuntimeDeps) {
   let cachedPrivateKeyHex: string | null = null;
   let loadPrivateKeyHexPromise: Promise<string | null> | null = null;
+  let privateKeyGeneration = 0;
+  let secureStorageQueue = Promise.resolve();
+  function queueSecureStorage<T>(operation: () => Promise<T>): Promise<T> {
+    const next = secureStorageQueue.then(operation);
+    secureStorageQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
 
   function readLegacyPrivateKeyHex(): string | null {
     if (!hasStorage()) {
@@ -241,44 +251,43 @@ export function createAuthSessionRuntime({
     }
   }
 
-  async function readSecurePrivateKeyHex(): Promise<string | null> {
-    if (isAndroidSecurePrivateKeyStorageAvailable()) {
-      return readAndroidSecurePrivateKeyHex();
-    }
-
-    if (isElectronSecurePrivateKeyStorageAvailable()) {
-      return readElectronSecurePrivateKeyHex();
-    }
-
-    return null;
+  function readSecurePrivateKeyHex(): Promise<string | null> {
+    return queueSecureStorage(async () => {
+      if (isAndroidSecurePrivateKeyStorageAvailable()) return readAndroidSecurePrivateKeyHex();
+      if (isElectronSecurePrivateKeyStorageAvailable()) return readElectronSecurePrivateKeyHex();
+      return null;
+    });
   }
 
-  async function writeSecurePrivateKeyHex(privateKeyHex: string): Promise<void> {
-    if (isAndroidSecurePrivateKeyStorageAvailable()) {
-      await writeAndroidSecurePrivateKeyHex(privateKeyHex);
-      return;
-    }
-
-    if (isElectronSecurePrivateKeyStorageAvailable()) {
-      await writeElectronSecurePrivateKeyHex(privateKeyHex);
-    }
+  function writeSecurePrivateKeyHex(privateKeyHex: string): Promise<void> {
+    return queueSecureStorage(async () => {
+      if (isAndroidSecurePrivateKeyStorageAvailable())
+        await writeAndroidSecurePrivateKeyHex(privateKeyHex);
+      else if (isElectronSecurePrivateKeyStorageAvailable())
+        await writeElectronSecurePrivateKeyHex(privateKeyHex);
+    });
   }
 
-  async function removeSecurePrivateKeyHex(): Promise<void> {
-    await removeAndroidSecurePrivateKeyHex();
-    await removeElectronSecurePrivateKeyHex();
+  function removeSecurePrivateKeyHex(): Promise<void> {
+    return queueSecureStorage(async () => {
+      await removeAndroidSecurePrivateKeyHex();
+      await removeElectronSecurePrivateKeyHex();
+    });
   }
 
   async function persistSecurePrivateKeyHex(
     privateKeyHex: string,
     pubkeyHex: string,
   ): Promise<boolean> {
+    const generation = privateKeyGeneration;
     try {
       await writeSecurePrivateKeyHex(privateKeyHex);
+      if (generation !== privateKeyGeneration) return false;
       clearSecurePrivateKeyMemoryOnlySession();
       return true;
     } catch (error) {
-      console.warn('Failed to persist private key in secure storage.', error);
+      console.warn('Failed to persist private key in secure storage.');
+      if (generation !== privateKeyGeneration) return false;
       markSecurePrivateKeyMemoryOnlySession(pubkeyHex);
       return false;
     }
@@ -289,15 +298,17 @@ export function createAuthSessionRuntime({
       return cachedPrivateKeyHex;
     }
 
+    const generation = privateKeyGeneration;
     const legacyPrivateKeyHex = readLegacyPrivateKeyHex();
     let securePrivateKeyHex: string | null = null;
 
     try {
       securePrivateKeyHex = await readSecurePrivateKeyHex();
     } catch (error) {
-      console.warn('Failed to read private key from secure storage.', error);
+      console.warn('Failed to read private key from secure storage.');
     }
 
+    if (generation !== privateKeyGeneration) return null;
     const storedPubkeyHex = getStoredPublicKeyHex();
     const securePrivateKeyPubkeyHex = securePrivateKeyHex
       ? derivePublicKeyFromPrivateKeyHex(securePrivateKeyHex)
@@ -340,6 +351,7 @@ export function createAuthSessionRuntime({
     setStoredNsecSessionMetadata(pubkeyHex);
 
     await persistSecurePrivateKeyHex(legacyPrivateKeyHex, pubkeyHex);
+    if (generation !== privateKeyGeneration) return null;
 
     if (hasStorage()) {
       window.localStorage.removeItem(PRIVATE_KEY_STORAGE_KEY);
@@ -354,9 +366,12 @@ export function createAuthSessionRuntime({
       return cachedPrivateKeyHex;
     }
 
-    loadPrivateKeyHexPromise ??= loadSecurePrivateKeyHex().finally(() => {
-      loadPrivateKeyHexPromise = null;
-    });
+    if (!loadPrivateKeyHexPromise) {
+      const pending = loadSecurePrivateKeyHex().finally(() => {
+        if (loadPrivateKeyHexPromise === pending) loadPrivateKeyHexPromise = null;
+      });
+      loadPrivateKeyHexPromise = pending;
+    }
 
     return loadPrivateKeyHexPromise;
   }
@@ -425,11 +440,12 @@ export function createAuthSessionRuntime({
     try {
       await removeSecurePrivateKeyHex();
     } catch (error) {
-      console.warn('Failed to remove private key from secure storage.', error);
+      console.warn('Failed to remove private key from secure storage.');
     }
   }
 
   function clearPrivateKey(options: { clearSecureStorage?: boolean } = {}): void {
+    privateKeyGeneration++;
     resetCalls?.();
     const activeSigner = ndk.signer as (NostrSigner & { stop?: () => void }) | undefined;
     activeSigner?.stop?.();
@@ -489,12 +505,15 @@ export function createAuthSessionRuntime({
 
     const signer = new NostrPrivateKeySigner(normalized, ndk);
     clearPrivateKey({ clearSecureStorage: false });
+    const generation = privateKeyGeneration;
     resetEventSinceForFreshLogin();
     cachedPrivateKeyHex = normalized;
 
     if (isSecurePrivateKeyStorageAvailable()) {
       await removePersistedSecurePrivateKey();
+      if (generation !== privateKeyGeneration) return false;
       await persistSecurePrivateKeyHex(normalized, signer.pubkey);
+      if (generation !== privateKeyGeneration) return false;
       setStoredAuthSession('nsec', signer.pubkey);
     } else {
       setStoredAuthSession('nsec', signer.pubkey, normalized);

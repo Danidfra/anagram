@@ -150,6 +150,9 @@ test('chat search filters locally, streams relay profiles, cancels stale queries
     await search.fill(nip19.nsecEncode(ownKey));
     await page.waitForTimeout(400);
     expect(sent.some((frame) => frame.includes(nip19.nsecEncode(ownKey)))).toBe(false);
+    await search.fill(Buffer.from(ownKey).toString('hex'));
+    await page.waitForTimeout(500);
+    expect(sent.some((frame) => frame.includes(Buffer.from(ownKey).toString('hex')))).toBe(false);
     await search.fill('finder');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'Back to chats', exact: true }).click();

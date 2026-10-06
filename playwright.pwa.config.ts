@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e/pwa',
+  outputDir: '.artifacts/pwa-results',
   timeout: 60000,
   workers: 1,
   use: {
@@ -9,7 +10,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'npm run preview -- --port 5189 --strictPort',
+    command: 'node e2e/pwa/static-server.mjs',
     url: 'http://127.0.0.1:5189',
     reuseExistingServer: false,
   },

@@ -16,7 +16,7 @@ interface DeveloperTraceStoreRecord extends DeveloperTraceEntry {
 }
 
 const DEVELOPER_TRACE_DB_NAME = 'developer-trace-indexeddb-v1';
-const DEVELOPER_TRACE_DB_VERSION = 2;
+const DEVELOPER_TRACE_DB_VERSION = 3;
 const DEVELOPER_TRACE_STORE = 'trace_entries';
 const DEVELOPER_TRACE_LOGGED_AT_MS_INDEX = 'logged_at_ms';
 const DEVELOPER_TRACE_LIMIT = 10000;
