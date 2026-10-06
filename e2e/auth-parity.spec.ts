@@ -86,9 +86,9 @@ test('startup progress updates without blocking the inbox and keeps private erro
       failed.status = 'error';
       failed.errorMessage = 'PRIVATE_SIGNER_ERROR_SENTINEL';
     });
-    const progress = page.getByRole('progressbar', { name: /Restore message history/ });
+    const progress = page.getByTestId('history-sync-status').getByRole('status');
     await expect(progress).toBeVisible();
-    await expect(progress).not.toHaveAttribute('aria-valuenow');
+    await expect(progress).toContainText('Restore message history');
     await page.getByRole('button', { name: 'Show startup history', exact: true }).click();
     await expect(page.locator('#startup-history-details')).toContainText('Failed');
     await expect(page.locator('#startup-history-details')).not.toContainText(

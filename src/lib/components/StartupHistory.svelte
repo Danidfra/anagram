@@ -134,8 +134,6 @@
         </ol>
       </div>
     {/if}
-    <!-- History size is unknown: never pretend a fixed percentage has completed. -->
-    <div class="progress" role="progressbar" aria-label={summary}></div>
   </section>
 {/if}
 
@@ -258,17 +256,9 @@
   .failed {
     color: #dc2626;
   }
-  .progress,
   .mini-progress {
     overflow: hidden;
     background: color-mix(in srgb, var(--q-primary) 15%, transparent);
-  }
-  .progress {
-    height: 2px;
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
   }
   .mini-progress {
     width: 18px;
@@ -276,7 +266,6 @@
     border-radius: 999px;
     margin-top: 6px;
   }
-  .progress::after,
   .mini-progress::after {
     content: '';
     display: block;
@@ -294,7 +283,6 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .progress::after,
     .mini-progress::after {
       animation: none;
       width: 100%;

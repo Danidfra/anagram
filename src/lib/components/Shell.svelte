@@ -1100,7 +1100,6 @@
               }}><Icon name="add" /></button
             >{/if}
         </header>{/if}
-      <StartupHistory />
       {#if menu}<div class="dropdown chat-options-menu">
           <button
             data-testid="new-chat-button"
@@ -1196,6 +1195,7 @@
           />
         {/if}
       </div>
+      <StartupHistory />
       <nav class="nav-rail" aria-label="Main navigation">
         {#each ['chats', 'contacts', 'settings'] as item}<button
             class="nav-rail__btn"
