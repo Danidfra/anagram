@@ -111,10 +111,6 @@ npm run build
 npm run test:e2e:pwa
 ```
 
-To check calls in the actual production build (including CSP and service-worker caching), run `ANAGRAM_LIVE_CALL_TEST=1 npm run test:e2e:pwa -- e2e/pwa/calls.spec.ts` after building. This uses generated accounts, controlled Nostr signaling, synthetic microphone capture and the public Iroh relay pool; it checks sustained audio in both directions. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` when using a system Chromium browser. Optionally set `ANAGRAM_CALL_FIREFOX_EXECUTABLE_PATH` to a system Firefox executable to test Chrome-to-Firefox calls.
-
-If a direct call fails, expand **Call failure details** on both participants' call screens before closing them. The local failure phase and redacted error distinguish transport/media failures from a failure reported by the other participant. These details are held in memory, are cleared on dismissal, and are not sent to relays.
-
 The implementation follows [SvelteKit's service worker lifecycle](https://svelte.dev/docs/kit/service-workers).
 
 ## Tagged desktop releases

@@ -248,23 +248,3 @@ test('custom call relay approval stays in the app and cancels when its endpoint 
   await expect(page.getByTestId('call-relay-approval')).toBeHidden();
   expect(await page.evaluate(() => (window as any).__approvedConnections())).toBe(1);
 });
-
-test('failed calls expose redacted troubleshooting details', async ({ page }) => {
-  await setup(page);
-  await page.evaluate(() => {
-    const call = (window as any).__testCall;
-    call.session = { ...call.session, phase: 'ended', endReason: 'failed' };
-    call.error = 'call.error.failed';
-    call.failureDetail = `connecting: Relay refused ${'a'.repeat(64)} nsec1qqqqqq https://user:password@relay.example/?token=private`;
-  });
-  const details = page.getByTestId('call-failure-details');
-  await expect(details).toBeVisible();
-  await details.locator('summary').click();
-  await expect(details.locator('p')).toContainText('connecting: Relay refused');
-  await expect(details).not.toContainText('a'.repeat(64));
-  await expect(details).not.toContainText('nsec1');
-  await expect(details).not.toContainText('password');
-  await expect(details).not.toContainText('token=private');
-  await page.getByTestId('call-dismiss').click();
-  await expect(details).toHaveCount(0);
-});

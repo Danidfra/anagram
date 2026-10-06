@@ -719,7 +719,6 @@
   "call.ended.timeout": "No answer",
   "call.ended.failed": "Call failed",
   "call.ended.cancelled": "Call cancelled",
-  "call.failureDetails": "Call failure details",
   "call.error.failed": "The call connection or media stream failed. Please try again.",
   "call.error.unsupported": "This browser cannot run Iroh calls with the required media features. Try a current Chrome, Edge, or Firefox browser, or the Anagram desktop app. Use HTTPS or localhost.",
   "call.error.unavailable": "Calls are available with accepted contacts. This contact is unavailable.",

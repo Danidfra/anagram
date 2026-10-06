@@ -11,7 +11,6 @@
   import { observe } from '#src/lib/state/store.ts';
   import { translate } from '#src/i18n.ts';
   import { Notify } from '#src/lib/platform/ui.ts';
-  import { diagnosticText } from '#src/utils/diagnosticExport.ts';
   import CallRelayPrompt from './CallRelayPrompt.svelte';
   import Icon from './Icon.svelte';
   import { callDialogFocus } from '#src/lib/platform/callDialogFocus.ts';
@@ -33,7 +32,6 @@
     screen: calls.remoteScreenUrl,
     error: rooms.session ? rooms.error : calls.error || rooms.error,
     deviceError: rooms.session ? '' : calls.deviceError,
-    failureDetail: rooms.session ? '' : diagnosticText(calls.failureDetail).slice(0, 1000),
     participants: rooms.participants,
     link: rooms.shareLink,
     muted: rooms.session ? rooms.microphoneMuted : calls.session?.microphoneMuted,
@@ -431,12 +429,6 @@
       >
         {$translate($state.error || $state.deviceError || outputError)}
       </div>{/if}
-    {#if ended && $state.failureDetail}
-      <details class="call-failure-details" data-testid="call-failure-details">
-        <summary>{$translate('call.failureDetails')}</summary>
-        <p>{$state.failureDetail}</p>
-      </details>
-    {/if}
     {#if !ended}
       <CallControlsTray enabled={active} let:autoHide let:toggle>
         <div class="call-panel__controls" class:room-controls={room}>
@@ -739,17 +731,6 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-  }
-  .call-failure-details {
-    padding: 8px 20px;
-    max-width: min(100%, 680px);
-    margin: 0 auto;
-    color: #aebac5;
-    overflow-wrap: anywhere;
-    user-select: text;
-  }
-  .call-failure-details summary {
-    cursor: pointer;
   }
   .call-panel__error {
     text-align: center;
