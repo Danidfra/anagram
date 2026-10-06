@@ -30,8 +30,13 @@
     error = '',
     name = '',
     about = '';
-  let busy = false,
-    publishRelays = true,
+  export let busy = false;
+  export let canGoBack = false;
+  $: canGoBack = status === 'profile';
+  export function backToRelays() {
+    if (!busy) status = 'relays';
+  }
+  let publishRelays = true,
     notifications = false;
   let lookupGeneration = 0,
     mounted = true;
@@ -126,7 +131,7 @@
         error = 'Relay already added.';
         return;
       }
-      entries = [...entries, { url: url.href, selected: false }];
+      entries = [{ url: url.href, selected: false }, ...entries];
       relays.replaceRelayEntries(
         entries.map((entry) => ({ url: entry.url, read: true, write: true })),
       );
@@ -138,6 +143,7 @@
     }
   }
   async function finish(createProfile = false) {
+    if (busy) return;
     busy = true;
     error = '';
     try {
@@ -175,9 +181,17 @@
     complete();
   }
   async function logout() {
-    await nostr.logout();
-    localStorage.removeItem('anagram-onboarding-pending');
-    onlogout();
+    if (busy) return;
+    busy = true;
+    try {
+      await nostr.logout();
+      localStorage.removeItem('anagram-onboarding-pending');
+      onlogout();
+    } catch {
+      error = 'Unable to log out. Please try again.';
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
@@ -204,6 +218,7 @@
     </p>
   {:else if status === 'relays'}
     <form
+      class="relay-form"
       onsubmit={(e) => {
         e.preventDefault();
         addRelay();
@@ -215,8 +230,11 @@
           placeholder="wss://example-relay.io"
           data-testid="auth-onboarding-relay-input"
         /></label
-      ><button class="primary" aria-label="Add relay" data-testid="auth-onboarding-add-relay-button"
-        ><Icon name="add" /></button
+      ><button
+        class="primary"
+        aria-label="Add relay"
+        disabled={!relayInput.trim()}
+        data-testid="auth-onboarding-add-relay-button"><Icon name="add" /></button
       >
     </form>
     <div class="relay-list">
@@ -229,22 +247,21 @@
                 type="checkbox"
                 bind:checked={entry.selected}
                 aria-label={`Use ${entry.url} for profile lookup`}
-              />{/if}{entry.url}<span
+              />{/if}<span
               class="relay-status"
               class:connected={$relayStatus[entry.url] === 'connected'}
               aria-label={$relayStatus[entry.url] === 'connected' ? 'Connected' : 'Disconnected'}
               ><Icon name={$relayStatus[entry.url] === 'connected' ? 'check' : 'warning'} /></span
-            ></label
+            >{entry.url}</label
           ><button
             class="icon-button"
             aria-label={`Delete ${entry.url}`}
             onclick={() => (entries = entries.filter((e) => e !== entry))}
-            ><Icon name="close" /></button
+            ><Icon name="delete" /></button
           >
         </div>{/each}
     </div>
   {:else if status === 'profile'}
-    <button class="link" onclick={() => (status = 'relays')}>← {$translate('common.back')}</button>
     <label
       >{$translate('common.nameOptional')}<input
         bind:value={name}
@@ -270,13 +287,16 @@
         class="outline"
         onclick={logout}
         disabled={busy}
-        data-testid="auth-onboarding-logout-button">{$translate('settings.logout')}</button
+        data-testid="auth-onboarding-logout-button"
+        ><Icon name="logout" />{$translate('settings.logout')}</button
       ><button
         class="primary"
         onclick={() => finish()}
         disabled={busy}
         data-testid="auth-onboarding-continue-button"
-        >{$translate('common.confirmStartUsingApp')}</button
+        >{#if busy}<span class="save-spinner" aria-label="Connecting"></span>{:else}{$translate(
+            'common.confirmStartUsingApp',
+          )}{/if}</button
       >
     </div>
   {:else if status === 'not-found'}<div class="button-row">
@@ -304,26 +324,30 @@
       >
     </div>
   {:else if status === 'relays'}<div class="button-row">
-      <button class="outline" onclick={logout} data-testid="auth-onboarding-logout-button"
-        >{$translate('settings.logout')}</button
+      <button
+        class="outline"
+        onclick={logout}
+        disabled={busy}
+        data-testid="auth-onboarding-logout-button"
+        ><Icon name="logout" />{$translate('settings.logout')}</button
       ><button
         class="primary"
         disabled={!entries.some((e) => e.selected)}
-        onclick={() => lookup(true)}
+        onclick={() => {
+          entries = entries.filter((entry) => entry.selected);
+          void lookup(true);
+        }}
         data-testid="auth-onboarding-relays-next-button">{$translate('common.next')}</button
       >
     </div>
   {:else if status === 'profile'}<button
-      class="outline"
-      disabled={busy}
-      onclick={logout}
-      data-testid="auth-onboarding-logout-button">{$translate('settings.logout')}</button
-    ><button
       class="primary"
       disabled={busy}
       onclick={() => finish(true)}
       data-testid="auth-onboarding-profile-start-button"
-      >{$translate('common.saveStartUsingApp')}</button
+      >{#if busy}<span class="save-spinner" aria-label="Saving"></span>{:else}{$translate(
+          'common.saveStartUsingApp',
+        )}{/if}</button
     >{/if}
 </div>
 {#if notifications}<div class="modal-backdrop">
@@ -363,20 +387,29 @@
   }
   .onboarding {
     display: grid;
-    gap: 12px;
+    gap: 16px;
+    padding-top: 6px;
   }
   .checking,
   .profile {
     display: flex;
     align-items: center;
     gap: 16px;
-    padding: 14px 0;
+    padding: 6px 0;
+  }
+  .checking {
+    min-height: 116px;
+  }
+  .checking strong {
+    font-size: 18px;
   }
   .profile > div {
     min-width: 0;
   }
   .profile strong {
-    font-size: 20px;
+    font-size: 22px;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
   }
   small {
     display: block;
@@ -427,9 +460,9 @@
     width: 100%;
     margin: 8px 0;
     color: #182236;
-    background: transparent;
-    border: 1px solid #cbd5e1;
-    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid transparent;
+    border-radius: 12px;
   }
   .check,
   .relay label {
@@ -456,12 +489,30 @@
     overflow-wrap: anywhere;
   }
   .relay-list {
+    max-height: 260px;
+    overflow-y: auto;
+    background: rgba(248, 250, 252, 0.94);
     border: 1px solid #cbd5e1;
-    border-radius: 12px;
+    border-radius: 14px;
   }
   .relay {
     padding: 8px 12px;
     border-bottom: 1px solid #cbd5e1;
+  }
+  .relay-form {
+    position: relative;
+  }
+  .relay-form input {
+    padding-right: 48px;
+  }
+  .relay-form button.primary {
+    position: absolute;
+    right: 8px;
+    bottom: 13px;
+    width: 28px;
+    min-height: 28px;
+    height: 28px;
+    padding: 0;
   }
   .relay:last-child {
     border: 0;
@@ -469,7 +520,21 @@
   .error {
     color: #b42332;
   }
+  button[data-testid='auth-onboarding-logout-button'] {
+    color: #c10015;
+    border-color: #c10015;
+  }
+  .save-spinner {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
   .notification-dialog {
+    width: min(440px, calc(100vw - 32px));
     color: var(--nc-text);
   }
   @media (max-width: 480px) {

@@ -41,6 +41,8 @@ test('onboarding has no history restriction and logout clears either generated o
       await expect(page.getByTestId('auth-onboarding-profile-start-button')).toBeVisible();
       await expect(page.getByRole('slider')).toHaveCount(0);
       await expect(page.getByText('Restore message history', { exact: true })).toHaveCount(0);
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
+      await expect(page.getByTestId('auth-onboarding-relays-next-button')).toBeVisible();
       await page.getByTestId('auth-onboarding-logout-button').click();
       await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
       await expectBrowserStorageToBeEmpty(page);

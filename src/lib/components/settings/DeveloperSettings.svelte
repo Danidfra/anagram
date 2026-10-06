@@ -1,6 +1,7 @@
 <script lang="ts">
   import { diagnosticJson, diagnosticText } from '#src/utils/diagnosticExport.ts';
   import { onMount } from 'svelte';
+  import DiagnosticFields from './DiagnosticFields.svelte';
   import { translate } from '#src/i18n.ts';
   import { useNostrStore } from '#src/stores/nostrStore.ts';
   import { useAppUpdateStore } from '#src/stores/appUpdateStore.ts';
@@ -46,7 +47,7 @@
         void refresh();
       }, 500);
   }
-  async function refresh() {
+  export async function refresh() {
     if (refreshing || disposed) return;
     refreshing = true;
     try {
@@ -109,181 +110,188 @@
   });
 </script>
 
-<div class="settings-card">
-  <label class="settings-switch"
-    ><input
-      type="checkbox"
-      role="switch"
-      checked={$state.enabled}
-      onchange={(e) => nostr.setDeveloperDiagnosticsEnabled(e.currentTarget.checked)}
-    /><span
-      >{$translate('common.debugLogging')}<small
-        >{$translate('developer.debugLogging.description')}</small
-      ></span
-    ></label
-  >
-  <div>
-    <h3>{$translate('developer.appBundle')}</h3>
-    <small>{$translate('developer.appBundle.description')}</small>
-    <p>{update.currentBuildInfo.appVersion} · {update.currentBuildInfo.bundleId}</p>
-  </div>
-</div>
-<div class="settings-card">
-  <div>
-    <h3>{$translate('common.actions')}</h3>
-    <small>{$translate('developer.actions.description')}</small>
-  </div>
-  <div class="settings-actions">
-    <button class="outline" disabled={busy} onclick={() => act(refresh)}
-      >{$translate('common.refresh')}</button
-    ><button
-      class="outline"
-      disabled={busy}
-      onclick={() =>
-        act(
-          () => nostr.restartPrivateMessagesDiagnosticsSubscription(),
-          $translate('developer.privateMessagesSubscriptionRestarted'),
-        )}>{$translate('developer.restartDmSubscription')}</button
-    ><button
-      class="outline"
-      disabled={busy}
-      onclick={() =>
-        act(
-          () => nostr.reconnectAllDeveloperRelays(),
-          $translate('developer.reconnectAll.started'),
-        )}>{$translate('relays.reconnectAllRelays')}</button
-    ><button class="outline" disabled={busy} onclick={() => act(() => bundle(false))}
-      >{$translate('common.copyJson')}</button
-    ><button
-      class="outline"
-      data-testid="settings-diagnostics-download"
-      disabled={busy}
-      onclick={() => act(() => bundle(true))}>{$translate('common.downloadJson')}</button
-    ><button
-      class="outline"
-      disabled={busy}
-      onclick={() => act(() => nostr.clearDeveloperTraceEntries())}
-      >{$translate('developer.clearTrace')}</button
+<div class="developer-settings">
+  <div class="settings-card">
+    <label class="settings-switch"
+      ><input
+        type="checkbox"
+        role="switch"
+        checked={$state.enabled}
+        onchange={(e) => nostr.setDeveloperDiagnosticsEnabled(e.currentTarget.checked)}
+      /><span
+        >{$translate('common.debugLogging')}<small
+          >{$translate('developer.debugLogging.description')}</small
+        ></span
+      ></label
     >
   </div>
-  {#if error}<p class="error" role="alert">{error}</p>{/if}{#if notice}<p role="status">
-      {notice}
-    </p>{/if}
-</div>
-<div class="settings-card">
-  <details>
-    <summary>{$translate('relays.relayStatus')}</summary
-    >{#each snapshot?.relayRows ?? [] as relay}<div class="settings-relay settings-relay-head">
-        <div class="relay-url">
-          {diagnosticText(relay.url ?? '')}<br /><small
-            >{relay.statusName} · {$translate('common.attempts')}: {relay.attempts ?? 0} · {relay.inReadSet
-              ? 'Read '
-              : ''}{relay.inPublishSet ? 'Publish ' : ''}{relay.inPrivateMessagesSubscription
-              ? 'DM'
-              : ''}</small
-          >
-        </div>
-        <button
-          class="link"
-          disabled={busy || !relay.url}
-          onclick={() => act(() => nostr.reconnectDeveloperRelay(relay.url!))}
-          >{$translate('common.reconnect')}</button
-        >
-      </div>{:else}<p>{$translate('developer.relayDiagnosticsAvailableYet')}</p>{/each}
-  </details>
-</div>
-{#each [['groupMessagesSubscription', 'developer.groupMessagesSubscription'], ['session', 'common.nostrSession'], ['privateMessagesSubscription', 'developer.privateMessagesSubscription']] as [key, label]}<div
-    class="settings-card"
-  >
-    <details>
-      <summary>{$translate(label)}</summary>
-      <pre>{diagnosticJson(snapshot?.[key as keyof DeveloperDiagnosticsSnapshot] ?? null)}</pre>
-    </details>
-  </div>{/each}
-<div class="settings-card">
-  <details open>
-    <summary>{$translate('developer.pendingQueues')}</summary><button
-      class="outline"
-      disabled={busy}
-      onclick={() =>
-        act(async () => {
-          const result = await nostr.refreshDeveloperPendingQueues();
-          notice = `Checked ${result.initialTargetCount} targets; ${result.remainingEntryCount} items still pending.`;
-        })}>{$translate('common.refresh')}</button
-    >
-    <h4>{$translate('message.pendingReactions.title')}</h4>
-    <pre>{diagnosticJson(snapshot?.pendingReactions ?? [])}</pre>
-    <h4>{$translate('developer.pendingDeletions.title')}</h4>
-    <pre>{diagnosticJson(snapshot?.pendingDeletions ?? [])}</pre>
-  </details>
-</div>
-<div class="settings-card">
-  <details open>
-    <summary>{$translate('developer.recentTrace')}</summary>
-    <div class="settings-grid">
-      <label
-        >{$translate('common.level')}<select bind:value={level}
-          ><option value="">{$translate('common.none')}</option
-          >{#each ['info', 'warn', 'error'] as item}<option>{item}</option>{/each}</select
-        ></label
-      ><label
-        >{$translate('common.scope')}<select bind:value={scope}
-          ><option value="">{$translate('common.none')}</option
-          >{#each [...new Set(traces.map((t) => t.scope))] as item}<option>{item}</option
-            >{/each}</select
-        ></label
-      ><label>{$translate('common.phase')}<input bind:value={phase} /></label>
+  <div class="settings-card">
+    <div>
+      <h3>{$translate('developer.appBundle')}</h3>
+      <small>{$translate('developer.appBundle.description')}</small>
+      <dl class="developer-facts">
+        <dt>{$translate('common.appVersion')}</dt>
+        <dd>{update.currentBuildInfo.appVersion}</dd>
+        <dt>{$translate('developer.bundleId')}</dt>
+        <dd>{update.currentBuildInfo.bundleId}</dd>
+      </dl>
     </div>
-    {#each filtered.slice(page * 20, (page + 1) * 20) as trace (trace.id)}<details
-        class="settings-relay"
-      >
-        <summary
-          >{trace.timestamp} · {trace.level} · {diagnosticText(trace.scope)} · {diagnosticText(
-            trace.phase,
-          )}</summary
-        >
-        <pre>{diagnosticJson(trace.details)}</pre>
-      </details>{:else}<p>
-        {$translate(
-          traces.length
-            ? 'developer.traceEntriesMatchCurrent'
-            : 'developer.traceEntriesCapturedYet',
-        )}
-      </p>{/each}
-    <div class="settings-actions end">
-      <button class="outline" disabled={page === 0} onclick={() => page--}
-        >{$translate('common.back')}</button
-      ><span>{page + 1} / {Math.max(1, Math.ceil(filtered.length / 20))}</span><button
+  </div>
+  <div class="settings-card">
+    <div>
+      <h3>{$translate('common.actions')}</h3>
+      <small>{$translate('developer.actions.description')}</small>
+    </div>
+    <div class="settings-actions">
+      <button
         class="outline"
-        disabled={(page + 1) * 20 >= filtered.length}
-        onclick={() => page++}>{$translate('common.next')}</button
+        disabled={busy}
+        onclick={() =>
+          act(
+            () => nostr.restartPrivateMessagesDiagnosticsSubscription(),
+            $translate('developer.privateMessagesSubscriptionRestarted'),
+          )}>{$translate('developer.restartDmSubscription')}</button
+      ><button
+        class="outline"
+        disabled={busy}
+        onclick={() =>
+          act(
+            () => nostr.reconnectAllDeveloperRelays(),
+            $translate('developer.reconnectAll.started'),
+          )}>{$translate('relays.reconnectAllRelays')}</button
+      ><button class="outline" disabled={busy} onclick={() => act(() => bundle(false))}
+        >{$translate('common.copyJson')}</button
+      ><button
+        class="outline"
+        data-testid="settings-diagnostics-download"
+        disabled={busy}
+        onclick={() => act(() => bundle(true))}>{$translate('common.downloadJson')}</button
+      ><button
+        class="outline"
+        disabled={busy}
+        onclick={() => act(() => nostr.clearDeveloperTraceEntries())}
+        >{$translate('developer.clearTrace')}</button
       >
     </div>
-  </details>
-</div>
-<div class="settings-card">
-  <details>
-    <summary>{$translate('startup.startupHistory')}</summary>{#each $state.startup as step}<div
-        class="settings-relay"
-      >
-        <div class="settings-relay-head">
-          <span class="relay-url"
-            >{$translate(step.label)} · {step.status} · {step.durationMs ?? 0} ms{step.eventCount !==
-            null
-              ? ` · ${step.eventCount} events`
-              : ''}</span
-          ><button
+    {#if error}<p class="error" role="alert">{error}</p>{/if}{#if notice}<p role="status">
+        {notice}
+      </p>{/if}
+  </div>
+  <div class="settings-card">
+    <details>
+      <summary>{$translate('relays.relayStatus')}</summary
+      >{#each snapshot?.relayRows ?? [] as relay}<div class="settings-relay settings-relay-head">
+          <div class="relay-url">
+            {diagnosticText(relay.url ?? '')}<br /><small
+              >{relay.statusName} · {$translate('common.attempts')}: {relay.attempts ?? 0} · {relay.inReadSet
+                ? 'Read '
+                : ''}{relay.inPublishSet ? 'Publish ' : ''}{relay.inPrivateMessagesSubscription
+                ? 'DM'
+                : ''}</small
+            >
+          </div>
+          <button
             class="link"
-            disabled={busy || $state.restoring || step.status === 'in_progress'}
-            onclick={() => act(() => nostr.rerunStartupStep(step.id))}
-            >{$translate('common.retry')}</button
+            disabled={busy || !relay.url}
+            onclick={() => act(() => nostr.reconnectDeveloperRelay(relay.url!))}
+            >{$translate('common.reconnect')}</button
           >
-        </div>
-        {#if step.errorMessage}<p class="error">
-            {diagnosticText(step.errorMessage)}
-          </p>{/if}{#each step.internalTasks as task}<p class="settings-caption">
-            {$translate(task.label)} · {task.status} · {task.durationMs ?? 0} ms
-          </p>{/each}
-      </div>{/each}
-  </details>
+        </div>{:else}<p>{$translate('developer.relayDiagnosticsAvailableYet')}</p>{/each}
+    </details>
+  </div>
+  {#each [['groupMessagesSubscription', 'developer.groupMessagesSubscription'], ['session', 'common.nostrSession'], ['privateMessagesSubscription', 'developer.privateMessagesSubscription']] as [key, label]}<div
+      class="settings-card"
+    >
+      <details>
+        <summary>{$translate(label)}</summary>
+        <DiagnosticFields value={snapshot?.[key as keyof DeveloperDiagnosticsSnapshot]} />
+      </details>
+    </div>{/each}
+  <div class="settings-card">
+    <details open>
+      <summary>{$translate('developer.pendingQueues')}</summary><button
+        class="outline"
+        disabled={busy}
+        onclick={() =>
+          act(async () => {
+            const result = await nostr.refreshDeveloperPendingQueues();
+            notice = `Checked ${result.initialTargetCount} targets; ${result.remainingEntryCount} items still pending.`;
+          })}>{$translate('common.refresh')}</button
+      >
+      <h4>{$translate('message.pendingReactions.title')}</h4>
+      <pre>{diagnosticJson(snapshot?.pendingReactions ?? [])}</pre>
+      <h4>{$translate('developer.pendingDeletions.title')}</h4>
+      <pre>{diagnosticJson(snapshot?.pendingDeletions ?? [])}</pre>
+    </details>
+  </div>
+  <div class="settings-card">
+    <details open>
+      <summary>{$translate('developer.recentTrace')}</summary>
+      <div class="settings-grid trace-filters">
+        <label
+          >{$translate('common.level')}<select bind:value={level}
+            ><option value="">{$translate('common.none')}</option
+            >{#each ['info', 'warn', 'error'] as item}<option>{item}</option>{/each}</select
+          ></label
+        ><label
+          >{$translate('common.scope')}<select bind:value={scope}
+            ><option value="">{$translate('common.none')}</option
+            >{#each [...new Set(traces.map((t) => t.scope))] as item}<option>{item}</option
+              >{/each}</select
+          ></label
+        ><label>{$translate('common.phase')}<input bind:value={phase} /></label>
+      </div>
+      {#each filtered.slice(page * 20, (page + 1) * 20) as trace (trace.id)}<details
+          class="settings-relay"
+        >
+          <summary
+            >{trace.timestamp} · {trace.level} · {diagnosticText(trace.scope)} · {diagnosticText(
+              trace.phase,
+            )}</summary
+          >
+          <pre>{diagnosticJson(trace.details)}</pre>
+        </details>{:else}<p>
+          {$translate(
+            traces.length
+              ? 'developer.traceEntriesMatchCurrent'
+              : 'developer.traceEntriesCapturedYet',
+          )}
+        </p>{/each}
+      <div class="settings-actions end">
+        <button class="outline" disabled={page === 0} onclick={() => page--}
+          >{$translate('common.back')}</button
+        ><span>{page + 1} / {Math.max(1, Math.ceil(filtered.length / 20))}</span><button
+          class="outline"
+          disabled={(page + 1) * 20 >= filtered.length}
+          onclick={() => page++}>{$translate('common.next')}</button
+        >
+      </div>
+    </details>
+  </div>
+  <div class="settings-card">
+    <details>
+      <summary>{$translate('startup.startupHistory')}</summary>{#each $state.startup as step}<div
+          class="settings-relay"
+        >
+          <div class="settings-relay-head">
+            <span class="relay-url"
+              >{$translate(step.label)} · {step.status} · {step.durationMs ?? 0} ms{step.eventCount !==
+              null
+                ? ` · ${step.eventCount} events`
+                : ''}</span
+            ><button
+              class="link"
+              disabled={busy || $state.restoring || step.status === 'in_progress'}
+              onclick={() => act(() => nostr.rerunStartupStep(step.id))}
+              >{$translate('common.retry')}</button
+            >
+          </div>
+          {#if step.errorMessage}<p class="error">
+              {diagnosticText(step.errorMessage)}
+            </p>{/if}{#each step.internalTasks as task}<p class="settings-caption">
+              {$translate(task.label)} · {task.status} · {task.durationMs ?? 0} ms
+            </p>{/each}
+        </div>{/each}
+    </details>
+  </div>
 </div>

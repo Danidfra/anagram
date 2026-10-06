@@ -1,3 +1,4 @@
+import { parseRoomLink } from '#src/utils/callRoom.ts';
 import {
   buildNostrMentionTextParts,
   type NostrMentionProfile,
@@ -13,7 +14,7 @@ export type MessageTextPart =
       href: string;
     };
 
-const WEB_URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/giu;
+const WEB_URL_PATTERN = /\b(?:https?:\/\/|anagram:\/\/room\/call\/|www\.)[^\s<>"'`]+/giu;
 const SIMPLE_TRAILING_PUNCTUATION_PATTERN = /[.,!?;:]+$/u;
 const CLOSING_DELIMITERS: Record<string, string> = {
   ')': '(',
@@ -45,6 +46,7 @@ function trimTrailingUrlPunctuation(candidate: string): string {
 }
 
 function buildHttpHref(value: string): string | null {
+  if (value.startsWith('anagram://room/call/')) return parseRoomLink(value) ? value : null;
   const href = /^www\./iu.test(value) ? `https://${value}` : value;
 
   try {
@@ -112,7 +114,7 @@ function linkifyTextPart(part: NostrMentionTextPart): MessageTextPart[] {
 
 export function buildMessageTextParts(
   text: string,
-  profiles: NostrMentionProfile[] = []
+  profiles: NostrMentionProfile[] = [],
 ): MessageTextPart[] {
   return buildNostrMentionTextParts(text, profiles).flatMap(linkifyTextPart);
 }

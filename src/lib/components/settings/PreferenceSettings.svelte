@@ -115,7 +115,7 @@
     >
   </div>
 {:else}
-  <div class="settings-card">
+  <div class="settings-card media-card">
     <div>
       <h3>{$translate('mediaDataStorage.blossomServer')}</h3>
       <small>{$translate('mediaDataStorage.blossomServerDescription')}</small>
@@ -126,16 +126,16 @@
         if (normalized && normalized !== saved) void persist(normalized);
       }}
     >
-      <label
-        >{$translate('mediaDataStorage.serverUrl')}<input
+      <label class="settings-field settings-field--tall"
+        ><span>{$translate('mediaDataStorage.serverUrl')}</span><input
           data-testid="settings-blossom-server-input"
           type="url"
           bind:value={server}
           disabled={busy || $startup}
           spellcheck="false"
           autocapitalize="none"
-        /><small>{$translate('mediaDataStorage.serverUrlHint')}</small></label
-      >
+        /></label
+      ><small class="settings-caption">{$translate('mediaDataStorage.serverUrlHint')}</small>
       {#if !normalized}<p class="error">
           {$translate(
             server.trim()

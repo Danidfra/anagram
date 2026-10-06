@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { autosizeTextarea } from '#src/lib/actions/autosizeTextarea.ts';
   import { threadHistoryPull } from '#src/lib/actions/threadHistoryPull.ts';
   import { locale, translate } from '#src/i18n.ts';
   import { goto } from '$app/navigation';
@@ -40,6 +41,7 @@
     serializeMentionDraft,
   } from '#src/utils/nostrMentions.ts';
   import Icon from './Icon.svelte';
+  import StartupHistory from './StartupHistory.svelte';
   import CallOverlay from './CallOverlay.svelte';
   import { ROOM_MAX_MEMBERS } from '#src/types/callRoom.ts';
   import MessageReactions from './MessageReactions.svelte';
@@ -85,11 +87,6 @@
     },
     unread: chats.unreadChatCount,
     loaded: chats.isLoaded,
-    startup: nostr.startupDisplay,
-    restoring: nostr.isRestoringStartupState,
-    hydrating: nostr.startupSteps.some(
-      (step) => step.id === 'message-history-restore' && step.status === 'in_progress',
-    ),
     relayEntries: relays.relayEntries,
     relayVersion: nostr.relayStatusVersion,
     contactVersion: nostr.contactListVersion,
@@ -300,10 +297,6 @@
     $state.selected.publicKey !== nostr.getLoggedInPublicKeyHex() &&
     $state.selected.meta.inbox_state !== 'blocked';
   $: callBusy = Boolean(($callState.phase && $callState.phase !== 'ended') || $callState.room);
-  $: if (composerInput && draft !== undefined) {
-    composerInput.style.height = 'auto';
-    composerInput.style.height = Math.min(140, composerInput.scrollHeight) + 'px';
-  }
 
   let unreadBoundary = '';
   const markingReactions = new Set<string>();
@@ -1107,6 +1100,7 @@
               }}><Icon name="add" /></button
             >{/if}
         </header>{/if}
+      <StartupHistory />
       {#if menu}<div class="dropdown chat-options-menu">
           <button
             data-testid="new-chat-button"
@@ -1202,15 +1196,6 @@
           />
         {/if}
       </div>
-      {#if $state.restoring || $state.hydrating}<div
-          class="sync-status"
-          role="status"
-          data-testid="history-sync-status"
-        >
-          <span class="sync-dot"></span>{$state.hydrating
-            ? 'Loading message history…'
-            : $state.startup.label}
-        </div>{/if}
       <nav class="nav-rail" aria-label="Main navigation">
         {#each ['chats', 'contacts', 'settings'] as item}<button
             class="nav-rail__btn"
@@ -1630,6 +1615,7 @@
             ><textarea
               bind:value={draft}
               bind:this={composerInput}
+              use:autosizeTextarea={draft}
               onpaste={(e) => {
                 const file = e.clipboardData?.files[0];
                 if (file) {

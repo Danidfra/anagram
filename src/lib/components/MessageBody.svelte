@@ -32,7 +32,10 @@
     showMedia = false;
   $: history = readCallHistory(message.meta.call_history);
   $: text = expanded ? message.text : truncateCollapsedMessageText(message.text);
-  $: parts = buildMessageTextParts(text, mentionProfiles);
+  $: parts = buildMessageTextParts(text, mentionProfiles).map((part) => ({
+    ...part,
+    roomLink: part.type === 'url' && Boolean(parseRoomLink(part.href)),
+  }));
   $: mediaAllowed =
     showMedia || message.sender === 'me' || $trust.includes(message.authorPublicKey);
   async function open(url: string) {
@@ -114,6 +117,7 @@
   <span class="message-text"
     >{#each parts as part (part.key)}{#if part.type === 'url'}<a
           data-testid="message-url-link"
+          class:room-link={part.roomLink}
           href={part.href}
           rel="noopener noreferrer"
           target="_blank"
@@ -129,7 +133,10 @@
           onclick={(e) => {
             e.preventDefault();
             void open(part.href);
-          }}>{part.text}</a
+          }}
+          >{#if part.roomLink}{$translate('room.joinGroupCall')}<Icon
+              name="group"
+            />{:else}{part.text}{/if}</a
         >{:else if part.type === 'mention' && part.publicKey}<button
           class="mention"
           data-testid="message-mention-link"
@@ -206,6 +213,25 @@
   a,
   .mention {
     color: var(--q-primary);
+  }
+  .room-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--q-primary);
+    border-radius: 10px;
+    text-decoration: none;
+    white-space: normal;
+    vertical-align: middle;
+    font-weight: 600;
+  }
+  .room-link:hover {
+    background: color-mix(in srgb, var(--q-primary) 12%, transparent);
+  }
+  .room-link:focus-visible {
+    outline: 2px solid var(--q-primary);
+    outline-offset: 2px;
   }
   .mention {
     padding: 0;

@@ -477,7 +477,7 @@ test('healthy history survives AUTH rejection and recovered history survives a d
     await expect(
       page.getByTestId('chat-item').filter({ hasText: 'Older message after dropped page arrived' }),
     ).toBeVisible({ timeout: 45000 });
-    await expect(page.getByText('Loading message history…')).toBeHidden();
+    await expect(page.getByTestId('history-sync-status')).toBeHidden();
     expect(droppedPage).toBe(true);
     expect(accepted).toBeGreaterThan(1);
     expect(pageErrors).toEqual([]);

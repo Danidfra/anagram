@@ -69,3 +69,39 @@ test('forwarding preserves content and clickable links without reply or sender a
     await disposeUsers(alice, bob, charlie);
   }
 });
+
+test('group call invitations show compact join links and open the call lobby', async ({
+  browser,
+}) => {
+  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.callLinkAlice);
+  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.callLinkBob);
+  try {
+    await establishAcceptedDirectChat(alice, bob);
+    const token = Buffer.from(
+      JSON.stringify({
+        id: '12345678-1234-4123-8123-123456789abc',
+        host: alice.session.publicKey,
+        secret: 'a'.repeat(64),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        relays: ['ws://127.0.0.1:7777/'],
+      }),
+    ).toString('base64url');
+    for (const prefix of ['https://anagram.chat/#/call/', 'anagram://room/call/']) {
+      const url = prefix + token;
+      const marker = `Come chat ${prefix.startsWith('https') ? 'web' : 'app'}`;
+      await sendMessage(alice.page, `${marker}: ${url}`);
+      const message = threadMessage(bob.page, marker);
+      const join = message.getByRole('link', { name: 'Join group call' });
+      await expect(join).toBeVisible();
+      await expect(join).toHaveAttribute('href', url);
+      await expect(message).not.toContainText(token);
+      await join.click();
+      await expect(bob.page.getByTestId('room-join-link')).toHaveValue(url);
+      await expect(bob.page.getByTestId('room-join-audio')).toBeEnabled();
+      await expect(bob.page.getByTestId('room-join-video')).toBeEnabled();
+      await bob.page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+    }
+  } finally {
+    await disposeUsers(alice, bob);
+  }
+});

@@ -34,6 +34,7 @@
     ['developer', 'developer.developer', 'terminal'],
   ];
   export let width = readDesktopSidebarWidthPreference();
+  let developerPanel: { refresh: () => Promise<void> } | undefined;
   let resizing = false;
   let mobile = matchMedia('(max-width: 767px)').matches;
   let confirmation: '' | 'logout' | 'refresh' = '',
@@ -169,6 +170,11 @@
         onclick={() => goto('/settings')}><Icon name="back" /></button
       ><Icon name={item[2]} />
       <h2>{$translate(item[1])}</h2>
+      {#if item[0] === 'developer'}<div class="settings-detail-actions">
+          <button class="link" onclick={() => developerPanel?.refresh()}
+            ><Icon name="refresh" />{$translate('common.refresh')}</button
+          >
+        </div>{/if}
     </header>
     <div class="settings-body">
       {#key item[0]}
@@ -179,6 +185,7 @@
         {:else if item[0] === 'notifications'}{#await import('./NotificationSettings.svelte') then component}<component.default
             />{/await}
         {:else if item[0] === 'developer' || item[0] === 'status'}{#await import('./DeveloperSettings.svelte') then component}<component.default
+              bind:this={developerPanel}
             />{/await}
         {:else}{#await import('./PreferenceSettings.svelte') then component}<component.default
               section={item[0]}

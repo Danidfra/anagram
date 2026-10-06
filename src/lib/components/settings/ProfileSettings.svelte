@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { autosizeTextarea } from '#src/lib/actions/autosizeTextarea.ts';
   import { observe } from '#src/lib/state/store.ts';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -112,7 +113,7 @@
 
 <div class="profile-settings" oninput={() => (dirty = true)}>
   <div class="settings-actions end profile-toolbar">
-    <button class="link" data-testid="contact-profile-share-button" onclick={share}
+    <button class="outline" data-testid="contact-profile-share-button" onclick={share}
       >{$translate('common.share')}</button
     ><button
       class="primary"
@@ -145,6 +146,7 @@
         {#each fields as [key, label]}<label class="profile-field" class:filled={!!form[key]}
             ><span>{$translate(label)}</span>{#if key === 'about'}<textarea
                 bind:value={form[key]}
+                use:autosizeTextarea={form[key]}
                 disabled={busy}
                 rows="1"></textarea>{:else}<input
                 bind:value={form[key]}

@@ -767,6 +767,7 @@
   "room.linkCopied": "Call link copied",
   "room.copyManually": "Select and copy the invitation link above.",
   "room.pasteLink": "Paste a call link to join",
+  "room.joinGroupCall": "Join group call",
   "room.joinAudio": "Join with audio",
   "room.joinVideo": "Join with video",
   "room.createAudio": "Start audio call",

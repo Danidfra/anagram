@@ -81,12 +81,14 @@
   });
 </script>
 
-<div class="settings-card">
-  <div>
-    <h3>{$translate('iroh.mode')}</h3>
-    <small>{$translate('iroh.explanation')}</small>
-  </div>
-  <div role="radiogroup" aria-label={$translate('iroh.mode')}>
+<div
+  class="iroh-settings"
+  role="tabpanel"
+  id="settings-relay-panel-iroh"
+  aria-labelledby="settings-relay-tab-iroh"
+  data-testid="settings-iroh-panel"
+>
+  <div class="iroh-modes" role="radiogroup" aria-label={$translate('iroh.mode')}>
     {#each modes as mode}<label class="settings-switch"
         ><input
           type="radio"
@@ -99,62 +101,66 @@
       >{/each}
   </div>
   <form
-    class="settings-actions"
+    class="relay-toolbar"
     onsubmit={(e) => {
       e.preventDefault();
       add();
     }}
   >
-    <label style="flex:1"
-      >{$translate('relays.relayUrl')}<input
-        data-testid="iroh-new-relay"
-        bind:value={input}
-        placeholder="https://relay.example.com"
-        disabled={busy || $restoring}
-      /></label
-    ><button
-      class="icon-button"
-      aria-label={$translate('relays.addRelay')}
-      data-testid="iroh-add-relay"
-      disabled={busy || $restoring || !canAdd}><Icon name="add" /></button
-    >
-  </form>
-  <div>
+    <div class="relay-add-field">
+      <label class="settings-field"
+        ><span>{$translate('relays.relayUrl')}</span><input
+          data-testid="iroh-new-relay"
+          bind:value={input}
+          placeholder="https://relay.example.com"
+          disabled={busy || $restoring}
+        /></label
+      ><button
+        class="relay-add-button"
+        aria-label={$translate('relays.addRelay')}
+        data-testid="iroh-add-relay"
+        disabled={busy || $restoring || !canAdd}><Icon name="add" /></button
+      >
+    </div>
     <button
-      class="outline"
+      type="button"
+      class="link relay-defaults"
       data-testid="iroh-default-relays"
       disabled={busy || $restoring || (settings.mode === 'pool' && !settings.customRelays.length)}
       onclick={() => save({ mode: 'pool', customRelays: [] })}
-      >{$translate('relays.restoreDefaultRelays')}</button
+      ><Icon name="refresh" />{$translate('relays.useDefaultRelays')}</button
     >
-  </div>
+  </form>
+  <p class="settings-caption iroh-hint">{$translate('iroh.explanation')}</p>
   {#if busy}<p role="status">{$translate('iroh.saving')}</p>{/if}{#if error}<p
       role="alert"
       class="error"
     >
       {error}
     </p>{/if}
-  {#each rows as row (row.url)}<div
-      class="settings-relay settings-relay-head"
-      data-testid="iroh-relay-row"
-    >
-      <span class="relay-url"
-        >{row.url}<br /><small
-          >{$translate(
-            row.shared
-              ? 'iroh.sharedPool'
-              : settings.mode === 'pool'
-                ? 'iroh.customInactive'
-                : 'iroh.customRelay',
-          )}</small
-        ></span
-      >{#if !row.shared}<button
-          class="icon-button"
-          aria-label={$translate('relays.deleteRelay')}
-          disabled={busy ||
-            $restoring ||
-            (settings.mode === 'custom' && settings.customRelays.length === 1)}
-          onclick={() => remove(row.url)}><Icon name="close" /></button
-        >{/if}
-    </div>{/each}<small>{$translate('iroh.nextCalls')}</small>
+  <div class="settings-relay-list">
+    <div class="iroh-relays">
+      {#each rows as row (row.url)}<div class="iroh-relay" data-testid="iroh-relay-row">
+          <span class="relay-avatar"><Icon name="satellite_alt" /></span><span class="relay-url"
+            >{row.url}<br /><small
+              >{$translate(
+                row.shared
+                  ? 'iroh.sharedPool'
+                  : settings.mode === 'pool'
+                    ? 'iroh.customInactive'
+                    : 'iroh.customRelay',
+              )}</small
+            ></span
+          >{#if !row.shared}<button
+              class="icon-button relay-delete"
+              aria-label={$translate('relays.deleteRelay')}
+              disabled={busy ||
+                $restoring ||
+                (settings.mode === 'custom' && settings.customRelays.length === 1)}
+              onclick={() => remove(row.url)}><Icon name="delete" /></button
+            >{/if}
+        </div>{/each}
+    </div>
+  </div>
+  <p class="settings-caption iroh-hint">{$translate('iroh.nextCalls')}</p>
 </div>

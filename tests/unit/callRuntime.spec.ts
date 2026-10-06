@@ -316,6 +316,53 @@ describe('call negotiation and lifetime', () => {
     expect(h.microphone.stop).toHaveBeenCalledOnce();
   });
 
+  it('keeps an answered outgoing call alive when the relay later rejects the delivered invitation', async () => {
+    const h = setup();
+    let rejectPublish!: (error: Error) => void;
+    h.deps.sendSignal.mockImplementationOnce(
+      () => new Promise((_, reject) => { rejectPublish = reject; })
+    );
+    const starting = h.runtime.start(peer, 'audio');
+    await vi.waitFor(() => expect(h.deps.sendSignal).toHaveBeenCalled());
+    const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
+    await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
+    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    rejectPublish(new Error('Relay acknowledgement timed out'));
+    await starting;
+    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.microphone.stop).not.toHaveBeenCalled();
+    expect(h.runtime.error.value).toBe('');
+  });
+  it('keeps the accepted incoming call alive when the relay rejects an already delivered answer', async () => {
+    const h = setup();
+    await h.runtime.receiveSignal(peer, invite({ mode: 'audio', mimeType: 'audio/webm;codecs=opus' }));
+    let rejectPublish!: (error: Error) => void;
+    h.deps.sendSignal.mockImplementationOnce(
+      () => new Promise((_, reject) => { rejectPublish = reject; })
+    );
+    const accepting = h.runtime.accept('audio');
+    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    rejectPublish(new Error('Relay acknowledgement timed out'));
+    await accepting;
+    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.microphone.stop).not.toHaveBeenCalled();
+  });
+  it('still fails an undelivered answer without an authenticated Iroh connection', async () => {
+    const h = setup();
+    await h.runtime.receiveSignal(peer, invite({ mode: 'audio', mimeType: 'audio/webm;codecs=opus' }));
+    vi.mocked(h.endpoint.accept).mockImplementationOnce(() => new Promise(() => {}));
+    h.deps.sendSignal.mockRejectedValueOnce(new Error('Relay refused the answer'));
+    await h.runtime.accept('audio');
+    expect(h.runtime.session.value?.endReason).toBe('failed');
+    expect(h.microphone.stop).toHaveBeenCalledOnce();
+  });
+  it('still fails an undelivered invitation when no peer has acknowledged it', async () => {
+    const h = setup();
+    h.deps.sendSignal.mockRejectedValueOnce(new Error('Relay refused the invitation'));
+    await h.runtime.start(peer, 'audio');
+    expect(h.runtime.session.value?.endReason).toBe('failed');
+    expect(h.microphone.stop).toHaveBeenCalledOnce();
+  });
   it('aborts malformed media frames and releases devices', async () => {
     const h = setup();
     vi.mocked(h.connection.recv)

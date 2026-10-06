@@ -467,7 +467,13 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       patch({ phase: 'outgoing' });
       armTimeout(ctx, CALL_RING_TIMEOUT_MS);
       ctx.inviteSent = true;
-      await deps.sendSignal(peer, signal(ctx, 'invite'));
+      try {
+        await deps.sendSignal(peer, signal(ctx, 'invite'));
+      } catch (cause) {
+        // An authenticated ringing/accept response proves delivery even if the
+        // publishing relay loses its acknowledgement. Do not end that call.
+        if (!ctx.peerConfirmed) throw cause;
+      }
       if (alive(ctx) && !ctx.peerConfirmed)
         ctx.supportTimeout = setTimeout(() => finish(ctx, 'unsupported'), CALL_SUPPORT_TIMEOUT_MS);
     } catch (cause) {
@@ -545,7 +551,13 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       if (!(await prepare(ctx, captureMode))) return;
       // Start accepting before publication so a fast caller cannot outrun the listener.
       void connect(ctx, invite);
-      await deps.sendSignal(ctx.peer, signal(ctx, 'accept'));
+      try {
+        await deps.sendSignal(ctx.peer, signal(ctx, 'accept'));
+      } catch (cause) {
+        // The caller could only establish this authenticated connection after
+        // receiving our fresh endpoint address. A late relay error is obsolete.
+        if (!ctx.connection) throw cause;
+      }
     } catch (cause) {
       fail(ctx, cause);
     }

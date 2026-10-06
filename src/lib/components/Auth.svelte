@@ -23,6 +23,9 @@
     extensionAvailable = false,
     generating = false;
   let remoteMode: 'bunker' | 'nostrconnect' = 'bunker';
+  let onboarding: AuthOnboarding | undefined;
+  let onboardingCanGoBack = false;
+  let onboardingBusy = false;
   let onboardingTitle = 'profile.checkingProfile',
     onboardingSubtitle = 'relays.stayHereAppChecks';
   let generation = 0;
@@ -78,6 +81,7 @@
     }
   }
   async function login(kind: 'key' | 'extension' | 'bunker' | 'pair') {
+    if (busy) return;
     const attempt = ++generation;
     busy = true;
     error = '';
@@ -194,18 +198,18 @@
   <div class="auth-shell" class:wide={step === 'onboarding'}>
     <div class="auth-card">
       <header class="auth-header">
-        {#if step !== 'welcome' && step !== 'onboarding'}<button
+        {#if (step !== 'welcome' && step !== 'onboarding') || (onboardingCanGoBack && step === 'onboarding')}<button
             class="icon-button back"
             aria-label="Back"
-            onclick={back}
-            disabled={busy}><Icon name="back" /></button
+            onclick={() => (step === 'onboarding' ? onboarding?.backToRelays() : back())}
+            disabled={busy || onboardingBusy}><Icon name="back" /></button
           >{/if}
         <div>
           <h1>{$translate(title)}</h1>
           <p>{$translate(subtitle)}</p>
         </div>
       </header>
-      <div class="auth-actions">
+      <div class="auth-actions" class:remote-signer={step === 'remote'}>
         {#if step === 'welcome'}
           <button
             class="primary"
@@ -220,7 +224,10 @@
           {#if extensionAvailable}<button
               class="primary"
               onclick={() => login('extension')}
-              disabled={busy}><Icon name="extension" />{$translate('auth.loginExtension')}</button
+              disabled={busy}
+              >{#if busy}<span class="auth-spinner" aria-label="Connecting"></span>{:else}<Icon
+                  name="extension"
+                />{$translate('auth.loginExtension')}{/if}</button
             >{/if}
           <button class="primary" onclick={() => (step = 'remote')} disabled={busy}
             ><Icon name="lock" />{$translate('auth.loginRemoteSigner')}</button
@@ -243,7 +250,9 @@
           {:else}<button class="outline" onclick={download}
               ><Icon name="download" />{$translate('auth.downloadAccountSecret')}</button
             ><button class="primary" disabled={busy} onclick={() => login('key')}
-              ><Icon name="login" />{$translate('auth.loginNow')}</button
+              >{#if busy}<span class="auth-spinner" aria-label="Connecting"></span>{:else}<Icon
+                  name="login"
+                />{$translate('auth.loginNow')}{/if}</button
             >{/if}
         {:else if step === 'key'}
           <div class="key-warning">
@@ -272,7 +281,8 @@
               <span>{$translate('auth.privateKeyNsecHex')}</span></label
             >
             <button class="primary" data-testid="auth-login-button" disabled={busy || !key}
-              >{$translate(busy ? 'Connecting…' : 'auth.login')}</button
+              >{#if busy}<span class="auth-spinner" aria-label="Connecting"
+                ></span>{:else}{$translate('auth.login')}{/if}</button
             >
           </form>
         {:else if step === 'remote'}
@@ -301,6 +311,12 @@
                 >{$translate('auth.bunkerConnectionString')}<textarea
                   bind:value={key}
                   placeholder="bunker://…"
+                  onkeydown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      void login('bunker');
+                    }
+                  }}
                   autocomplete="off"
                   spellcheck="false"
                   disabled={busy}
@@ -309,13 +325,21 @@
                 class="primary"
                 disabled={busy || !key}
                 data-testid="auth-remote-signer-bunker-connect-button"
-                ><Icon name="login" />{$translate('common.connect')}</button
+                >{#if busy}<span class="auth-spinner" aria-label="Connecting"></span>{:else}<Icon
+                    name="login"
+                  />{$translate('common.connect')}{/if}</button
               >
             </form>
           {:else}
             <label
               >{$translate('relays.pairingRelay')}<input
                 bind:value={pairingRelay}
+                onkeydown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void login('pair');
+                  }
+                }}
                 placeholder="wss://relay.example.com"
                 disabled={busy}
                 data-testid="auth-remote-signer-relay-input"
@@ -326,7 +350,9 @@
               onclick={() => login('pair')}
               disabled={busy || !pairingRelay}
               data-testid="auth-remote-signer-create-nostrconnect-button"
-              ><Icon name="add" />{$translate('common.generatePairingLink')}</button
+              >{#if busy}<span class="auth-spinner" aria-label="Connecting"></span>{:else}<Icon
+                  name="add"
+                />{$translate('common.generatePairingLink')}{/if}</button
             >
             {#if pairing}
               {#if qr}<img
@@ -362,6 +388,9 @@
               data-testid="auth-remote-signer-cancel-button">{$translate('common.cancel')}</button
             >{/if}
         {:else}<AuthOnboarding
+            bind:this={onboarding}
+            bind:canGoBack={onboardingCanGoBack}
+            bind:busy={onboardingBusy}
             bind:title={onboardingTitle}
             bind:subtitle={onboardingSubtitle}
             oncomplete={onlogin}
@@ -419,7 +448,7 @@
     line-height: 1.5;
   }
   .back {
-    color: var(--nc-text-secondary);
+    color: #2563eb;
     margin: -2px 0 0;
     width: 33.6px;
     height: 33.6px;
@@ -470,8 +499,21 @@
     margin: 0;
   }
   .pairing-qr {
-    max-width: 100%;
+    display: block;
+    width: min(100%, 280px);
+    padding: 12px;
+    border: 1px solid rgba(208, 220, 235, 0.92);
+    border-radius: 12px;
+    background: white;
     margin: auto;
+  }
+  .remote-signer {
+    gap: 14px;
+  }
+  .remote-signer textarea[readonly] {
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.35;
   }
   footer {
     display: flex;
@@ -489,7 +531,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    color: #ff1fe1;
+    color: #2563eb;
     font-weight: 700;
     text-decoration: none;
   }
@@ -508,7 +550,10 @@
   }
   .remote-tabs {
     display: flex;
-    border-bottom: 1px solid #cbd5e1;
+    border-radius: 14px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.78);
+    color: #334155;
   }
   .remote-tabs button {
     flex: 1;
@@ -576,6 +621,19 @@
     text-align: center;
     text-decoration: none;
     border-radius: 999px;
+  }
+  .auth-spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: auth-spin 0.7s linear infinite;
+  }
+  @keyframes auth-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .creation-progress {
     height: 10px;

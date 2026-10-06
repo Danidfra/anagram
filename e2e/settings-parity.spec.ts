@@ -321,3 +321,52 @@ test('messages received while viewing settings remain unread until the chat is v
     page.getByRole('button', { name: 'chats', exact: true }).locator('.nav-badge'),
   ).toHaveCount(0);
 });
+
+test('settings keep compact controls and relay rows on desktop and mobile', async ({ page }) => {
+  await login(page);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const section of [
+      'profile',
+      'relays',
+      'notifications',
+      'media-data-storage',
+      'theme',
+      'language',
+      'developer',
+    ]) {
+      await page.goto(`/settings/${section}`);
+      const content = page.locator('.settings-body');
+      await expect(content.locator('input, button, select').first()).toBeVisible();
+      expect(await content.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      if (section === 'relays') {
+        const input = page.getByTestId('relay-editor-new-relay-input');
+        expect((await input.boundingBox())!.height).toBe(40);
+        expect(
+          (await page.locator('.relay-entry-header').first().boundingBox())!.height,
+        ).toBeLessThanOrEqual(76);
+        const expand = page.locator('.relay-expand').first();
+        await expand.click();
+        await expect(expand).toHaveAttribute('aria-expanded', 'true');
+        await expect(page.locator('.relay-info').first()).toBeVisible();
+        await expand.click();
+        await expect(page.locator('.relay-info').first()).toBeHidden();
+        const tabs = await page
+          .getByRole('tab')
+          .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+        expect(Math.max(...tabs) - Math.min(...tabs)).toBeLessThanOrEqual(1);
+        await page.getByTestId('settings-relays-iroh-tab').click();
+        expect((await page.getByTestId('iroh-new-relay').boundingBox())!.height).toBe(40);
+        await expect(page.getByTestId('iroh-relay-row').first()).toBeVisible();
+        expect(
+          (await page.getByTestId('iroh-relay-row').first().boundingBox())!.height,
+        ).toBeLessThanOrEqual(76);
+      }
+      if (section === 'notifications')
+        expect((await page.locator('.notification-card').boundingBox())!.width).toBeLessThanOrEqual(
+          520,
+        );
+      await page.screenshot({ path: `/tmp/anagram-settings-${section}-${width}.png` });
+    }
+  }
+});
