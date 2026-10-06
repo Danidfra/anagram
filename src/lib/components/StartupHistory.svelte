@@ -32,10 +32,12 @@
   );
   // The display snapshot can linger briefly after a step completes. Prefer work still running.
   $: current = active.find((step) => step.id === $state.display.stepId) ?? active[0];
-  $: visible = $state.restoring || active.length > 0;
+  $: visible = $state.restoring || steps.some((step) => step.status !== 'pending');
   $: summary = current
     ? `${steps.indexOf(current) + 1}/${steps.length} ${$translate(current.label)}`
-    : $translate('startup.preparingStartupRestore');
+    : $translate(
+        $state.restoring ? 'startup.preparingStartupRestore' : 'startup.startupHistory',
+      );
   function toggle() {
     expanded = !expanded;
     try {
@@ -89,17 +91,20 @@
     data-testid="history-sync-status"
     aria-label={$translate('startup.startupHistory')}
   >
-    <button
-      class="toggle"
-      onclick={toggle}
-      aria-expanded={expanded}
-      aria-controls="startup-history-details"
-      aria-label={$translate(
-        expanded ? 'startup.hideStartupHistory' : 'startup.showStartupHistory',
-      )}
-    >
-      <span class="summary" role="status">{summary}</span><Icon name="more" />
-    </button>
+    <div class="summary-row">
+      <span class="summary" role="status">{summary}</span>
+      <button
+        class="toggle"
+        onclick={toggle}
+        aria-expanded={expanded}
+        aria-controls="startup-history-details"
+        aria-label={$translate(
+          expanded ? 'startup.hideStartupHistory' : 'startup.showStartupHistory',
+        )}
+      >
+        <Icon name="more" />
+      </button>
+    </div>
     {#if expanded}
       <div id="startup-history-details" class="details">
         <strong class="title">{$translate('startup.startupHistory')}</strong>
@@ -149,17 +154,25 @@
   .expanded {
     background: color-mix(in srgb, var(--q-primary) 7%, var(--nc-panel-header-bg));
   }
+  .summary-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px 0 10px;
+    color: var(--nc-text-secondary);
+  }
   .toggle {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    width: 100%;
-    padding: 6px 10px;
-    color: var(--nc-text-secondary);
-    text-align: left;
+    justify-content: center;
+    flex: 0 0 32px;
+    height: 32px;
+    padding: 0;
+    color: inherit;
   }
   .summary {
+    flex: 1;
+    min-width: 0;
     font-size: 10px;
     overflow: hidden;
     white-space: nowrap;

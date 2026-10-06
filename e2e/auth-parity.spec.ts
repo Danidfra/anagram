@@ -114,7 +114,15 @@ test('startup progress updates without blocking the inbox and keeps private erro
       )!;
       step.status = 'success';
     });
-    await expect(page.getByTestId('history-sync-status')).toHaveCount(0);
+    await expect(progress).toHaveText('Startup History');
+    const detailsButton = page.getByRole('button', { name: 'Show startup history', exact: true });
+    await expect(detailsButton).toBeVisible();
+    await detailsButton.click();
+    await expect(page.locator('#startup-history-details')).toBeVisible();
+    await expect(page.locator('#startup-history-details')).toContainText('Restore message history');
+    await expect(page.locator('#startup-history-details')).not.toContainText(
+      'PRIVATE_SIGNER_ERROR_SENTINEL',
+    );
   } finally {
     await user.context.close();
   }
