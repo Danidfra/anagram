@@ -1,4 +1,7 @@
 <script lang="ts">
+  import GroupSeedBackup from './GroupSeedBackup.svelte';
+  import GroupRestore from './GroupRestore.svelte';
+  let groupFlow: 'choose' | 'details' | 'backup' | 'restore' = 'choose';
   import { onMount, tick } from 'svelte';
   import { autosizeTextarea } from '#src/lib/actions/autosizeTextarea.ts';
   import { threadHistoryPull } from '#src/lib/actions/threadHistoryPull.ts';
@@ -770,7 +773,7 @@
     contactName = $state.selected?.name ?? '';
     modal = 'profile';
   }
-  async function createGroup() {
+  async function createGroup(recoveryPhrase: string) {
     busy = true;
     modalError = '';
     try {
@@ -781,6 +784,7 @@
         keys.push(found.normalizedPubkey);
       }
       const result = await nostr.createGroupChat({
+        recoveryPhrase,
         name: contactName,
         about: groupAbout,
         relayUrls: relays.relays,
@@ -790,7 +794,7 @@
         await nostr.publishGroupMetadata(
           result.groupPublicKey,
           { name: contactName, about: groupAbout, group: true },
-          relays.relays,
+          result.relayUrls,
         );
       } catch {
         warnings.push(
@@ -806,7 +810,7 @@
           const invitations = await nostr.publishGroupMemberChanges(
             result.groupPublicKey,
             keys,
-            relays.relays,
+            result.relayUrls,
           );
           if (invitations.failedMemberPubkeys.length)
             warnings.push(
@@ -1117,7 +1121,7 @@
             }}>Message requests ({$state.requests.length})</button
           ><button
             onclick={() => {
-              modal = 'group';
+              modal = 'group'; groupFlow = 'choose';
               contactName = '';
               groupMembers = '';
               groupAbout = '';
@@ -1682,7 +1686,11 @@
                 : modal === 'contact'
                   ? 'New conversation'
                   : modal === 'group'
-                    ? 'Create private group'
+                    ? groupFlow === 'choose'
+                      ? 'Private group'
+                      : groupFlow === 'restore'
+                        ? 'Restore private group'
+                        : 'Create private group'
                     : modal === 'forward'
                       ? 'Forward message'
                       : modal === 'room'
@@ -1763,22 +1771,34 @@
           ><button
             class="link"
             onclick={() => {
-              modal = 'group';
+              modal = 'group'; groupFlow = 'choose';
               contactName = '';
               groupMembers = '';
               groupAbout = '';
             }}>Create a private group</button
           >
-        {:else if modal === 'group'}<label>Group name<input bind:value={contactName} /></label
+        {:else if modal === 'group'}
+          {#if groupFlow === 'choose'}
+            <div class="group-choices">
+              <button class="primary" onclick={() => (groupFlow = 'details')}>Generate new group</button>
+              <button class="outline" onclick={() => (groupFlow = 'restore')}>Restore group</button>
+            </div>
+          {:else if groupFlow === 'restore'}
+            <GroupRestore onback={() => (groupFlow = 'choose')} onrestored={async (key) => { await chats.reload(); modal = ''; await goto(`/chats/${key}`); }} />
+          {:else if groupFlow === 'backup'}
+            <GroupSeedBackup relayUrls={relays.relays} {busy} onverified={createGroup} />
+          {:else}<label>Group name<input bind:value={contactName} /></label
           ><label>Description<textarea bind:value={groupAbout}></textarea></label><label
             >{$translate('Members')}<textarea
               bind:value={groupMembers}
               placeholder="Public keys or NIP-05 addresses, separated by commas"></textarea></label
           >
           <p>Members receive an encrypted invitation.</p>
-          <button class="primary" disabled={busy || !contactName} onclick={createGroup}
-            >Create group</button
+          <button class="outline" disabled={busy} onclick={() => (groupFlow = 'choose')}>Back</button>
+          <button class="primary" disabled={busy || !contactName} onclick={() => (groupFlow = 'backup')}
+            >Continue</button
           >
+          {/if}
         {:else if modal === 'forward'}{#each $state.chats as chat}<button
               class="settings-item"
               onclick={() =>
@@ -1889,3 +1909,12 @@
       }}
     />{/key}{/if}
 <CallOverlay />
+
+<style>
+  .group-choices {
+    display: grid;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .group-choices button { min-height: 48px; }
+</style>

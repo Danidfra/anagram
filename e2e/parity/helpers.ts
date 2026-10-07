@@ -309,7 +309,10 @@ export async function waitForDeletedMessageState(page: Page, text: string, _opti
 export async function createGroup(page: Page, options: { name: string; about: string }) {
   await page.getByRole('button', { name: 'Chat options' }).click();
   await page.getByRole('button', { name: 'New private group' }).click();
+  await page.getByRole('button', { name: 'Generate new group', exact: true }).click();
   await page.getByLabel('Group name', { exact: true }).fill(options.name);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await confirmGroupBackup(page);
   await page.getByRole('button', { name: 'Create group', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(page).toHaveURL(/\/chats\/[a-f0-9]{64}$/);
@@ -650,4 +653,17 @@ export async function forwardMessage(page: Page, text: string, name: string, _op
     .getByRole('button', { name: new RegExp(name) })
     .click();
   await expect(page.getByRole('dialog')).toBeHidden();
+}
+
+export async function confirmGroupBackup(page: Page) {
+  const words = await page.getByRole('list', { name: 'Recovery words' }).locator('strong').allTextContents();
+  await page.getByRole('checkbox', { name: 'I have saved my recovery words somewhere safe' }).check();
+  await page.getByRole('button', { name: 'Verify backup', exact: true }).click();
+  const inputs = page.getByRole('textbox', { name: /^Word \d+$/ });
+  for (let i = 0; i < 3; i++) {
+    const input = inputs.nth(i);
+    const label = await input.evaluate((el) => (el as HTMLInputElement).labels?.[0]?.textContent || '');
+    const number = Number(label.match(/Word (\d+)/)?.[1]);
+    await input.fill(words[number - 1]);
+  }
 }

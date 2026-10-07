@@ -1,3 +1,4 @@
+import { confirmGroupBackup } from './parity/helpers';
 import { finishOnboarding } from './auth-helpers';
 import WebSocket from 'ws';
 import { test, expect, type Page } from '@playwright/test';
@@ -99,8 +100,11 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   ).toBeVisible();
   await a.getByRole('button', { name: 'Chat options' }).click();
   await a.getByRole('button', { name: 'New private group' }).click();
+  await a.getByRole('button', { name: 'Generate new group', exact: true }).click();
   await a.getByLabel('Group name').fill('Private test group');
   await a.getByLabel('Members', { exact: true }).fill(nip19.npubEncode(bob.pubkey));
+  await a.getByRole('button', { name: 'Continue', exact: true }).click();
+  await confirmGroupBackup(a);
   await a.getByRole('button', { name: 'Create group', exact: true }).click();
   await expect(a.getByRole('dialog')).toBeHidden();
   await a.getByTestId('message-composer-input').fill('Hello encrypted group');

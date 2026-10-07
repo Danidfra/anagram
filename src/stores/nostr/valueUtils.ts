@@ -102,9 +102,9 @@ export function resolveGroupChatEpochEntriesValue(
     return [];
   }
 
-  const entriesByEpoch = new Map<number, ChatGroupEpochKey>(
+  const entriesByEpoch = new Map<string, ChatGroupEpochKey>(
     normalizeChatGroupEpochKeysValue(chat.meta?.[GROUP_EPOCH_KEYS_CHAT_META_KEY]).map((entry) => [
-      entry.epoch_number,
+      `${entry.epoch_number}:${entry.epoch_public_key}`,
       entry,
     ]),
   );
@@ -129,7 +129,7 @@ export function resolveGroupChatEpochEntriesValue(
       0,
       ...Array.from(entriesByEpoch.values(), (entry) => entry.epoch_number),
     );
-    entriesByEpoch.set(fallbackEpochNumber, {
+    entriesByEpoch.set(`${fallbackEpochNumber}:${currentEpochPublicKey}`, {
       epoch_number: fallbackEpochNumber,
       epoch_public_key: currentEpochPublicKey,
       epoch_private_key_encrypted: currentEpochPrivateKeyEncrypted,
@@ -145,7 +145,8 @@ export function resolveCurrentGroupChatEpochEntryValue(
   chat: Pick<ChatRow, 'meta' | 'type'>,
 ): ChatGroupEpochKey | null {
   const epochEntries = resolveGroupChatEpochEntriesValue(chat);
-  if (epochEntries.length === 0) {
+  if (epochEntries.length === 0 || Number(chat.meta?.group_conflicting_epoch ?? -1) >= epochEntries[0].epoch_number ||
+      epochEntries.filter((e) => e.epoch_number === epochEntries[0].epoch_number).length > 1) {
     return null;
   }
 

@@ -11,6 +11,7 @@ const ndkMocks = vi.hoisted(() => ({
 
 const serviceMocks = vi.hoisted(() => ({
   chatDataService: {
+    updateChat: vi.fn(async () => {}),
     applyMessageEdit: vi.fn(),
     createChat: vi.fn(),
     createMessage: vi.fn(),

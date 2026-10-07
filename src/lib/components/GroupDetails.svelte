@@ -1,4 +1,5 @@
 <script lang="ts">
+  import GroupSeedBackup from './GroupSeedBackup.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { contactsService } from '#src/services/contactsService.ts';
@@ -27,9 +28,15 @@
     'epoch_number' | 'epoch_public_key' | 'invitation_created_at'
   >[] = [];
   let deliveries: (GroupMemberTicketDelivery & { statuses: MessageRelayStatus[] })[] = [];
-  let tab: 'Profile' | 'Members' | 'Relays' | 'Epochs' = 'Profile';
+  let tab: 'Profile' | 'Members' | 'Relays' | 'Epochs' | 'Recovery' = 'Profile';
+  let backup: { phrase: string; relays: string[] } | null = null;
+  let replacement: 'none' | 'members' | 'backup' = 'none';
+  let replacementMembers = '';
+  let replacementConfirmed = false;
   let profile: PublishUserMetadataInput = {};
   let members = '';
+  let reviewedStateId: string | undefined;
+  let knownOwners: string[] = [];
   let relayEntries: ContactRelay[] = [];
   let relayUrl = '';
   let busy = false;
@@ -51,7 +58,7 @@
       : []),
     ...(contact?.meta.group_members ?? []),
   ];
-  $: if (mounted && $version >= 0)
+  $: if (mounted && publicKey && $version >= 0)
     void load(false).catch(() => {
       error = 'Unable to load group details. Please reopen the profile.';
     });
@@ -62,6 +69,13 @@
       contactsService.getContactByPublicKey(publicKey),
       chatDataService.getChatByPublicKey(publicKey),
     ]);
+    const first = !contact || contact.public_key !== publicKey;
+    const recovery =
+      (reset || first) &&
+      next?.meta.group_private_key_encrypted &&
+      next.meta.owner_public_key === nostr.getLoggedInPublicKeyHex()
+        ? await nostr.groupRecovery.secretFor(publicKey)
+        : null;
     const meta = (chat?.meta ?? {}) as ChatMetadata;
     const tickets = await Promise.all(
       (meta.group_member_ticket_deliveries ?? []).map(async (delivery) => ({
@@ -71,7 +85,6 @@
       })),
     );
     if (request !== revision || !mounted) return;
-    const first = !contact;
     contact = next;
     // Only public epoch information belongs in the rendered view.
     epochs = (meta.group_epoch_keys ?? [])
@@ -107,6 +120,14 @@
         .map((member) => nostr.encodeNpub(member.public_key))
         .join('\n');
       relayEntries = (next?.relays ?? []).map((entry) => ({ ...entry }));
+      reviewedStateId = recovery?.recovery_state_id;
+      knownOwners = recovery?.recovery_state?.owners ?? [];
+      if (recovery) {
+        members = (recovery.recovery_state?.members ?? [])
+          .filter((key) => key !== nostr.getLoggedInPublicKeyHex())
+          .map((key) => nostr.encodeNpub(key))
+          .join('\n');
+      }
     }
   }
   onMount(() => {
@@ -163,14 +184,40 @@
         throw new Error('Enter a valid public key or NIP-05 address for each member.');
       keys.push(found.normalizedPubkey);
     }
+    if (!reviewedStateId) throw new Error('Refresh recovery before editing group membership.');
     const result = rotate
-      ? await nostr.rotateGroupEpochAndSendTickets(publicKey, keys)
-      : await nostr.publishGroupMemberChanges(publicKey, keys);
+      ? await nostr.rotateGroupEpochAndSendTickets(publicKey, keys, [], reviewedStateId)
+      : await nostr.publishGroupMemberChanges(publicKey, keys, [], reviewedStateId);
     await load(true);
     if (result.failedMemberPubkeys.length)
       throw new Error(
         `Membership saved, but ${result.failedMemberPubkeys.length} invitations need a retry. Use Resend invitation below.`,
       );
+  }
+  async function replaceMaster(phrase: string) {
+    await run(async () => {
+      const keys: string[] = [];
+      for (const value of replacementMembers.split(/[\s,]+/).filter(Boolean)) {
+        const found = await nostr.resolveIdentifier(value);
+        if (!found.normalizedPubkey)
+          throw new Error('Enter valid public keys for the members to keep.');
+        keys.push(found.normalizedPubkey);
+      }
+      const result = await nostr.createGroupChat({
+        recoveryPhrase: phrase,
+        name: profile.name || contact?.name || 'Private group',
+        about: profile.about || '',
+        relayUrls: contact?.relays.map((r) => r.url) ?? [],
+      });
+      await nostr.publishGroupMetadata(result.groupPublicKey, { ...profile, group: true });
+      const delivery = await nostr.publishGroupMemberChanges(result.groupPublicKey, keys);
+      replacement = 'none';
+      await goto(`/contacts/${result.groupPublicKey}`);
+      if (delivery.failedMemberPubkeys.length)
+        throw new Error(
+          'The replacement group is created. Retry failed invitations in its Members tab.',
+        );
+    });
   }
   function addRelay() {
     try {
@@ -186,6 +233,8 @@
     }
   }
   async function saveRelays() {
+    if (!reviewedStateId) throw new Error('Refresh recovery before editing group relays.');
+    await nostr.groupRecovery.current(publicKey, reviewedStateId);
     if (!relayEntries.some((entry) => entry.read) || !relayEntries.some((entry) => entry.write))
       throw new Error('Keep at least one receiving and one publishing relay.');
     checkDelivery(
@@ -208,12 +257,16 @@
 
 <div class="group-details" data-testid="group-details">
   <div class="tabs" role="tablist" aria-label="Group details">
-    {#each ['Profile', 'Members', 'Relays', 'Epochs'] as name}
+    {#each ['Profile', 'Members', 'Relays', 'Epochs', ...(owner ? ['Recovery'] : [])] as name}
       <button
         role="tab"
         aria-selected={tab === name}
         disabled={busy}
-        onclick={() => (tab = name as typeof tab)}>{name}</button
+        onclick={() => {
+          tab = name as typeof tab;
+          backup = null;
+          replacement = 'none';
+        }}>{name}</button
       >
     {/each}
   </div>
@@ -329,6 +382,105 @@
       >
       <button class="primary" disabled={busy} onclick={() => run(saveRelays)}
         >Save group relays</button
+      >
+    {/if}
+  {:else if tab === 'Recovery' && owner}
+    {#if backup}
+      <GroupSeedBackup
+        phrase={backup.phrase}
+        relayUrls={backup.relays}
+        {busy}
+        confirmLabel="Done"
+        onverified={() => {
+          backup = null;
+        }}
+      />
+    {:else if replacement === 'backup'}
+      <GroupSeedBackup
+        relayUrls={contact.relays.map((r) => r.url)}
+        {busy}
+        confirmLabel="Create replacement group"
+        onverified={replaceMaster}
+      />
+    {:else if replacement === 'members'}
+      <h3>Replace the group master</h3>
+      <p>
+        This creates a new group identity and recovery phrase. The old group stays available for
+        history. Previous owners cannot derive the new keys unless you share the new backup with
+        them.
+      </p>
+      <label>Members to keep<textarea rows="5" bind:value={replacementMembers}></textarea></label>
+      <p>
+        Remove the accounts that should lose access. Remaining members will receive invitations to
+        the replacement group. Share the new backup privately with only the owners you want to keep.
+      </p>
+      <label
+        ><input type="checkbox" bind:checked={replacementConfirmed} />I have reviewed who should
+        keep access</label
+      >
+      <button class="outline" onclick={() => (replacement = 'none')}>Cancel</button>
+      <button
+        class="primary"
+        disabled={!replacementConfirmed}
+        onclick={() => (replacement = 'backup')}>Back up replacement group</button
+      >
+    {:else}
+      <h3>Group ownership and recovery</h3>
+      <p>
+        Your recovery words restore ownership and all recorded epoch keys. Share them privately only
+        with someone who should have permanent co-owner access. Anyone importing them can manage the
+        group.
+      </p>
+      {#if knownOwners.length}
+        <p>Known owners</p>
+        <ul>
+          {#each knownOwners as key}<li>
+              <ProfileName publicKey={key} fallback={key.slice(0, 16)} />
+            </li>{/each}
+        </ul>
+      {/if}
+      <button
+        class="outline"
+        disabled={busy}
+        onclick={() =>
+          run(async () => {
+            backup = await nostr.groupRecovery.backup(publicKey);
+          })}>Show ownership backup</button
+      >
+      <button
+        class="outline"
+        disabled={busy}
+        onclick={() => run(() => nostr.groupRecovery.refresh(publicKey))}>Refresh recovery</button
+      >
+      <details>
+        <summary>Resolve conflicting owner updates</summary>
+        <p>
+          Reconciliation creates a fresh epoch and keeps only members present in every conflicting
+          update. Review members afterward and explicitly re-add anyone missing.
+        </p>
+        <button
+          class="outline"
+          disabled={busy}
+          onclick={() =>
+            run(async () => {
+              const state = await nostr.groupRecovery.refresh(publicKey, true);
+              const result = await nostr.publishGroupMemberChanges(
+                publicKey,
+                state.recovery_state!.members,
+              );
+              if (result.failedMemberPubkeys.length)
+                throw new Error('Reconciled. Some invitations need a retry in Members.');
+            })}>Reconcile owner updates</button
+        >
+      </details>
+      <button
+        class="outline"
+        disabled={busy}
+        onclick={() => {
+          replacementMembers = members;
+          replacementConfirmed = false;
+          replacement = 'members';
+        }}>Replace group master</button
       >
     {/if}
   {:else if tab === 'Epochs'}

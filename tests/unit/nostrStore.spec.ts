@@ -176,6 +176,7 @@ describe('nostrStore logic', () => {
         },
       ]),
     ).toEqual([
+      { epoch_number: 1, epoch_public_key: EPOCH_KEY_A, epoch_private_key_encrypted: 'enc-1' },
       {
         epoch_number: 1,
         epoch_public_key: EPOCH_KEY_C,
@@ -269,7 +270,7 @@ describe('nostrStore logic', () => {
       },
     } as never);
 
-    expect(epochEntries[0]).toMatchObject({
+    expect(epochEntries.find((entry) => entry.epoch_public_key === EPOCH_KEY_C)).toMatchObject({
       epoch_number: 1,
       epoch_public_key: EPOCH_KEY_C,
       epoch_private_key_encrypted: 'enc-current',

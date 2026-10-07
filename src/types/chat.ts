@@ -19,6 +19,7 @@ export interface GroupMemberTicketDelivery {
 }
 
 export interface ChatMetadata {
+  group_conflicting_epoch?: number;
   avatar?: string;
   picture?: string;
   given_name?: string;

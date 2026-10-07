@@ -537,6 +537,9 @@ function buildInitialMessageWindowFromUnreadAnchor(
 function resolveChatRecipientPublicKeyFromRow(
   chat: Pick<ChatRow, 'public_key' | 'type' | 'meta'>,
 ): string {
+  if (chat.type === 'group' && Number(chat.meta.group_conflicting_epoch ?? -1) >= 0) {
+    throw new Error('Conflicting group keys. An owner must reconcile the group before new messages can be sent.');
+  }
   return chat.type === 'group'
     ? typeof chat.meta.current_epoch_public_key === 'string'
       ? chat.meta.current_epoch_public_key.trim().toLowerCase()
@@ -850,6 +853,36 @@ export const useMessageStore = defineStore('messageStore', () => {
         (eventId): eventId is string => typeof eventId === 'string' && eventId.trim().length > 0,
       );
     const eventsById = await nostrEventDataService.getEventsByIds(eventIds);
+    // A reload can interrupt dependency repair after the reply was persisted.
+    // Resume only unresolved replies in this bounded visible window, without
+    // delaying rendering or scanning the account's message history.
+    const account = getLoggedInPublicKey();
+    const unresolved = rows.flatMap((row) => {
+      const reply = row.meta.reply;
+      if (!reply || typeof reply !== 'object' || Array.isArray(reply)) return [];
+      const preview = reply as Partial<MessageReplyPreview>;
+      const eventId = normalizeEventId(preview.eventId);
+      return eventId && !preview.authorPublicKey
+        ? [{ eventId, createdAt: Math.floor(Date.parse(row.created_at) / 1000) }]
+        : [];
+    });
+    if (account && unresolved.length) {
+      void getNostrStore()
+        .then(async (nostr) => {
+          if (getLoggedInPublicKey() !== account) return;
+          await Promise.allSettled(
+            unresolved.map((row) =>
+              nostr.repairMissingMessageDependency(chatId, row.eventId, {
+                reason: 'reply-target-missing',
+                referenceCreatedAt: row.createdAt,
+              }),
+            ),
+          );
+        })
+        .catch(() => {
+          /* Relay recovery retries through the existing dependency queue. */
+        });
+    }
 
     return rows.map((row) =>
       mapMessageRowToMessage(
@@ -1004,6 +1037,15 @@ export const useMessageStore = defineStore('messageStore', () => {
     return resolveSendRelayUrlsValue({ chatPublicKey, relayUrls, recipientRelayUrls });
   }
 
+  async function verifyOwnerGroupState(chat: ChatRow): Promise<void> {
+    if (chat.type !== 'group') return;
+    const contact = await contactsService.getContactByPublicKey(chat.public_key);
+    if (contact?.meta?.group_private_key_encrypted && contact.meta.owner_public_key === getLoggedInPublicKey()) {
+      const nostr = await getNostrStore();
+      await nostr.groupRecovery.assertCanSend(chat.public_key, String(chat.meta.current_epoch_public_key ?? ''));
+    }
+  }
+
   async function resolveChatDeliveryTarget(
     chatPublicKey: string,
     relayUrls: string[] | undefined,
@@ -1018,6 +1060,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       return null;
     }
 
+    await verifyOwnerGroupState(chat);
     return resolveChatDeliveryTargetValue(chat, {
       relayUrls,
       recipientRelayUrls: relayUrls ? relayUrls : await resolveRecipientRelayUrls(chat.public_key),
@@ -1227,6 +1270,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       throw new Error('Chat not found for outbound message.');
     }
 
+    await verifyOwnerGroupState(chat);
     const recipientPublicKey = resolveChatRecipientPublicKeyFromRow(chat);
     if (!recipientPublicKey) {
       throw new Error('Group chat is missing the current epoch public key.');

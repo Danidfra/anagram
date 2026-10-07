@@ -1,3 +1,5 @@
+import { chatDataService } from '#src/services/chatDataService.ts';
+import { createGroupRecoveryRuntime } from './nostr/groupRecoveryRuntime.ts';
 import {
   searchRelayProfiles,
   profileSearchAllowed,
@@ -572,17 +574,6 @@ export const useNostrStore = defineStore('nostrStore', () => {
     });
   }
 
-  function createInitialGroupEpochSecretState(): Pick<
-    GroupIdentitySecretContent,
-    'epoch_number' | 'epoch_privkey'
-  > {
-    const epochSigner = NostrPrivateKeySigner.generate();
-    return {
-      epoch_number: 0,
-      epoch_privkey: epochSigner.privateKey,
-    };
-  }
-
   function readFirstTagValue(tags: string[][], tagName: string): string | null {
     for (const tag of tags) {
       if (!Array.isArray(tag) || tag[0] !== tagName) {
@@ -1122,7 +1113,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     extractRelayUrlsFromEvent,
     publishEventWithRelayStatuses,
     publishGroupMetadata,
-    publishGroupRelayList,
+    publishGroupRelayList: publishGroupRelayListImpl,
     publishReplaceableEventWithRelayStatuses,
     publishUserMetadata,
     sendGiftWrappedRumor,
@@ -1243,8 +1234,24 @@ export const useNostrStore = defineStore('nostrStore', () => {
       restoreGroupEpochHistoryRuntime(groupPublicKey, epochPublicKey, options),
   });
 
+  const groupRecovery = createGroupRecoveryRuntime({
+    ndk, account: getLoggedInPublicKeyHex,
+    connect: (urls) => ensureRelayConnections(urls, { force: true }),
+    encrypt: encryptGroupIdentitySecretContent, decrypt: decryptGroupIdentitySecretContent,
+    saveContact: ensureGroupContactAndChat, persistEpoch: persistIncomingGroupEpochTicket,
+    publish: publishEventWithRelayStatuses,
+    publishAccountBackup: (key, ciphertext, relays) => publishGroupIdentitySecretRuntime(key, ciphertext, relays),
+    changed: () => { bumpContactListVersion(); void chatStore.reload(); }, defaultRelays: getAppRelayUrls,
+  });
+
+  async function publishGroupRelayList(...args: Parameters<typeof publishGroupRelayListImpl>) {
+    await groupRecovery.moveRelays(args[0], args[1].map((entry) => entry.url));
+    return publishGroupRelayListImpl(...args);
+  }
+
   const { publishGroupMemberChanges, rotateGroupEpochAndSendTickets, sendGroupEpochTicket } =
     createGroupEpochPublishRuntime({
+      recovery: groupRecovery,
       appendRelayStatusesToGroupMemberTicketEvent,
       buildFailedOutboundRelayStatuses,
       buildPendingOutboundRelayStatuses,
@@ -1752,6 +1759,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     restorePrivatePreferences,
     scheduleContactCursorPublish,
   } = createPrivateStateRuntime({
+    createRecoverableGroup: groupRecovery.create,
     beginStartupStep,
     buildFreshPrivatePreferences,
     buildRelaySaveStatus,
@@ -1761,7 +1769,6 @@ export const useNostrStore = defineStore('nostrStore', () => {
     compareReplaceableEventState,
     completeStartupStep,
     contactRelayListsEqual,
-    createInitialGroupEpochSecretState,
     createStartupBatchTracker,
     decryptContactCursorContent,
     decryptGroupIdentitySecretContent,
@@ -2278,6 +2285,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     clearPrivateKey: clearPrivateKeyImpl,
     createRemoteSignerNostrConnectLogin: createRemoteSignerNostrConnectLoginImpl,
     createGroupChat,
+    groupRecovery,
     clearDeveloperTraceEntries,
     contactListVersion,
     developerDiagnosticsEnabled,
@@ -2374,11 +2382,25 @@ export const useNostrStore = defineStore('nostrStore', () => {
     reconnectDeveloperRelay,
     rerunStartupStep: (stepId: StartupStepId, seedRelayUrls?: string[]) =>
       rerunStartupStep(stepId, seedRelayUrls),
-    repairMissingMessageDependency: (
+    repairMissingMessageDependency: async (
       chatPublicKey: string,
       targetEventId: string,
       options: RepairMissingMessageDependencyOptions,
-    ) => repairMissingMessageDependencyRuntime(chatPublicKey, targetEventId, options),
+    ) => {
+      const account = getLoggedInPublicKeyHex();
+      const found = await repairMissingMessageDependencyRuntime(
+        chatPublicKey,
+        targetEventId,
+        options,
+      );
+      // A crash can also land between target persistence and preview repair.
+      if (found && account && account === getLoggedInPublicKeyHex()) {
+        const target = await chatDataService.getMessageByEventIdOrEditReference(targetEventId);
+        if (target?.chat_public_key === chatPublicKey && account === getLoggedInPublicKeyHex())
+          await refreshReplyPreviewsForTargetMessage(target);
+      }
+      return found;
+    },
     restartPrivateMessagesDiagnosticsSubscription,
     retryDirectMessageRelay,
     retryGroupEpochTicketRelay,

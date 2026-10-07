@@ -95,4 +95,4 @@ This list is based on the current app code, especially `src/stores/nostrStore.ts
 ## NIP-171
 
 - This appears to be a repo-local draft/private-group scheme layered on top of NIP-17.
-- The app implements `kind:1014` epoch tickets, verifies them on receipt, rotates epoch keys, stores epoch history, and routes group DMs through the current epoch public key.
+- The app implements `kind:1014` epoch tickets, verifies them on receipt, and routes group DMs through the current epoch public key. Group identity and epoch keys derive from a 12-word owner recovery master. Group-signed, self-encrypted NIP-78 recovery revisions preserve epoch descriptors and detect concurrent owner changes; replacing a master creates a new group identity. See [the current draft](nip171b.md).

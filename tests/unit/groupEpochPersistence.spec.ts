@@ -79,3 +79,35 @@ it('keeps epoch tickets when owner/profile restoration creates the same group co
   expect(restored.name).toBe('Owner backup');
   expect(restored.meta.inbox_state).toBe('accepted');
 });
+
+it('retains fork keys for history, blocks the disputed epoch, and clears the conflict only with a higher epoch', async () => {
+  vi.stubGlobal('window', { indexedDB: new IDBFactory() });
+  const group = '1'.repeat(64);
+  const key = (epoch_number: number, epoch_public_key: string) => ({
+    epoch_number,
+    epoch_public_key,
+    epoch_private_key_encrypted: `encrypted-${epoch_public_key}`,
+  });
+  const a = key(1, 'a'.repeat(64)),
+    b = key(1, 'b'.repeat(64)),
+    merged = key(2, 'c'.repeat(64));
+  await chatDataService.createChat({
+    public_key: group,
+    type: 'group',
+    name: 'Fork',
+    meta: { group_epoch_keys: [a] },
+  });
+  await chatDataService.updateChatMeta(group, { group_epoch_keys: [b] });
+  let chat = (await chatDataService.getChatByPublicKey(group))!;
+  expect(chat.meta.group_epoch_keys).toEqual([a, b]);
+  expect(chat.meta.group_conflicting_epoch).toBe(1);
+  await chatDataService.updateChatMeta(group, { group_epoch_keys: [merged] });
+  await chatDataService.updateChatMeta(group, {
+    group_conflicting_epoch: 1,
+    group_epoch_keys: [a],
+  });
+  chat = (await chatDataService.getChatByPublicKey(group))!;
+  expect(chat.meta.group_epoch_keys).toEqual([merged, a, b]);
+  expect(chat.meta.group_conflicting_epoch).toBe(-1);
+  expect(chat.meta.current_epoch_public_key).toBe(merged.epoch_public_key);
+});

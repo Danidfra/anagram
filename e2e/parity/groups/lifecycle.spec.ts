@@ -50,21 +50,18 @@ test('group owner can create a group, invite a member, and exchange messages bot
     });
 
     await pauseRelayService('relay-two');
-    await addGroupMemberAndPublish(alice.page, bob.session.publicKey, true);
-    const invitedMemberRow = alice.page.locator(
-      `.member[data-public-key="${bob.session.publicKey}"]`,
-    );
+    await alice.page.getByRole('tab', { name: 'Members', exact: true }).click();
+    await alice.page.getByLabel('Member public keys').fill(bob.session.publicKey);
+    await alice.page.getByRole('button', { name: 'Update members', exact: true }).click();
+    await expect(alice.page.getByRole('alert')).toContainText('Could not verify group state');
+    await expect(alice.page.locator(`.member[data-public-key="${bob.session.publicKey}"]`)).toHaveCount(0);
+    await unpauseRelayService('relay-two');
+    await alice.page.getByRole('button', { name: 'Update members', exact: true }).click();
+    await expect(alice.page.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
+    const invitedMemberRow = alice.page.locator(`.member[data-public-key="${bob.session.publicKey}"]`);
     await expect(invitedMemberRow).toContainText('Epoch 0');
     await expect(invitedMemberRow).toContainText(E2E_RELAY_URL);
     await expect(invitedMemberRow).toContainText(E2E_RELAY_URL_TWO);
-    await expect(
-      invitedMemberRow.getByRole('button', { name: 'Retry relay', exact: true }),
-    ).toBeVisible();
-    await unpauseRelayService('relay-two');
-    await retryGroupMemberTicketFailures(alice.page);
-    await expect(
-      invitedMemberRow.getByRole('button', { name: 'Retry relay', exact: true }),
-    ).toHaveCount(0);
     await expect(alice.page.locator('.member')).toHaveCount(2);
     await invitedMemberRow.locator('.member-profile').click();
     await expect(alice.page).toHaveURL(new RegExp(`/contacts/${bob.session.publicKey}$`));
@@ -242,6 +239,45 @@ test('group invite survives hard reload before acceptance and still opens a work
     await expect(groupChatItem.getByTestId('chat-item-preview-author')).toContainText(/:$/);
     await expectNoUnexpectedBrowserErrors([alice, bob]);
   } finally {
+    await disposeUsers(alice, bob);
+  }
+});
+
+
+test('new groups use verified recovery relays when another account relay is unavailable', async ({ browser }) => {
+  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.groupAlice, {
+    relayUrls: E2E_DUAL_RELAY_URLS,
+  });
+  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.groupBob, {
+    relayUrls: [E2E_RELAY_URL],
+  });
+  try {
+    await pauseRelayService('relay-two');
+    const group = await createGroup(alice.page, {
+      name: `Available relay group ${Date.now()}`,
+      about: 'Creation with an unavailable candidate relay',
+    });
+    const selected = await alice.page.evaluate(async (group) => {
+      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      return (await useNostrStore().groupRecovery.current(group)).recovery_state!.relays;
+    }, group);
+    expect(selected).toEqual([new URL(E2E_RELAY_URL).href]);
+    await addGroupMemberAndPublish(alice.page, bob.session.publicKey);
+    await openRequests(bob.page, { publicKey: group });
+    await acceptFirstRequest(bob.page, { publicKey: group });
+    await navigateToChat(alice.page, group);
+    const greeting = `available-relay-owner-${Date.now()}`;
+    await sendMessage(alice.page, greeting, { chatId: group });
+    await navigateToChat(bob.page, group);
+    await waitForThreadMessage(bob.page, greeting, { chatId: group });
+    const reply = `available-relay-member-${Date.now()}`;
+    await sendMessage(bob.page, reply, { chatId: group });
+    await waitForThreadMessage(alice.page, reply, { chatId: group });
+    await expectNoUnexpectedBrowserErrors([alice, bob], {
+      allowPatterns: [/127\.0\.0\.1:7001/i, /relay-two/i, /websocket/i],
+    });
+  } finally {
+    await unpauseRelayService('relay-two').catch(() => undefined);
     await disposeUsers(alice, bob);
   }
 });

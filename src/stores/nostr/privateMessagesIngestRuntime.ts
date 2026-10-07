@@ -825,6 +825,9 @@ export function createPrivateMessagesIngestRuntime({
         epochPublicKey ?? '',
       );
       if (conflictingEpochNumber) {
+        if (existingGroupChat) await chatDataService.updateChat(senderPubkeyHex, { meta: {
+          ...existingGroupChat.meta, group_conflicting_epoch: Math.max(Number(existingGroupChat.meta.group_conflicting_epoch ?? -1), epochNumber),
+        } });
         logConflictingIncomingEpochNumber(
           senderPubkeyHex,
           epochNumber,

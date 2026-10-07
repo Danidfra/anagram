@@ -6,7 +6,7 @@ export function normalizeChatGroupEpochKeysValue(value: unknown): ChatGroupEpoch
     return [];
   }
 
-  const entriesByEpoch = new Map<number, ChatGroupEpochKey>();
+  const entriesByEpoch = new Map<string, ChatGroupEpochKey>();
   for (const entry of value) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       continue;
@@ -33,7 +33,7 @@ export function normalizeChatGroupEpochKeysValue(value: unknown): ChatGroupEpoch
       continue;
     }
 
-    entriesByEpoch.set(Math.floor(epochNumber), {
+    entriesByEpoch.set(`${epochNumber}:${epochPublicKey}`, {
       epoch_number: Math.floor(epochNumber),
       epoch_public_key: epochPublicKey,
       epoch_private_key_encrypted: epochPrivateKeyEncrypted,
@@ -59,19 +59,19 @@ export function mergeGroupEpochMetadata(
 ): Record<string, unknown> {
   const epochs = new Map(
     normalizeChatGroupEpochKeysValue(stored.group_epoch_keys).map((entry) => [
-      entry.epoch_number,
+      `${entry.epoch_number}:${entry.epoch_public_key}`,
       entry,
     ]),
   );
   for (const entry of normalizeChatGroupEpochKeysValue(next.group_epoch_keys)) {
-    const previous = epochs.get(entry.epoch_number);
-    if (!previous) epochs.set(entry.epoch_number, entry);
+    const previous = epochs.get(`${entry.epoch_number}:${entry.epoch_public_key}`);
+    if (!previous) epochs.set(`${entry.epoch_number}:${entry.epoch_public_key}`, entry);
     else if (
       previous.epoch_public_key === entry.epoch_public_key &&
       Date.parse(entry.invitation_created_at ?? '') >
         (Date.parse(previous.invitation_created_at ?? '') || 0)
     ) {
-      epochs.set(entry.epoch_number, {
+      epochs.set(`${entry.epoch_number}:${entry.epoch_public_key}`, {
         ...previous,
         invitation_created_at: entry.invitation_created_at,
       });
@@ -80,8 +80,11 @@ export function mergeGroupEpochMetadata(
   const keys = [...epochs.values()].sort((a, b) => b.epoch_number - a.epoch_number);
   const current = keys[0];
   if (!current) return next;
+  const conflict = keys.filter((entry) => entry.epoch_number === current.epoch_number).length > 1 ||
+    Number(stored.group_conflicting_epoch ?? -1) >= current.epoch_number || Number(next.group_conflicting_epoch ?? -1) >= current.epoch_number;
   return {
     ...next,
+    group_conflicting_epoch: conflict ? current.epoch_number : -1,
     group_epoch_keys: keys,
     current_epoch_public_key: current.epoch_public_key,
     current_epoch_private_key_encrypted: current.epoch_private_key_encrypted,

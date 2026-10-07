@@ -14,7 +14,6 @@ import {
   CONTACT_CURSOR_FETCH_BATCH_SIZE,
   CONTACT_CURSOR_PUBLISH_DELAY_MS,
   GROUP_IDENTITY_SECRET_TAG,
-  GROUP_IDENTITY_SECRET_VERSION,
   GROUP_MEMBERS_FOLLOW_SET_D_TAG,
   GROUP_SHARED_ROSTER_FOLLOW_SET_D_TAG,
   LAST_SEEN_RECEIVED_ACTIVITY_AT_META_KEY,
@@ -73,6 +72,7 @@ const GROUP_MEMBER_PROFILE_REFRESH_RETRY_DELAY_MS = 500;
 const GROUP_MEMBER_PROFILE_REFRESH_RETRY_ATTEMPTS = 4;
 
 interface PrivateStateRuntimeDeps {
+  createRecoverableGroup: (phrase: string, name: string, about: string, relays: string[]) => Promise<GroupIdentitySecretContent>;
   beginStartupStep: (stepId: any) => void;
   buildFreshPrivatePreferences: (existing?: Record<string, unknown>) => PrivatePreferences;
   buildRelaySaveStatus: (relayStatuses: any[]) => RelaySaveStatus;
@@ -88,10 +88,6 @@ interface PrivateStateRuntimeDeps {
     first: ContactRelay[] | undefined,
     second: ContactRelay[] | undefined,
   ) => boolean;
-  createInitialGroupEpochSecretState: () => Pick<
-    GroupIdentitySecretContent,
-    'epoch_number' | 'epoch_privkey'
-  >;
   createStartupBatchTracker: (stepId: any) => {
     beginItem: () => void;
     finishItem: (error?: unknown) => void;
@@ -181,6 +177,7 @@ interface PrivateStateRuntimeDeps {
 }
 
 export function createPrivateStateRuntime({
+  createRecoverableGroup,
   beginStartupStep,
   buildRelaySaveStatus,
   bumpContactListVersion,
@@ -189,7 +186,6 @@ export function createPrivateStateRuntime({
   compareReplaceableEventState,
   completeStartupStep,
   contactRelayListsEqual,
-  createInitialGroupEpochSecretState,
   decryptContactCursorContent,
   decryptGroupIdentitySecretContent,
   decryptPrivatePreferencesContent,
@@ -442,7 +438,7 @@ export function createPrivateStateRuntime({
 
     const groupSecretEvent = new ClientEvent(ndk, {
       kind: PRIVATE_PREFERENCES_KIND,
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: allocateReplaceableCreatedAt(`group-secret:${user.pubkey}:${normalizedGroupPublicKey}`),
       pubkey: user.pubkey,
       content: normalizedEncryptedPrivateKey,
       tags: [
@@ -1686,27 +1682,14 @@ export function createPrivateStateRuntime({
   async function createGroupChat(
     options: CreateGroupChatInput = {},
   ): Promise<CreateGroupChatResult> {
-    const relayUrls = Array.isArray(options.relayUrls) ? options.relayUrls : [];
+    const candidateRelayUrls = Array.isArray(options.relayUrls) ? options.relayUrls : [];
+    if (!options.recoveryPhrase) throw new Error('Back up and verify the group recovery phrase before creating the group.');
+    const recovered = await createRecoverableGroup(options.recoveryPhrase, options.name?.trim() ?? '', options.about?.trim() ?? '', candidateRelayUrls);
+    const relayUrls = recovered.recovery_state?.relays ?? candidateRelayUrls;
     const relayEntries = inputSanitizerService.normalizeRelayEntriesFromUrls(relayUrls);
-    const groupSigner = NostrPrivateKeySigner.generate();
-    const initialEpochState = createInitialGroupEpochSecretState();
-    const groupPublicKey = inputSanitizerService.normalizeHexKey(groupSigner.pubkey);
-    if (!groupPublicKey) {
-      throw new Error('Failed to generate a valid group identity.');
-    }
-
-    const encryptedPrivateKey = await encryptGroupIdentitySecretContent({
-      version: GROUP_IDENTITY_SECRET_VERSION,
-      group_pubkey: groupPublicKey,
-      group_privkey: groupSigner.privateKey,
-      ...initialEpochState,
-      ...(typeof options.name === 'string' && options.name.trim()
-        ? { name: options.name.trim() }
-        : {}),
-      ...(typeof options.about === 'string' && options.about.trim()
-        ? { about: options.about.trim() }
-        : {}),
-    });
+    const initialEpochState = { epoch_number: recovered.epoch_number!, epoch_privkey: recovered.epoch_privkey! };
+    const groupPublicKey = recovered.group_pubkey;
+    const encryptedPrivateKey = await encryptGroupIdentitySecretContent(recovered);
 
     const didChange = await ensureGroupContactAndChat(groupPublicKey, encryptedPrivateKey, {
       name: options.name,
@@ -1793,6 +1776,7 @@ export function createPrivateStateRuntime({
 
     return {
       groupPublicKey,
+      relayUrls,
       encryptedPrivateKey,
       groupSecretSave,
       memberListSyncError,

@@ -127,6 +127,7 @@ export interface RelaySaveStatus {
 }
 
 export interface CreateGroupChatResult {
+  relayUrls: string[];
   groupPublicKey: string;
   encryptedPrivateKey: string;
   groupSecretSave: RelaySaveStatus;
@@ -146,6 +147,7 @@ export interface PublishGroupMemberChangesResult {
 export type RotateGroupEpochResult = PublishGroupMemberChangesResult;
 
 export interface CreateGroupChatInput {
+  recoveryPhrase?: string;
   name?: string;
   about?: string;
   relayUrls?: string[];
@@ -235,6 +237,9 @@ export interface GroupIdentitySecretContent {
   version: number;
   group_pubkey: string;
   group_privkey: string;
+  recovery_entropy?: string;
+  recovery_state_id?: string;
+  recovery_state?: import('./groupRecovery.ts').GroupRecoveryState;
   epoch_number?: number;
   epoch_privkey?: string;
   name?: string;

@@ -1,3 +1,4 @@
+import { deriveGroupIdentityKey, deriveGroupEpochKey, normalizeRecoveryState } from './groupRecovery.ts';
 import NostrClient, { NostrPrivateKeySigner, type NostrUser } from '#src/lib/nostr/client.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import {
@@ -400,7 +401,19 @@ export function createStorageSessionRuntime({
       return null;
     }
 
+    let recovery: Partial<GroupIdentitySecretContent> = {};
+    if (version === 2) {
+      try {
+        if (typeof value.recovery_entropy !== 'string' || typeof value.recovery_state_id !== 'string' ||
+            !/^[0-9a-f]{64}$/.test(value.recovery_state_id)) return null;
+        const state = normalizeRecoveryState(value.recovery_state);
+        if (deriveGroupIdentityKey(value.recovery_entropy) !== groupPrivkey ||
+            state.epoch !== epochNumber || deriveGroupEpochKey(value.recovery_entropy, state.epoch, state.epoch_revision) !== epochPrivkey) return null;
+        recovery = { recovery_entropy: value.recovery_entropy, recovery_state_id: value.recovery_state_id, recovery_state: state };
+      } catch { return null; }
+    }
     return {
+      ...recovery,
       version,
       group_pubkey: groupPubkey,
       group_privkey: groupPrivkey,

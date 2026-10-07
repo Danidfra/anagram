@@ -186,6 +186,8 @@ function createDeps(overrides: Record<string, unknown> = {}) {
   };
 
   const deps = {
+    createRecoverableGroup: vi.fn(async () => ({ version: 2, group_pubkey: ndkMocks.groupPubkey,
+      group_privkey: 'b'.repeat(64), epoch_number: 0, epoch_privkey: 'epoch-private-key' })),
     beginStartupStep: vi.fn(),
     buildFreshPrivatePreferences: vi.fn((existing?: Record<string, unknown>) => ({
       ...existing,
@@ -490,6 +492,14 @@ describe('privateStateRuntime', () => {
 
   it('creates group chats, publishes the secret, and reports contact-list sync failures without throwing', async () => {
     const deps = createDeps({
+      createRecoverableGroup: vi.fn().mockResolvedValue({
+        version: 2,
+        group_pubkey: ndkMocks.groupPubkey,
+        group_privkey: 'b'.repeat(64),
+        epoch_number: 0,
+        epoch_privkey: 'epoch-private-key',
+        recovery_state: { relays: ['wss://relay.example'] },
+      }),
       decryptGroupIdentitySecretContent: vi.fn().mockResolvedValue({
         version: 1,
         group_pubkey: ndkMocks.groupPubkey,
@@ -536,11 +546,14 @@ describe('privateStateRuntime', () => {
     });
 
     const result = await runtime.createGroupChat({
+      recoveryPhrase: 'test-phrase-handled-by-mock',
       name: 'Launch Group',
       about: 'Roadmap',
-      relayUrls: ['wss://relay.example'],
+      relayUrls: ['wss://relay.example', 'wss://unavailable.example'],
     });
 
+    expect(result.relayUrls).toEqual(['wss://relay.example']);
+    expect(deps.publishPrivateContactList).toHaveBeenCalledWith(['wss://relay.example']);
     expect(result.groupPublicKey).toBe(ndkMocks.groupPubkey);
     expect(result.encryptedPrivateKey).toBe('encrypted-group-secret');
     expect(result.groupSecretSave).toEqual({

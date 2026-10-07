@@ -22,7 +22,6 @@ import {
   sendMessagesViaBridge,
   TEST_ACCOUNTS,
   threadMessage,
-  waitForNoThreadMessage,
   waitForThreadMessage,
 } from '../helpers';
 
@@ -210,13 +209,9 @@ test('missing prior-epoch reply targets are restored after restart', async ({ br
     });
 
     await rotateGroupEpoch(owner.page, groupPublicKey, [bob.session.publicKey], [E2E_RELAY_URL]);
+    // Remove the persisted copy. Unlimited hydration may recover it immediately;
+    // do not require an artificial period in which the message stays missing.
     await removeStoredMessageByEventId(bob.page, groupPublicKey, seededTarget.eventId);
-    await waitForNoThreadMessage(bob.page, epochZeroMessage, {
-      chatId: groupPublicKey,
-      refresh: false,
-      timeoutMs: 6_000,
-    });
-
     await navigateToChat(owner.page, groupPublicKey);
     await waitForThreadMessage(owner.page, epochZeroMessage, {
       chatId: groupPublicKey,

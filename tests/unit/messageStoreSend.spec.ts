@@ -11,6 +11,7 @@ const serviceMocks = vi.hoisted(() => ({
     createMessage: vi.fn(),
     getChatByPublicKey: vi.fn(),
     getMessageById: vi.fn(),
+    listLatestMessages: vi.fn(),
     init: vi.fn().mockResolvedValue(undefined),
   },
   contactsService: {
@@ -19,6 +20,7 @@ const serviceMocks = vi.hoisted(() => ({
   },
   nostrEventDataService: {
     getEventById: vi.fn().mockResolvedValue(null),
+    getEventsByIds: vi.fn().mockResolvedValue(new Map()),
     init: vi.fn().mockResolvedValue(undefined),
   },
   chatStore: {
@@ -29,6 +31,7 @@ const serviceMocks = vi.hoisted(() => ({
   },
   nostrStore: {
     getLoggedInPublicKeyHex: vi.fn(() => 'a'.repeat(64)),
+    repairMissingMessageDependency: vi.fn().mockResolvedValue(false),
     refreshContactByPublicKey: vi.fn().mockResolvedValue(undefined),
     ensureRespondedPubkeyIsContact: vi.fn().mockResolvedValue(undefined),
     sendDirectMessage: vi.fn().mockResolvedValue({ id: 'gift-wrap' }),
@@ -149,6 +152,27 @@ describe('messageStore send', () => {
       },
       configurable: true,
     });
+  });
+
+  it('resumes an unresolved reply from the bounded persisted window after restart', async () => {
+    const target = 'd'.repeat(64);
+    const row = makeMessageRow({
+      meta: { reply: { eventId: target, authorPublicKey: '', text: 'Unknown' } },
+    });
+    serviceMocks.chatDataService.listLatestMessages.mockResolvedValue({
+      rows: [row],
+      has_more: false,
+    });
+    const store = useMessageStore();
+    await store.loadMessages(CHAT_ID);
+    await vi.waitFor(() =>
+      expect(serviceMocks.nostrStore.repairMissingMessageDependency).toHaveBeenCalledWith(
+        CHAT_ID,
+        target,
+        { reason: 'reply-target-missing', referenceCreatedAt: Date.parse(row.created_at) / 1000 },
+      ),
+    );
+    expect(serviceMocks.chatDataService.listLatestMessages).toHaveBeenCalledWith(CHAT_ID, 50);
   });
 
   afterEach(() => {

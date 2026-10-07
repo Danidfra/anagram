@@ -409,38 +409,7 @@ export function createGroupEpochStateRuntime({
       };
     }
 
-    const nextSecret: GroupIdentitySecretContent = {
-      ...decryptedSecret,
-      epoch_number: 0,
-      epoch_privkey: NostrPrivateKeySigner.generate().privateKey,
-    };
-    const nextEncryptedSecret = await encryptGroupIdentitySecretContent(nextSecret);
-    const nextMeta: ContactMetadata = {
-      ...(groupContact.meta ?? {}),
-      [GROUP_PRIVATE_KEY_CONTACT_META_KEY]: nextEncryptedSecret,
-    };
-    const updatedContact = await contactsService.updateContact(groupContact.id, {
-      meta: nextMeta,
-    });
-    if (!updatedContact) {
-      throw new Error('Failed to persist initial group epoch state.');
-    }
-
-    bumpContactListVersion();
-    try {
-      await publishGroupIdentitySecret(
-        normalizedGroupPublicKey,
-        nextEncryptedSecret,
-        seedRelayUrls
-      );
-    } catch (error) {
-      console.warn('Failed to publish updated group epoch secret', error);
-    }
-
-    return {
-      contact: updatedContact,
-      secret: nextSecret,
-    };
+    throw new Error('Group epoch state is missing. Restore the group recovery phrase instead of generating a replacement key.');
   }
 
   async function persistIncomingGroupEpochTicket(
@@ -448,6 +417,7 @@ export function createGroupEpochStateRuntime({
     epochNumber: number,
     epochPrivateKey: string,
     options: {
+      allowRecoveryFork?: boolean;
       fallbackName?: string;
       accepted?: boolean;
       invitationCreatedAt?: string;
@@ -483,7 +453,10 @@ export function createGroupEpochStateRuntime({
       epochNumber,
       normalizedEpochPublicKey
     );
-    if (conflictingEpochNumber) {
+    if (conflictingEpochNumber && !options.allowRecoveryFork) {
+      if (existingChat) await chatDataService.updateChat(normalizedGroupPublicKey, { meta: {
+        ...existingChat.meta, group_conflicting_epoch: Math.max(Number(existingChat.meta.group_conflicting_epoch ?? -1), epochNumber),
+      } });
       logConflictingIncomingEpochNumber(
         normalizedGroupPublicKey,
         epochNumber,
@@ -499,17 +472,17 @@ export function createGroupEpochStateRuntime({
         (entry) =>
           entry.epoch_number === epochNumber && entry.epoch_public_key === normalizedEpochPublicKey
       ) ?? null;
-    const entriesByEpoch = new Map<number, ChatGroupEpochKey>(
-      existingGroupEpochKeys.map((entry) => [entry.epoch_number, entry])
+    const entriesByEpoch = new Map<string, ChatGroupEpochKey>(
+      existingGroupEpochKeys.map((entry) => [`${entry.epoch_number}:${entry.epoch_public_key}`, entry])
     );
     if (existingEpochEntry) {
-      entriesByEpoch.set(epochNumber, {
+      entriesByEpoch.set(`${epochNumber}:${normalizedEpochPublicKey}`, {
         ...existingEpochEntry,
         ...(invitationCreatedAt ? { invitation_created_at: invitationCreatedAt } : {}),
       });
     } else {
       const encryptedEpochPrivateKey = await encryptPrivateStringContent(normalizedEpochPrivateKey);
-      entriesByEpoch.set(epochNumber, {
+      entriesByEpoch.set(`${epochNumber}:${normalizedEpochPublicKey}`, {
         epoch_number: epochNumber,
         epoch_public_key: normalizedEpochPublicKey,
         epoch_private_key_encrypted: encryptedEpochPrivateKey,
