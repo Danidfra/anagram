@@ -19,6 +19,7 @@ export interface GroupMemberTicketDelivery {
 }
 
 export interface ChatMetadata {
+  deleted_locally?: boolean;
   group_conflicting_epoch?: number;
   avatar?: string;
   picture?: string;

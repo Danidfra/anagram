@@ -33,6 +33,7 @@
       >
         <button class="request-identity" data-testid="chat-item" onclick={() => onopen(chat)}
           ><Avatar
+            privateGroup={chat.type === 'group'}
             publicKey={chat.publicKey}
             name={chat.name}
             picture={String(chat.meta.picture ?? '')}

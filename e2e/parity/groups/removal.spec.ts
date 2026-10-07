@@ -72,8 +72,24 @@ test('group member removal rotates epoch and blocks removed members from new mes
       chatId: groupPublicKey,
     });
 
+    await openGroupContact(survivingMember.page, groupPublicKey);
+    await survivingMember.page.getByRole('tab', { name: 'Members', exact: true }).click();
+    await expect(survivingMember.page.getByTestId('group-remove-member')).toHaveCount(0);
     await openGroupContact(owner.page, groupPublicKey);
+    await owner.page.getByRole('tab', { name: 'Members', exact: true }).click();
+    await expect(
+      owner.page
+        .locator(`.member[data-public-key="${owner.session.publicKey}"]`)
+        .getByRole('button', { name: 'Remove member', exact: true }),
+    ).toHaveCount(0);
+    await expect(owner.page.getByLabel('Member public keys')).toHaveCount(0);
+    await expect(
+      owner.page.getByRole('button', { name: 'Update members', exact: true }),
+    ).toHaveCount(0);
     await removeGroupMemberAndPublish(owner.page, removedMember.session.publicKey);
+    await expect(
+      owner.page.locator(`.member[data-public-key="${survivingMember.session.publicKey}"]`),
+    ).toBeVisible();
     await openGroupEpochsTab(owner.page);
     await expect.poll(() => readGroupEpochNumbers(owner.page), { timeout: 12_000 }).toEqual([1, 0]);
 

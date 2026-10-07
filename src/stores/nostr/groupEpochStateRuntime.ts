@@ -245,7 +245,7 @@ export function createGroupEpochStateRuntime({
     const groupRecipientPubkeys = new Set<string>();
     const chats = await chatDataService.listChats();
     for (const chat of chats) {
-      if (chat.type !== 'group') {
+      if (chat.type !== 'group' || chat.meta.deleted_locally === true) {
         continue;
       }
 

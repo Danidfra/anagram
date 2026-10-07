@@ -43,6 +43,7 @@ export interface ReconnectHealingChatTarget {
 }
 
 interface ReconnectHealingRuntimeDeps {
+  logReconnectHealing?: (phase: string, details?: Record<string, unknown>) => void;
   getLoggedInPublicKeyHex: () => string | null;
   getPrivateMessagesLiveEoseAt: () => string | null;
   getVisibleChatTarget: () => ReconnectHealingChatTarget | null;
@@ -89,10 +90,6 @@ function hasWindow(): boolean {
 
 function isBrowserOffline(): boolean {
   return typeof navigator !== 'undefined' && navigator.onLine === false;
-}
-
-function logReconnectHealing(phase: string, details: Record<string, unknown> = {}): void {
-  console.log('[anagram][reconnect-healing]', phase, details);
 }
 
 function normalizeChatTarget(
@@ -150,6 +147,7 @@ function delay(ms: number): Promise<void> {
 }
 
 export function createReconnectHealingRuntime({
+  logReconnectHealing = () => {},
   getLoggedInPublicKeyHex,
   getPrivateMessagesLiveEoseAt,
   getVisibleChatTarget,

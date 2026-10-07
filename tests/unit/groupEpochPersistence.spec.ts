@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { chatDataService } from '#src/services/chatDataService.ts';
 
 afterEach(async () => {
@@ -110,4 +110,60 @@ it('retains fork keys for history, blocks the disputed epoch, and clears the con
   expect(chat.meta.group_epoch_keys).toEqual([merged, a, b]);
   expect(chat.meta.group_conflicting_epoch).toBe(-1);
   expect(chat.meta.current_epoch_public_key).toBe(merged.epoch_public_key);
+});
+
+it('deleted groups resist replayed backups, stale profile writes and late messages until explicitly reopened', async () => {
+  vi.stubGlobal('window', { indexedDB: new IDBFactory() });
+  vi.stubGlobal('IDBKeyRange', IDBKeyRange);
+  const group = 'd'.repeat(64);
+  const ticket = {
+    epoch_number: 0,
+    epoch_public_key: 'e'.repeat(64),
+    epoch_private_key_encrypted: 'encrypted epoch',
+  };
+  await chatDataService.createChat({
+    public_key: group,
+    type: 'group',
+    name: 'Deleted group',
+    meta: { inbox_state: 'accepted', group_epoch_keys: [ticket] },
+  });
+  const stale = (await chatDataService.getChatByPublicKey(group))!;
+  const message = {
+    chat_public_key: group,
+    author_public_key: 'a'.repeat(64),
+    message: 'Earlier history',
+    created_at: '2026-10-07T12:00:00.000Z',
+    event_id: 'b'.repeat(64),
+  };
+  expect(await chatDataService.createMessage(message)).not.toBeNull();
+  expect(await chatDataService.deleteChat(group)).toBe(true);
+  expect(await chatDataService.listMessages(group)).toEqual([]);
+  await Promise.all([
+    chatDataService.createChat({ ...stale, meta: { ...stale.meta, group_epoch_keys: [ticket] } }),
+    chatDataService.updateChat(group, { meta: stale.meta }),
+    chatDataService.updateChatMeta(group, { inbox_state: 'accepted', group_epoch_keys: [ticket] }),
+    chatDataService.updateChatPreview(group, 'Replay', message.created_at, 10),
+  ]);
+  const deleted = (await chatDataService.getChatByPublicKey(group))!;
+  expect(deleted.meta.deleted_locally).toBe(true);
+  expect(deleted.meta.group_epoch_keys).toEqual([ticket]);
+  expect(deleted.last_message).toBe('');
+  expect(deleted.unread_count).toBe(0);
+  expect(await chatDataService.createMessage(message)).toBeNull();
+  expect(await chatDataService.listMessages(group)).toEqual([]);
+
+  await chatDataService.reopenDeletedGroupChat(group);
+  // A stale snapshot from before the explicit reopen cannot hide it again.
+  await chatDataService.updateChatMeta(group, deleted.meta);
+  expect((await chatDataService.getChatByPublicKey(group))!.meta.deleted_locally).toBeUndefined();
+  expect(await chatDataService.createMessage(message)).not.toBeNull();
+});
+
+it('keeps ordinary direct-chat deletion unchanged', async () => {
+  vi.stubGlobal('window', { indexedDB: new IDBFactory() });
+  vi.stubGlobal('IDBKeyRange', IDBKeyRange);
+  const key = 'c'.repeat(64);
+  await chatDataService.createChat({ public_key: key, name: 'Direct chat' });
+  expect(await chatDataService.deleteChat(key)).toBe(true);
+  expect(await chatDataService.getChatByPublicKey(key)).toBeNull();
 });

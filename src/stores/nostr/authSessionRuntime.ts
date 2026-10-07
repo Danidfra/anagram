@@ -38,6 +38,7 @@ import type {
   Nip46SessionSnapshot,
   SubscribePrivateMessagesOptions,
 } from '#src/stores/nostr/types.ts';
+import { clearLinkPreviews } from '#src/services/linkPreviewService.ts';
 import { clearPersistedAppState } from '#src/utils/logoutCleanup.ts';
 import type { Ref } from '#src/lib/state/reactivity.ts';
 
@@ -445,6 +446,7 @@ export function createAuthSessionRuntime({
   }
 
   function clearPrivateKey(options: { clearSecureStorage?: boolean } = {}): void {
+    clearLinkPreviews();
     privateKeyGeneration++;
     resetCalls?.();
     const activeSigner = ndk.signer as (NostrSigner & { stop?: () => void }) | undefined;

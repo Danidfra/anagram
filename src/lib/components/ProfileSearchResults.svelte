@@ -10,6 +10,7 @@
   import Avatar from './Avatar.svelte';
   export let query = '';
   export let existingKeys: string[] = [];
+  export let excludedMessage = 'Matching profiles are already in your chats.';
   export let onselect: (profile: ProfileSearchResult) => void;
   const nostr = useNostrStore();
   let results: ProfileSearchResult[] = [];
@@ -105,7 +106,7 @@
       {#if loading}Searching profiles…
       {:else if status === 'unavailable'}Profile search is unavailable. Try again shortly.
       {:else if !visible.length}{results.length
-          ? 'Matching profiles are already in your chats.'
+          ? excludedMessage
           : 'No profiles found on your relays.'}{/if}
     </p>
   </section>

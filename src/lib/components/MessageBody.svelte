@@ -1,17 +1,20 @@
 <script lang="ts">
   import type { Message } from '#src/types/chat.ts';
-  import { buildMessageTextParts } from '#src/utils/messageTextParts.ts';
+  import { buildMessageTextParts, withoutPreviewMediaUrls } from '#src/utils/messageTextParts.ts';
   import { openExternalHttpUrl } from '#src/utils/externalLinks.ts';
   import { parseRoomLink } from '#src/utils/callRoom.ts';
   import { readCallHistory, callHistoryDuration } from '#src/utils/callHistory.ts';
   import { useTrustedMediaStore } from '#src/stores/trustedMediaStore.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { portal } from '#src/lib/actions/portal.ts';
   import { observe } from '#src/lib/state/store.ts';
   import { Notify } from '#src/lib/platform/ui.ts';
   import { translate } from '#src/i18n.ts';
   import type { NostrMentionProfile } from '#src/utils/nostrMentions.ts';
   import Icon from './Icon.svelte';
+  import { isSingleEmoji } from '#src/utils/singleEmoji.ts';
   import MediaViewer from './MediaViewer.svelte';
+  import LinkPreview from './LinkPreview.svelte';
+  import { previewUrl } from '#src/utils/linkPreview.ts';
   import {
     shouldCollapseMessageText,
     truncateCollapsedMessageText,
@@ -21,6 +24,7 @@
   export let canRedial = false;
   export let onredial: (mode: CallMode) => void = () => {};
   export let message: Message;
+  export let bubbleLayout = false;
   export let oncontact: (pubkey: string) => void;
   export let onroom: (link: string) => void;
   const trusted = useTrustedMediaStore();
@@ -31,11 +35,27 @@
   let expanded = false,
     showMedia = false;
   $: history = readCallHistory(message.meta.call_history);
-  $: text = expanded ? message.text : truncateCollapsedMessageText(message.text);
+  $: caption = mediaAllowed
+    ? withoutPreviewMediaUrls(message.text, message.meta.attachments ?? [])
+    : message.text;
+  $: text = expanded ? caption : truncateCollapsedMessageText(caption);
   $: parts = buildMessageTextParts(text, mentionProfiles).map((part) => ({
     ...part,
     roomLink: part.type === 'url' && Boolean(parseRoomLink(part.href)),
   }));
+  $: previewLinks = [
+    ...new Set(
+      parts.flatMap((part) =>
+        part.type === 'url' &&
+        !part.roomLink &&
+        previewUrl(part.href) &&
+        !(message.meta.attachments ?? []).some((attachment) => attachment.url === part.href) &&
+        !/\.(?:png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|pdf)(?:[?#]|$)/i.test(part.href)
+          ? [part.href]
+          : [],
+      ),
+    ),
+  ].slice(0, 2);
   $: mediaAllowed =
     showMedia || message.sender === 'me' || $trust.includes(message.authorPublicKey);
   async function open(url: string) {
@@ -49,14 +69,34 @@
       Notify.create({ message: String(error), type: 'negative' });
     }
   }
-  let linkMenu: { href: string; x: number; y: number } | null = null;
-  function portal(node: HTMLElement) {
-    document.body.appendChild(node);
-    return { destroy: () => node.remove() };
+  let linkMenu: { href: string; x: number; y: number; media?: boolean } | null = null;
+  let menuTrigger: HTMLButtonElement | null = null;
+  function closeLinkMenu(restoreFocus = false) {
+    linkMenu = null;
+    if (restoreFocus) menuTrigger?.focus({ preventScroll: true });
+    menuTrigger = null;
+  }
+  function mediaOptions(event: MouseEvent, href: string) {
+    const button = event.currentTarget as HTMLButtonElement;
+    if (linkMenu?.href === href) {
+      closeLinkMenu(true);
+      return;
+    }
+    menuTrigger = button;
+    const rect = button.getBoundingClientRect();
+    linkMenu = {
+      href,
+      media: true,
+      x: Math.max(8, Math.min(rect.right - 160, innerWidth - 168)),
+      y: Math.max(8, Math.min(rect.bottom + 4, innerHeight - 100)),
+    };
+  }
+  function focusMenu(node: HTMLElement) {
+    if (menuTrigger) node.querySelector<HTMLButtonElement>('button')?.focus();
   }
   async function copyLink() {
     const href = linkMenu?.href;
-    linkMenu = null;
+    closeLinkMenu(true);
     if (!href) return;
     try {
       await navigator.clipboard.writeText(href);
@@ -68,15 +108,19 @@
 
 <svelte:window
   onpointerdown={(event) => {
-    if (!(event.target instanceof Element && event.target.closest('[data-message-link-menu]')))
-      linkMenu = null;
+    if (!(
+      event.target instanceof Element &&
+      event.target.closest('[data-message-link-menu], [data-media-options]')
+    ))
+      closeLinkMenu();
   }}
   onkeydown={(event) => {
-    if (event.key === 'Escape') linkMenu = null;
+    if (event.key === 'Escape' && linkMenu) closeLinkMenu(true);
   }}
 />
 {#if linkMenu}<div
     use:portal
+    use:focusMenu
     class="link-menu"
     data-message-link-menu
     role="menu"
@@ -84,6 +128,14 @@
     style:top={`${linkMenu.y}px`}
   >
     <button role="menuitem" data-testid="message-link-copy" onclick={copyLink}>Copy link</button>
+    {#if linkMenu.media}<button
+        role="menuitem"
+        onclick={() => {
+          const href = linkMenu?.href;
+          closeLinkMenu(true);
+          if (href) void open(href);
+        }}>Open original</button
+      >{/if}
   </div>{/if}
 
 {#if message.meta.deleted}<em>{$translate('Message deleted')}</em>
@@ -114,91 +166,144 @@
     >{$translate('Group keys updated')} · {message.text}</span
   >
 {:else}
-  <span class="message-text"
-    >{#each parts as part (part.key)}{#if part.type === 'url'}<a
-          data-testid="message-url-link"
-          class:room-link={part.roomLink}
-          href={part.href}
-          rel="noopener noreferrer"
-          target="_blank"
-          oncontextmenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            linkMenu = {
-              href: part.href,
-              x: Math.max(8, Math.min(event.clientX, innerWidth - 160)),
-              y: Math.max(8, Math.min(event.clientY, innerHeight - 55)),
-            };
-          }}
-          onclick={(e) => {
-            e.preventDefault();
-            void open(part.href);
-          }}
-          >{#if part.roomLink}{$translate('room.joinGroupCall')}<Icon
-              name="group"
-            />{:else}{part.text}{/if}</a
-        >{:else if part.type === 'mention' && part.publicKey}<button
-          class="mention"
-          data-testid="message-mention-link"
-          onclick={() => oncontact(part.publicKey!)}>{part.text}</button
-        >{:else}{part.text}{/if}{/each}</span
+  <div
+    class="message-body"
+    class:bubble-media-body={bubbleLayout &&
+      mediaAllowed &&
+      (message.meta.attachments ?? []).some(
+        (attachment) =>
+          /^(image|video)\//.test(attachment.mimeType) && /^https:\/\//.test(attachment.url),
+      )}
   >
-  {#if shouldCollapseMessageText(message.text)}<button
-      class="link"
-      onclick={() => (expanded = !expanded)}
-      >{$translate(expanded ? 'Show less' : 'Show more')}</button
-    >{/if}
-  {#if message.meta.attachments?.length && !mediaAllowed}<div class="media-prompt">
-      <button class="outline" onclick={() => (showMedia = true)}>{$translate('Load media')}</button
-      ><button class="link" onclick={() => trusted.trustImageSender(message.authorPublicKey)}
-        >{$translate('Always load media from this sender')}</button
+    {#if text}<span
+        class="message-text"
+        class:single-emoji={isSingleEmoji(message.text) && !message.meta.attachments?.length}
+        >{#each parts as part (part.key)}{#if part.type === 'url'}<a
+              data-testid="message-url-link"
+              class:room-link={part.roomLink}
+              href={part.href}
+              rel="noopener noreferrer"
+              target="_blank"
+              oncontextmenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                linkMenu = {
+                  href: part.href,
+                  x: Math.max(8, Math.min(event.clientX, innerWidth - 160)),
+                  y: Math.max(8, Math.min(event.clientY, innerHeight - 55)),
+                };
+              }}
+              onclick={(e) => {
+                e.preventDefault();
+                void open(part.href);
+              }}
+              >{#if part.roomLink}{$translate('room.joinGroupCall')}<Icon
+                  name="group"
+                />{:else}{part.text}{/if}</a
+            >{:else if part.type === 'mention' && part.publicKey}<button
+              class="mention"
+              data-testid="message-mention-link"
+              onclick={() => oncontact(part.publicKey!)}>{part.text}</button
+            >{:else}{part.text}{/if}{/each}</span
       >
-    </div>{/if}
-  {#if mediaAllowed}{#each message.meta.attachments ?? [] as attachment}{#if /^https:\/\//.test(attachment.url)}{#if attachment.mimeType.startsWith('image/')}<a
-            href={attachment.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onclick={(e) => {
-              e.preventDefault();
-              imageUrl = attachment.url;
-              imageName = attachment.name ?? 'attachment';
-            }}
-            ><img
+    {/if}
+    {#if shouldCollapseMessageText(caption)}<button
+        class="link"
+        onclick={() => (expanded = !expanded)}
+        >{$translate(expanded ? 'Show less' : 'Show more')}</button
+      >{/if}
+    {#each previewLinks as url (url)}
+      <LinkPreview {url} allowed={mediaAllowed} onopen={open} />
+    {/each}
+    {#if message.meta.attachments?.length && !mediaAllowed}<div class="media-prompt">
+        <button class="outline" onclick={() => (showMedia = true)}
+          >{$translate('Load media')}</button
+        ><button class="link" onclick={() => trusted.trustImageSender(message.authorPublicKey)}
+          >{$translate('Always load media from this sender')}</button
+        >
+      </div>{/if}
+    {#if mediaAllowed}
+      {#each message.meta.attachments ?? [] as attachment}
+        {#if /^https:\/\//.test(attachment.url)}
+          {#if /^(image|video)\//.test(attachment.mimeType)}
+            <div class="media-attachment">
+              {#if attachment.mimeType.startsWith('image/')}<a
+                  href={attachment.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onclick={(e) => {
+                    e.preventDefault();
+                    imageUrl = attachment.url;
+                    imageName = attachment.name ?? 'attachment';
+                  }}
+                  ><img
+                    src={attachment.url}
+                    alt={attachment.name ?? 'Attachment'}
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  /></a
+                >
+              {:else}<!-- svelte-ignore a11y_media_has_caption --><video
+                  src={attachment.url}
+                  controls
+                  preload="none"
+                ></video>{/if}
+              <div class="media-footer">
+                <button
+                  class="icon-button media-options"
+                  data-media-options
+                  aria-label="Media options"
+                  title="Media options"
+                  aria-haspopup="menu"
+                  aria-expanded={linkMenu?.media === true && linkMenu.href === attachment.url}
+                  onclick={(event) => mediaOptions(event, attachment.url)}
+                  ><Icon name="more" /></button
+                >
+              </div>
+            </div>
+          {:else if attachment.mimeType.startsWith('audio/')}<audio
               src={attachment.url}
-              alt={attachment.name ?? 'Attachment'}
-              loading="lazy"
-              referrerpolicy="no-referrer"
-            /></a
-          >{:else if attachment.mimeType.startsWith('video/')}<!-- svelte-ignore a11y_media_has_caption --><video
-            src={attachment.url}
-            controls
-            preload="none"
-          ></video>{:else if attachment.mimeType.startsWith('audio/')}<audio
-            src={attachment.url}
-            controls
-            preload="none"
-          ></audio>{:else}<a
-            href={attachment.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onclick={(e) => {
-              e.preventDefault();
-              void open(attachment.url);
-            }}>{attachment.name ?? 'Download attachment'}</a
-          >{/if}{/if}{/each}{/if}
+              controls
+              preload="none"
+            ></audio>
+          {:else}<a
+              href={attachment.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onclick={(e) => {
+                e.preventDefault();
+                void open(attachment.url);
+              }}>{attachment.name ?? 'Download attachment'}</a
+            >{/if}
+        {/if}
+      {/each}
+    {/if}
+  </div>
 {/if}
 
 {#if imageUrl}<MediaViewer url={imageUrl} name={imageName} onclose={() => (imageUrl = '')} />{/if}
 
 <style>
+  .message-body {
+    display: contents;
+  }
+  .bubble-media-body {
+    display: flex;
+    flex-direction: column;
+  }
+  .bubble-media-body > .message-text,
+  .bubble-media-body > .link {
+    order: 1;
+  }
+
   .link-menu {
     position: fixed;
     z-index: 100;
     padding: 6px;
     min-width: 140px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--nc-border);
     border-radius: 8px;
-    background: var(--panel);
+    background: var(--nc-menu-bg);
     box-shadow: 0 4px 18px #0005;
   }
   .link-menu button {
@@ -209,6 +314,9 @@
   .message-text {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  .single-emoji {
+    font-size: 3em;
   }
   a,
   .mention {
@@ -252,6 +360,19 @@
     max-height: 400px;
     border-radius: 10px;
     margin: 10px 0;
+  }
+  .media-attachment {
+    width: fit-content;
+    max-width: 100%;
+  }
+  .media-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: -6px;
+  }
+  .media-options {
+    width: 28px;
+    height: 28px;
   }
   .media-prompt {
     display: flex;

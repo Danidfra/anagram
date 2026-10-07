@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onMount } from 'svelte';
   import { translate } from '#src/i18n.ts';
   import { contactsService } from '#src/services/contactsService.ts';
@@ -141,7 +142,13 @@
       disabled={!contact || contact.meta.blocked}
       onclick={() => contact && onopen(contact)}
     >
-      <Avatar {publicKey} {name} picture={contact?.meta.picture ?? ''} eager />
+      <Avatar
+        privateGroup={contact?.type === 'group'}
+        {publicKey}
+        {name}
+        picture={contact?.meta.picture ?? ''}
+        eager
+      />
       <span
         ><strong>{name}</strong><small
           >{contact?.type === 'group'
@@ -279,7 +286,7 @@
     {/if}
   </div>
 </div>
-<dialog bind:this={shareDialog} aria-label={$translate('contacts.shareContact')}>
+<dialog bind:this={shareDialog} use:dismissOnBackdrop={() => shareDialog.close()} aria-label={$translate('contacts.shareContact')}>
   <button
     class="icon-button share-close"
     aria-label="Close share dialog"

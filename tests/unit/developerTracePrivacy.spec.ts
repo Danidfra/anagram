@@ -77,3 +77,32 @@ it('redacts credentials and sensitive field names before persisting or echoing t
     info.mockRestore();
   }
 });
+
+it('bounds pending diagnostics and console echoes during a relay event flood', async () => {
+  let release!: () => void;
+  const stalled = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  append.mockClear().mockImplementation(() => stalled);
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const trace = runtime(true);
+  try {
+    for (let i = 0; i < 5000; i++)
+      trace.logDeveloperTrace('info', 'inbound', 'private-message-received', { index: i });
+    expect(append).toHaveBeenCalledTimes(200);
+    expect(info).toHaveBeenCalledTimes(20);
+    expect(info.mock.calls.every((args) => args.length === 1 && typeof args[0] === 'string')).toBe(
+      true,
+    );
+    release();
+    await stalled;
+    await Promise.resolve();
+    await Promise.resolve();
+    trace.logDeveloperTrace('info', 'queue', 'drained');
+    expect(append.mock.calls.at(-1)?.[0].details.droppedTraceEntries).toBe(4800);
+  } finally {
+    release();
+    append.mockResolvedValue(undefined);
+    info.mockRestore();
+  }
+});

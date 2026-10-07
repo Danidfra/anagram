@@ -68,6 +68,7 @@
             onclick={() => onselect(contact)}
           >
             <Avatar
+              privateGroup={contact.type === 'group'}
               publicKey={contact.public_key}
               name={contactListTitle(contact, options)}
               picture={contact.meta.picture ?? ''}

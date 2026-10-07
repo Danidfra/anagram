@@ -277,7 +277,14 @@ describe('group recovery journal', () => {
     f.publish.mockClear();
     await f.runtime.moveRelays(group.group_pubkey, ['wss://new.example/']);
     const calls = f.publish.mock.calls;
-    expect(calls.slice(0, originalIds.length).map(([event]) => event.id)).toEqual(originalIds);
+    // Relays return history newest-first; crossing a second can change its order.
+    // Every original record must still be copied before the new relay announcement.
+    expect(
+      calls
+        .slice(0, originalIds.length)
+        .map(([event]) => event.id)
+        .sort(),
+    ).toEqual([...originalIds].sort());
     expect(
       calls
         .slice(0, originalIds.length)

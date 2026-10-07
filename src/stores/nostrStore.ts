@@ -1865,6 +1865,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     syncLoggedInContactProfile,
     syncRecentChatContacts,
   } = createStartupContactSyncRuntime({
+    logStartupRestore: (phase, details) => logDeveloperTrace('info', 'startup-restore', phase, details),
     applyContactCursorStateToContact,
     beginStartupStep,
     bumpContactListVersion,
@@ -2136,6 +2137,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     resetReconnectHealingRuntimeState: resetReconnectHealingRuntimeStateImpl,
     runReconnectHealing: runReconnectHealingImpl,
   } = createReconnectHealingRuntime({
+    logReconnectHealing: (phase, details) => logDeveloperTrace('info', 'reconnect-healing', phase, details),
     getLoggedInPublicKeyHex,
     getPrivateMessagesLiveEoseAt: () => privateMessagesSubscriptionLastEoseAt.value,
     getVisibleChatTarget: () => {
@@ -2258,15 +2260,22 @@ export const useNostrStore = defineStore('nostrStore', () => {
     sendRumor: sendGiftWrappedRumor,
   });
 
+  function containsSessionSecret(value: string): boolean {
+    const clientKey =
+      ndk.signer instanceof NostrNip46Signer ? ndk.signer.localSigner.privateKey : null;
+    return [getPrivateKeyHexImpl(), clientKey].some(
+      (key) => Boolean(key && value.toLowerCase().includes(key.toLowerCase())),
+    );
+  }
+
   return {
+    containsSessionSecret,
     searchProfiles: async (
       query: string,
       signal: AbortSignal,
       onResults: (results: ProfileSearchResult[]) => void,
     ) => {
-      const clientKey =
-        ndk.signer instanceof NostrNip46Signer ? ndk.signer.localSigner.privateKey : null;
-      if (!profileSearchAllowed(query, [getPrivateKeyHexImpl(), clientKey]))
+      if (!profileSearchAllowed(query) || containsSessionSecret(query))
         return 'invalid' as const;
       const owner = getLoggedInPublicKeyHex();
       const relayUrls = await resolveLoggedInReadRelayUrls();

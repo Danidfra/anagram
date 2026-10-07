@@ -484,7 +484,7 @@ class ChatDataService {
       store.get(normalizedPublicKey) as IDBRequest<ChatRecord | undefined>,
     );
 
-    if (!existingRecord) {
+    if (!existingRecord || existingRecord.meta.deleted_locally === true) {
       await waitForTransaction(transaction);
       return;
     }
@@ -520,7 +520,11 @@ class ChatDataService {
       store.get(normalizedPublicKey) as IDBRequest<ChatRecord | undefined>,
     );
 
-    if (!existingRecord || existingRecord.unread_count === normalizeUnreadCount(unreadCount)) {
+    if (
+      !existingRecord ||
+      existingRecord.meta.deleted_locally === true ||
+      existingRecord.unread_count === normalizeUnreadCount(unreadCount)
+    ) {
       await waitForTransaction(transaction);
       return;
     }
@@ -699,7 +703,18 @@ class ChatDataService {
       return false;
     }
 
-    chatsStore.delete(normalizedPublicKey);
+    if (existingRecord.type === 'group') {
+      // Keep encrypted epoch keys and a local tombstone: relay backups and
+      // reissued tickets must not silently recreate a deleted conversation.
+      chatsStore.put({
+        ...existingRecord,
+        last_message: '',
+        unread_count: 0,
+        meta: { ...existingRecord.meta, deleted_locally: true, unseen_reaction_count: 0 },
+      });
+    } else {
+      chatsStore.delete(normalizedPublicKey);
+    }
 
     const messagesByChatIndex = messagesStore.index(MESSAGES_CHAT_PUBLIC_KEY_INDEX);
     const messageIds = await requestToPromise<IDBValidKey[]>(
@@ -719,6 +734,22 @@ class ChatDataService {
       console.error('Failed to delete chat from IndexedDB.', error);
       return false;
     }
+  }
+
+  async reopenDeletedGroupChat(chatPublicKey: string): Promise<ChatRow | null> {
+    const key = normalizePublicKeyValue(chatPublicKey);
+    if (!key) return null;
+    const db = await this.getDatabase();
+    const transaction = db.transaction(CHATS_STORE, 'readwrite');
+    const store = transaction.objectStore(CHATS_STORE);
+    const record = await requestToPromise<ChatRecord | undefined>(store.get(key));
+    if (record?.type === 'group' && record.meta.deleted_locally === true) {
+      record.meta = { ...record.meta };
+      delete record.meta.deleted_locally;
+      store.put(record);
+    }
+    await waitForTransaction(transaction);
+    return record ? toChatRow(record) : null;
   }
 
   async listMessages(chatPublicKey: string): Promise<MessageRow[]> {
@@ -1098,6 +1129,10 @@ class ChatDataService {
             )
           : undefined,
       ]);
+      if (chat?.type === 'group' && chat.meta.deleted_locally === true) {
+        await completed;
+        return null;
+      }
       if (!chat || existing) {
         await completed;
         return chat && existing ? toMessageRow(existing) : null;

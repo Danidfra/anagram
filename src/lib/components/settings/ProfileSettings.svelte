@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { autosizeTextarea } from '#src/lib/actions/autosizeTextarea.ts';
   import { observe } from '#src/lib/state/store.ts';
   import { onMount } from 'svelte';
@@ -229,7 +230,7 @@
     </details>
   </div>
 </div>
-<dialog bind:this={shareDialog} class="settings-dialog">
+<dialog bind:this={shareDialog} class="settings-dialog" use:dismissOnBackdrop={() => shareDialog.close()}>
   <h2>{$translate('common.share')}</h2>
   {#if qr}<img src={qr} alt="Public profile QR code" />{/if}
   <p class="settings-key">{npub}</p>

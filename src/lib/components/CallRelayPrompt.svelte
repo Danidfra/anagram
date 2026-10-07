@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { callRelayPrompts } from '#src/lib/platform/ui.ts';
@@ -10,7 +11,7 @@
 
 {#if $callRelayPrompts[0]}
   {@const prompt = $callRelayPrompts[0]}
-  <div class="backdrop">
+  <div class="backdrop" use:dismissOnBackdrop={() => prompt.finish(false)}>
     <div
       class="relay-prompt"
       role="dialog"

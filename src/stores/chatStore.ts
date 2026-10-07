@@ -211,6 +211,7 @@ function syncMetaInboxState(meta: Record<string, unknown>, nextState: ChatInboxS
 }
 
 function resolveChatCategory(meta: Record<string, unknown>): ChatListCategory {
+  if (meta.deleted_locally === true) return 'hidden';
   const inboxState = readMetaInboxState(meta);
   if (inboxState === 'blocked') {
     return 'blocked';
@@ -845,6 +846,10 @@ export const useChatStore = defineStore('chatStore', () => {
       const mapped = mapChatRowToChat(row, contexts.get(row.public_key.toLowerCase()));
       const current = live.get(mapped.id);
       live.delete(mapped.id);
+      // A delete/reopen completed while this database snapshot was loading.
+      if (current && current.meta.deleted_locally !== before.get(mapped.id)?.meta.deleted_locally)
+        mapped.meta = { ...mapped.meta, deleted_locally: current.meta.deleted_locally };
+
       // IndexedDB may lag the UI during hydration. Keep a message that arrived
       // during this read, and preserve its author until its summary commits.
       if (
@@ -866,7 +871,12 @@ export const useChatStore = defineStore('chatStore', () => {
     for (const chat of live.values()) if (chat !== before.get(chat.id)) next.push(chat);
     chats.value = sortByLatest(next);
 
-    if (selectedChatId.value && chats.value.some((chat) => chat.id === selectedChatId.value)) {
+    if (
+      selectedChatId.value &&
+      chats.value.some(
+        (chat) => chat.id === selectedChatId.value && chat.meta.deleted_locally !== true,
+      )
+    ) {
       return;
     }
 
@@ -912,7 +922,10 @@ export const useChatStore = defineStore('chatStore', () => {
 
   function selectChat(chatId: string): void {
     const normalizedChatId = normalizeChatIdentifier(chatId);
-    if (!normalizedChatId) {
+    if (
+      !normalizedChatId ||
+      chats.value.some((chat) => chat.id === normalizedChatId && chat.meta.deleted_locally === true)
+    ) {
       return;
     }
 
@@ -1120,7 +1133,10 @@ export const useChatStore = defineStore('chatStore', () => {
         chat.id === normalizedChatId
           ? {
               ...chat,
-              meta: nextMetaToPersist ?? chat.meta,
+              meta: {
+                ...(nextMetaToPersist ?? chat.meta),
+                deleted_locally: chat.meta.deleted_locally,
+              },
               unreadCount:
                 nextUnreadCountToPersist === null ? chat.unreadCount : nextUnreadCountToPersist,
             }
@@ -1314,7 +1330,8 @@ export const useChatStore = defineStore('chatStore', () => {
         resolveChatCategory(existingMeta) === 'request' ||
         resolveChatCategory(existingMeta) === 'hidden';
 
-      if (isRequestLikeChat) {
+      const isGroup = (existingChat?.type ?? existingRow?.type) === 'group';
+      if (isRequestLikeChat && !isGroup) {
         const requestClearedAt = resolveRequestClearBoundaryAt(
           existingMeta,
           existingMessages,
@@ -1353,8 +1370,23 @@ export const useChatStore = defineStore('chatStore', () => {
         console.error('Failed to delete nostr events for chat', error);
       }
 
-      const nextChats = chats.value.filter((chat) => chat.id !== normalizedChatId);
+      const nextChats = isGroup
+        ? chats.value.map((chat) =>
+            chat.id === normalizedChatId
+              ? {
+                  ...chat,
+                  lastMessage: '',
+                  unreadCount: 0,
+                  meta: { ...chat.meta, deleted_locally: true, unseen_reaction_count: 0 },
+                }
+              : chat,
+          )
+        : chats.value.filter((chat) => chat.id !== normalizedChatId);
       chats.value = nextChats;
+      if (isGroup) {
+        const { useMessageStore } = await import('#src/stores/messageStore.ts');
+        useMessageStore().removeChatMessages(normalizedChatId);
+      }
       const nextComposerDraftsByChatId = { ...composerDraftsByChatId.value };
       delete nextComposerDraftsByChatId[normalizedChatId];
       composerDraftsByChatId.value = nextComposerDraftsByChatId;
@@ -1562,6 +1594,7 @@ export const useChatStore = defineStore('chatStore', () => {
     const authorPublicKey = normalizeChatIdentifier(input.authorPublicKey);
     const nextChatId = nextPublicKey;
     const existingChat = chats.value.find((chat) => chat.id === nextChatId) ?? null;
+    if (existingChat?.meta.deleted_locally === true || input.meta?.deleted_locally === true) return;
     const currentMeta = {
       ...((existingChat?.meta as Record<string, unknown> | undefined) ?? {}),
       ...(input.meta ? { ...input.meta } : {}),
@@ -1649,6 +1682,15 @@ export const useChatStore = defineStore('chatStore', () => {
     const existingInStore = chats.value.find(
       (chat) => chat.publicKey.toLowerCase() === cleanPublicKey.toLowerCase(),
     );
+    if (existingInStore?.meta.deleted_locally === true) {
+      const reopened = await chatDataService.reopenDeletedGroupChat(cleanPublicKey);
+      if (!reopened) return null;
+      const mapped = mapChatRowToChat(reopened, contactContext);
+      chats.value = sortByLatest(
+        chats.value.map((chat) => (chat.id === mapped.id ? mapped : chat)),
+      );
+      return mapped;
+    }
     if (existingInStore) {
       const nextName = contactContext?.contactName || existingInStore.name;
       const nextMeta = syncChatMeta(
@@ -1678,7 +1720,9 @@ export const useChatStore = defineStore('chatStore', () => {
       return nextChat ?? existingInStore;
     }
 
-    const existingInDb = await chatDataService.getChatByPublicKey(cleanPublicKey);
+    let existingInDb = await chatDataService.getChatByPublicKey(cleanPublicKey);
+    if (existingInDb?.meta.deleted_locally === true)
+      existingInDb = await chatDataService.reopenDeletedGroupChat(cleanPublicKey);
     if (existingInDb) {
       const mapped = mapChatRowToChat(existingInDb, contactContext);
       if (!chats.value.some((chat) => chat.id === mapped.id)) {
@@ -1771,7 +1815,7 @@ export const useChatStore = defineStore('chatStore', () => {
               ...chat,
               name: nextName,
               avatar: nextAvatar,
-              meta: nextMeta,
+              meta: { ...nextMeta, deleted_locally: chat.meta.deleted_locally },
             }
           : chat,
       ),

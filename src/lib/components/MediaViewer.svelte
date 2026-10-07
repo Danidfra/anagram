@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
+  import { portal } from '#src/lib/actions/portal.ts';
   import { openExternalHttpUrl } from '#src/utils/externalLinks.ts';
   export let url: string;
   export let name = 'attachment';
@@ -25,6 +26,34 @@
     y = 0,
     dragging = false;
   let dialog: HTMLDivElement;
+  let gesture: {
+    pointerId: number;
+    x: number;
+    y: number;
+    backdrop: boolean;
+    moved: boolean;
+  } | null = null;
+  function finishGesture(event: PointerEvent) {
+    const current = gesture;
+    if (!current || current.pointerId !== event.pointerId) return;
+    gesture = null;
+    dragging = false;
+    if (
+      !current.backdrop ||
+      current.moved ||
+      Math.hypot(event.clientX - current.x, event.clientY - current.y) > 5
+    )
+      return;
+    const image = dialog.querySelector('img')?.getBoundingClientRect();
+    if (
+      image &&
+      (event.clientX < image.left ||
+        event.clientX > image.right ||
+        event.clientY < image.top ||
+        event.clientY > image.bottom)
+    )
+      onclose();
+  }
   onMount(() => {
     const previous = document.activeElement as HTMLElement | null;
     dialog.focus();
@@ -59,6 +88,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
+  use:portal
   class="image-viewer"
   role="dialog"
   aria-modal="true"
@@ -66,6 +96,10 @@
   tabindex="-1"
   bind:this={dialog}
   onkeydown={keyboard}
+  onclick={(event) => {
+    if (event.target === event.currentTarget || event.target === dialog.querySelector('header'))
+      onclose();
+  }}
 >
   <header>
     <button
@@ -93,12 +127,34 @@
       scale = Math.max(1, Math.min(5, scale + (e.deltaY < 0 ? 0.15 : -0.15)));
     }}
     onpointerdown={(e) => {
+      if (e.button !== 0 || !e.isPrimary) return;
+      gesture = {
+        pointerId: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+        backdrop: e.target === e.currentTarget,
+        moved: false,
+      };
       dragging = true;
       e.currentTarget.setPointerCapture(e.pointerId);
     }}
-    onpointerup={() => (dragging = false)}
+    onpointerup={finishGesture}
+    onpointercancel={() => {
+      gesture = null;
+      dragging = false;
+    }}
+    onlostpointercapture={() => {
+      gesture = null;
+      dragging = false;
+    }}
     onpointermove={(e) => {
-      if (dragging && scale > 1) {
+      if (
+        gesture &&
+        e.pointerId === gesture.pointerId &&
+        Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) > 5
+      )
+        gesture.moved = true;
+      if (dragging && gesture?.pointerId === e.pointerId && scale > 1) {
         x += e.movementX;
         y += e.movementY;
       }
@@ -127,6 +183,8 @@
   header {
     display: flex;
     justify-content: flex-end;
+    flex-wrap: wrap;
+    flex-shrink: 0;
     gap: 8px;
     align-items: center;
     padding: 12px;
@@ -135,6 +193,7 @@
     color: white;
   }
   .image-canvas {
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow: hidden;
@@ -143,8 +202,11 @@
     touch-action: none;
   }
   img {
+    position: absolute;
+    inset: 0;
+    margin: auto;
     max-width: 100%;
-    max-height: calc(100dvh - 70px);
+    max-height: 100%;
     object-fit: contain;
     user-select: none;
   }

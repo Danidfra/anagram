@@ -125,7 +125,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   ).toBeVisible();
   await b.getByRole('button', { name: 'Contact profile', exact: true }).click();
   await b.getByRole('tab', { name: 'Members', exact: true }).click();
-  await expect(b.getByRole('button', { name: 'Update members', exact: true })).toHaveCount(0);
+  await expect(b.getByRole('button', { name: 'Invite members', exact: true })).toHaveCount(0);
   await b.getByRole('tab', { name: 'Relays', exact: true }).click();
   await expect(b.getByRole('button', { name: 'Save group relays' })).toHaveCount(0);
   await b.getByRole('button', { name: 'Close dialog', exact: true }).click();
@@ -174,8 +174,11 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   // Removing a member must rotate automatically and exclude them from the new epoch.
   await a.getByRole('button', { name: 'Contact profile', exact: true }).click();
   await a.getByRole('tab', { name: 'Members', exact: true }).click();
-  await a.getByLabel('Member public keys', { exact: true }).fill('');
-  await a.getByRole('button', { name: 'Update members', exact: true }).click();
+  await expect(a.getByLabel('Member public keys', { exact: true })).toHaveCount(0);
+  await a
+    .locator(`.member[data-public-key="${bob.pubkey}"]`)
+    .getByRole('button', { name: 'Remove member', exact: true })
+    .click();
   await expect(a.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
   await a.getByRole('tab', { name: 'Epochs', exact: true }).click();
   await expect(a.getByTestId('group-details').locator('.epoch')).toHaveCount(3);

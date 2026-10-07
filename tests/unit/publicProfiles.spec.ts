@@ -54,3 +54,23 @@ describe('shared public profile display cache', () => {
     expect(getPublicProfile(key)?.picture).toBe('');
   });
 });
+
+it('evicts unused profiles while preserving mounted avatars and allows rehydration', () => {
+  clearPublicProfiles();
+  const observed = 'f'.repeat(64),
+    old = 'e'.repeat(64);
+  rememberPublicProfile(observed, { name: 'Visible' }, 1);
+  rememberPublicProfile(old, { name: 'Old' }, 1);
+  const stop = observePublicProfile(observed).subscribe(() => {});
+  try {
+    for (let i = 1; i <= 6000; i++)
+      rememberPublicProfile(i.toString(16).padStart(64, '0'), { name: `Profile ${i}` }, 1);
+    expect(getPublicProfile(old)).toBeUndefined();
+    expect(getPublicProfile(observed)?.name).toBe('Visible');
+    rememberPublicProfile(old, { name: 'Restored' }, 2);
+    expect(getPublicProfile(old)?.name).toBe('Restored');
+  } finally {
+    stop();
+    clearPublicProfiles();
+  }
+});

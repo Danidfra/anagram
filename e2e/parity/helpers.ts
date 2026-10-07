@@ -328,36 +328,49 @@ export async function openGroupContact(page: Page, publicKey: string) {
   await expect(page.getByTestId('group-details')).toBeVisible();
   await waitForAppBridge(page);
 }
+export async function selectGroupInviteMembers(page: Page, keys: string[]) {
+  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await page.getByRole('button', { name: 'Invite members', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Invite members', exact: true });
+  for (const key of keys) {
+    await dialog.getByRole('textbox', { name: 'Search people' }).fill(key);
+    const results = dialog.locator(
+      '[data-testid="invite-contact-result"], [data-testid="profile-search-result"]',
+    );
+    await expect(results).toHaveCount(1);
+    await results.click();
+  }
+  return dialog;
+}
 export async function addGroupMembersAndPublish(
   page: Page,
   keys: string[],
   partialDelivery = false,
 ) {
-  await page.getByRole('tab', { name: 'Members', exact: true }).click();
-  const input = page.getByLabel('Member public keys');
-  await input.fill([await input.inputValue(), ...keys].filter(Boolean).join('\n'));
-  await page.getByRole('button', { name: 'Update members', exact: true }).click();
+  const dialog = await selectGroupInviteMembers(page, keys);
+  await dialog.getByRole('button', { name: `Invite (${keys.length})`, exact: true }).click();
   if (partialDelivery) {
-    await expect(page.getByRole('button', { name: 'Update members', exact: true })).toBeEnabled();
+    await expect(dialog.getByRole('alert')).toContainText('invitations need a retry');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(
       page.getByRole('button', { name: 'Retry relay', exact: true }).first(),
     ).toBeVisible();
-  } else await expect(page.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
+  } else {
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId('group-details').getByRole('status')).toHaveText(
+      'Invitations sent',
+    );
+  }
 }
 export async function addGroupMemberAndPublish(page: Page, key: string, partialDelivery = false) {
   await addGroupMembersAndPublish(page, [key], partialDelivery);
 }
 export async function removeGroupMemberAndPublish(page: Page, key: string) {
   await page.getByRole('tab', { name: 'Members', exact: true }).click();
-  const input = page.getByLabel('Member public keys');
-  await input.fill(
-    (await input.inputValue())
-      .split(/\s+/)
-      .filter((value) => value !== key && value !== nip19.npubEncode(key))
-      .join('\n'),
-  );
-  await page.getByRole('button', { name: 'Update members', exact: true }).click();
+  const row = page.locator(`.member[data-public-key="${key}"]`);
+  await row.getByRole('button', { name: 'Remove member', exact: true }).click();
   await expect(page.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
+  await expect(row).toHaveCount(0);
 }
 export async function openGroupEpochsTab(page: Page) {
   await page.getByRole('tab', { name: 'Epochs', exact: true }).click();
@@ -524,7 +537,12 @@ export async function openProfileRelaysSection(page: Page) {
   await page.getByRole('tab', { name: 'Relays', exact: true }).click();
 }
 export async function expectPublishedMessageRelayStatus(page: Page, text: string) {
-  await expect(threadMessage(page, text).getByTitle('Delivered to relay')).toBeVisible();
+  await expect(
+    threadMessage(page, text)
+      .getByTestId('message-relay-status')
+      .locator('.bubble__status-segment--green, .bubble__status-segment--blue')
+      .first(),
+  ).toBeVisible();
 }
 export async function logoutFromSettings(page: Page) {
   await navigateInApp(page, '/settings');
@@ -620,7 +638,7 @@ export async function openAppRelaysSettings(page: Page) {
 export async function removeRelayFromSettings(page: Page, url: string) {
   const panel = page.getByTestId('settings-relays-app-panel');
   await panel
-    .locator('.settings-relay')
+    .locator('.relay-entry')
     .filter({ hasText: url })
     .getByRole('button', { name: 'Delete relay', exact: true })
     .click();
@@ -656,13 +674,20 @@ export async function forwardMessage(page: Page, text: string, name: string, _op
 }
 
 export async function confirmGroupBackup(page: Page) {
-  const words = await page.getByRole('list', { name: 'Recovery words' }).locator('strong').allTextContents();
-  await page.getByRole('checkbox', { name: 'I have saved my recovery words somewhere safe' }).check();
+  const words = await page
+    .getByRole('list', { name: 'Recovery words' })
+    .locator('strong')
+    .allTextContents();
+  await page
+    .getByRole('checkbox', { name: 'I have saved my recovery words somewhere safe' })
+    .check();
   await page.getByRole('button', { name: 'Verify backup', exact: true }).click();
   const inputs = page.getByRole('textbox', { name: /^Word \d+$/ });
   for (let i = 0; i < 3; i++) {
     const input = inputs.nth(i);
-    const label = await input.evaluate((el) => (el as HTMLInputElement).labels?.[0]?.textContent || '');
+    const label = await input.evaluate(
+      (el) => (el as HTMLInputElement).labels?.[0]?.textContent || '',
+    );
     const number = Number(label.match(/Word (\d+)/)?.[1]);
     await input.fill(words[number - 1]);
   }

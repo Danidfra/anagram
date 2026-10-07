@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onMount, onDestroy } from 'svelte';
   import { useCallStore } from '#src/stores/callStore.ts';
   import { useCallRoomStore } from '#src/stores/callRoomStore.ts';
@@ -618,7 +619,7 @@
       >{$translate('common.close')}</button
     >
   </div>{/if}
-{#if invite && $state.busy}<div class="call-invite-backdrop">
+{#if invite && $state.busy}<div class="call-invite-backdrop" use:dismissOnBackdrop={() => (invite = false)}>
     <div
       tabindex="-1"
       use:callDialogFocus

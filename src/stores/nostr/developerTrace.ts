@@ -35,6 +35,11 @@ export function createDeveloperTraceRuntime({
   developerTraceVersion,
   developerDiagnosticsStorageKey,
 }: DeveloperTraceRuntimeDeps) {
+  // Diagnostics are lossy under overload; they must never queue behind history forever.
+  let pendingWrites = 0;
+  let droppedEntries = 0;
+  let consoleWindowAt = 0;
+  let consoleCount = 0;
   function readDeveloperDiagnosticsEnabled(): boolean {
     return readDeveloperDiagnosticsEnabledFromStorage(developerDiagnosticsStorageKey);
   }
@@ -145,19 +150,26 @@ export function createDeveloperTraceRuntime({
     phase: string,
     details: Record<string, unknown>,
   ): void {
+    const now = Date.now();
+    if (now - consoleWindowAt >= 10000) {
+      consoleWindowAt = now;
+      consoleCount = 0;
+    }
+    if (consoleCount++ >= 20) return;
     const label = `[${diagnosticText(scope)}] ${diagnosticText(phase)}`;
     const prefixArgs = buildConsoleTracePrefixArgs(scope, phase, details);
+    const snapshot = `${label} ${prefixArgs.join(' ')} ${JSON.stringify(details)}`;
     if (level === 'error') {
-      console.error(label, ...prefixArgs, details);
+      console.error(snapshot);
       return;
     }
 
     if (level === 'warn') {
-      console.warn(label, ...prefixArgs, details);
+      console.warn(snapshot);
       return;
     }
 
-    console.info(label, ...prefixArgs, details);
+    console.info(snapshot);
   }
 
   function logDeveloperTrace(
@@ -167,7 +179,15 @@ export function createDeveloperTraceRuntime({
     details: Record<string, unknown> = {},
   ): void {
     if (!developerDiagnosticsEnabled.value || !getLoggedInPublicKeyHex()) return;
+    if (pendingWrites >= 200) {
+      droppedEntries++;
+      return;
+    }
     const normalizedDetails = normalizeDeveloperTraceDetails(details);
+    if (droppedEntries) {
+      normalizedDetails.droppedTraceEntries = droppedEntries;
+      droppedEntries = 0;
+    }
     if (shouldEchoDeveloperTraceToConsole(scope, phase)) {
       echoDeveloperTraceToConsole(level, scope, phase, normalizedDetails);
     }
@@ -186,13 +206,17 @@ export function createDeveloperTraceRuntime({
       details: normalizedDetails,
     };
 
+    pendingWrites++;
     void developerTraceDataService
       .appendEntry(entry)
       .then(() => {
         bumpDeveloperTraceVersion();
       })
-      .catch((error) => {
-        console.error('Failed to persist developer trace entry.', error);
+      .catch(() => {
+        console.error('Failed to persist developer trace entry.');
+      })
+      .finally(() => {
+        pendingWrites--;
       });
   }
 

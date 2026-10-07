@@ -1,4 +1,5 @@
 import { shallowReactive } from '@vue/reactivity';
+import type { Readable } from 'svelte/store';
 import { observe } from '#src/lib/state/store.ts';
 
 // Display-only whitelist. Contact metadata can contain encrypted group keys and
@@ -9,10 +10,33 @@ export interface PublicProfile {
   createdAt?: number;
   eventId?: string;
 }
+const PROFILE_CACHE_LIMIT = 5000;
+const observers = new Map<string, number>();
 const profiles = shallowReactive(new Map<string, PublicProfile>());
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 export const getPublicProfile = (publicKey: string) => profiles.get(publicKey);
-export const observePublicProfile = (publicKey: string) => observe(() => profiles.get(publicKey));
+function trimProfiles(): void {
+  if (profiles.size <= PROFILE_CACHE_LIMIT) return;
+  for (const key of profiles.keys()) {
+    if (!observers.has(key)) profiles.delete(key);
+    if (profiles.size <= PROFILE_CACHE_LIMIT) break;
+  }
+}
+export function observePublicProfile(publicKey: string): Readable<PublicProfile | undefined> {
+  return {
+    subscribe(run) {
+      observers.set(publicKey, (observers.get(publicKey) ?? 0) + 1);
+      const stop = observe(() => profiles.get(publicKey)).subscribe(run);
+      return () => {
+        stop();
+        const remaining = (observers.get(publicKey) ?? 1) - 1;
+        if (remaining) observers.set(publicKey, remaining);
+        else observers.delete(publicKey);
+        trimProfiles();
+      };
+    },
+  };
+}
 export const clearPublicProfiles = () => profiles.clear();
 
 export function rememberPublicProfile(
@@ -39,8 +63,11 @@ export function rememberPublicProfile(
   }
   const picture = text(metadata.picture) || text(metadata.image);
   const next: PublicProfile = {
-    name: text(metadata.display_name) || text(metadata.displayName) || text(metadata.name),
-    picture: /^https?:\/\//i.test(picture) ? picture : '',
+    name: (text(metadata.display_name) || text(metadata.displayName) || text(metadata.name)).slice(
+      0,
+      300,
+    ),
+    picture: picture.length <= 4096 && /^https?:\/\//i.test(picture) ? picture : '',
     createdAt,
     eventId,
   };
@@ -56,4 +83,5 @@ export function rememberPublicProfile(
     )
   )
     profiles.set(publicKey, next);
+  trimProfiles();
 }

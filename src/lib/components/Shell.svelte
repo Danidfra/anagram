@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import GroupSeedBackup from './GroupSeedBackup.svelte';
   import GroupRestore from './GroupRestore.svelte';
   let groupFlow: 'choose' | 'details' | 'backup' | 'restore' = 'choose';
@@ -49,6 +50,7 @@
   import { ROOM_MAX_MEMBERS } from '#src/types/callRoom.ts';
   import MessageReactions from './MessageReactions.svelte';
   import MessageBody from './MessageBody.svelte';
+  import MessageRelayStatus from './MessageRelayStatus.svelte';
   import MessageActions from './MessageActions.svelte';
   import {
     readDesktopSidebarWidthPreference,
@@ -301,7 +303,24 @@
     $state.selected.meta.inbox_state !== 'blocked';
   $: callBusy = Boolean(($callState.phase && $callState.phase !== 'ended') || $callState.room);
 
-  let unreadBoundary = '';
+  $: unreadBoundary = $state.selected?.unreadCount
+    ? String($state.selected.meta.last_seen_received_activity_at ?? '')
+    : '';
+  let selectedRelayUrls: string[] = [];
+  let relayContactLoad = 0;
+  $: relayContactSource = `${$state.selected?.publicKey ?? ''}:${$state.contactVersion}`;
+  $: void loadSelectedRelayUrls(relayContactSource);
+  async function loadSelectedRelayUrls(source: string) {
+    const revision = ++relayContactLoad;
+    const key = source.split(':')[0];
+    selectedRelayUrls = [];
+    if (!key) return;
+    try {
+      const contact = await contactsService.getContactByPublicKey(key);
+      if (revision === relayContactLoad)
+        selectedRelayUrls = contact?.relays.map((relay) => relay.url) ?? [];
+    } catch { /* Recorded delivery statuses remain available without contact metadata. */ }
+  }
   const markingReactions = new Set<string>();
   $: unseenReactionMessages = $state.thread.items.filter(
     (message) =>
@@ -309,9 +328,9 @@
       countUnseenReactionsForAuthor(message.meta.reactions ?? [], nostr.getLoggedInPublicKeyHex()) >
         0,
   );
-  $: firstUnreadId = unreadBoundary
+  $: firstUnreadId = $state.selected?.unreadCount
     ? $state.thread.items.find(
-        (message) => message.sender !== 'me' && message.sentAt > unreadBoundary,
+        (message) => message.sender !== 'me' && (!unreadBoundary || message.sentAt > unreadBoundary),
       )?.id
     : undefined;
   $: if (unseenReactionMessages.length) void tick().then(markVisibleReactions);
@@ -433,9 +452,6 @@
     }
   }
   async function loadThread(id: string) {
-    unreadBoundary = $state.selected?.unreadCount
-      ? String($state.selected.meta.last_seen_received_activity_at ?? '')
-      : '';
     stickyDay = '';
     nearBottom = true;
     await messages.loadMessages(id);
@@ -443,6 +459,11 @@
     scrollToBottom(scrollArea);
   }
   async function open(chat: Chat) {
+    if (chat.meta.deleted_locally === true) {
+      const reopened = await chats.addContact(chat.name, chat.publicKey);
+      if (!reopened) return;
+      chat = reopened;
+    }
     nostr.prioritizeThreadHistory(chat.publicKey, true);
     showRequests = false;
     await goto(`/chats/${chat.id}`);
@@ -1264,6 +1285,7 @@
               goto('/chats');
             }}><Icon name="back" /></button
           ><Avatar
+            privateGroup={$state.selected.type === 'group'}
             name={selectedName}
             publicKey={$state.selected.publicKey}
             eager
@@ -1401,6 +1423,9 @@
               >
             </div>{/if}
           {#each $state.thread.items as message, index (message.id)}
+            {@const author = messageAuthor(message, $state.selected, mentionProfiles, $state.profiles, $translate('common.you'))}
+            {@const continuesSender = index > 0 && message.authorPublicKey === $state.thread.items[index - 1].authorPublicKey && date(message.sentAt) === date($state.thread.items[index - 1].sentAt)}
+            {@const senderContinues = index + 1 < $state.thread.items.length && message.authorPublicKey === $state.thread.items[index + 1].authorPublicKey && date(message.sentAt) === date($state.thread.items[index + 1].sentAt)}
             {#if index === 0 || date(message.sentAt) !== date($state.thread.items[index - 1].sentAt)}<div
                 class="date-divider"
               >
@@ -1425,9 +1450,8 @@
               onpointerup={cancelMessagePress}
               onpointercancel={cancelMessagePress}
               class:highlighted={highlightedMessage === message.id}
-              class:sender-continuation={index > 0 &&
-                message.authorPublicKey === $state.thread.items[index - 1].authorPublicKey &&
-                date(message.sentAt) === date($state.thread.items[index - 1].sentAt)}
+              class:sender-continuation={continuesSender}
+              class:sender-continues={senderContinues}
               class:own={message.sender === 'me'}
               id="message-{message.id}"
               data-testid="message-bubble"
@@ -1435,40 +1459,25 @@
               data-author-public-key={message.authorPublicKey}
               style="content-visibility:auto;contain-intrinsic-size:auto 80px"
             >
-              <button
-                class="message-author"
-                data-testid="thread-author-profile-link"
-                onclick={() => openAuthor(message.authorPublicKey)}
-              >
-                <Avatar
-                  publicKey={message.authorPublicKey}
-                  eager
-                  picture={messageAuthor(
-                    message,
-                    $state.selected,
-                    mentionProfiles,
-                    $state.profiles,
-                    $translate('common.you'),
-                  ).picture}
-                  name={messageAuthor(
-                    message,
-                    $state.selected,
-                    mentionProfiles,
-                    $state.profiles,
-                    $translate('common.you'),
-                  ).name}
-                  size={36}
-                /><strong
-                  >{messageAuthor(
-                    message,
-                    $state.selected,
-                    mentionProfiles,
-                    $state.profiles,
-                    $translate('common.you'),
-                  ).name}</strong
-                >
-              </button>
+              {#if messageLayout === 'bubbles'}
+                {#if !senderContinues}<button class="bubble-avatar"
+                  data-testid="thread-author-profile-link" aria-label={`Open profile: ${author.name}`}
+                  onclick={() => openAuthor(message.authorPublicKey)}>
+                  <Avatar publicKey={message.authorPublicKey} eager picture={author.picture} name={author.name} size={38} />
+                </button>{/if}
+              {:else}
+                <button class="message-author" data-testid="thread-author-profile-link"
+                  onclick={() => openAuthor(message.authorPublicKey)}>
+                  <Avatar publicKey={message.authorPublicKey} eager picture={author.picture} name={author.name} size={36} />
+                  <strong>{author.name}</strong>
+                </button>
+              {/if}
               <div class="message-content">
+                {#if messageLayout === 'bubbles' && !continuesSender}
+                  <button class="bubble-author-name" data-testid="thread-author-name-link"
+                    style:color={`var(--bubble-author-${(Number.parseInt(message.authorPublicKey.slice(0, 8), 16) || 0) % 6})`}
+                    onclick={() => openAuthor(message.authorPublicKey)}>{author.name}</button>
+                {/if}
                 {#if message.meta.reply}<button
                     class="reply-preview"
                     onclick={() => act(() => openReplyTarget(message))}
@@ -1476,6 +1485,7 @@
                   >{/if}
                 <MessageBody
                   {message}
+                  bubbleLayout={messageLayout === 'bubbles'}
                   {mentionProfiles}
                   canRedial={canCall && !callBusy}
                   onredial={(mode) =>
@@ -1486,21 +1496,19 @@
                     modal = 'room';
                   }}
                 />
+                <div class:bubble-footer={messageLayout === 'bubbles' && Boolean(message.meta.reactions?.length)}
+                  class:bubble-time-only={messageLayout === 'bubbles' && !message.meta.reactions?.length}>
                 <span class="message-time"
                   >{#if message.meta.edited}<span data-testid="message-edited-label"
                       >edited ·
-                    </span>{/if}{time(message.sentAt)}{#if message.sender === 'me'}<span
-                      title={message.nostrEvent?.relay_statuses.some(
-                        (r) => r.status === 'published',
-                      )
-                        ? 'Delivered to relay'
-                        : 'Pending relay delivery'}
-                      >{message.nostrEvent?.relay_statuses.some((r) => r.status === 'published')
-                        ? ' ✓✓'
-                        : ' ◷'}</span
-                    >{/if}</span
+                    </span>{/if}{time(message.sentAt)}<MessageRelayStatus
+                      {message}
+                      contactName={$state.selected?.name ?? ''}
+                      contactRelayUrls={selectedRelayUrls}
+                    /></span
                 >
                 {#if message.meta.reactions?.length}<MessageReactions {message} />{/if}
+                </div>
               </div>
               {#if !message.meta.deleted}<button
                   class="icon-button message-menu-trigger"
@@ -1675,7 +1683,7 @@
     </main>
   </div>
   {#if modal}
-    <div class="modal-backdrop" role="presentation">
+    <div class="modal-backdrop" role="presentation" use:dismissOnBackdrop={() => (modal = '')}>
       <div class="modal" role="dialog" tabindex="-1" aria-modal="true" aria-label={modal}>
         <header>
           <h2>
@@ -1806,7 +1814,7 @@
                   if (forward) await messages.forwardMessage(chat.id, forward);
                   modal = '';
                 })}
-              ><Avatar name={chat.name} publicKey={chat.publicKey} size={36} />{chat.name}</button
+              ><Avatar privateGroup={chat.type === 'group'} name={chat.name} publicKey={chat.publicKey} size={36} />{chat.name}</button
             >{/each}
         {:else if modal === 'room'}
           <p>{$translate('room.description', { count: ROOM_MAX_MEMBERS })}</p>

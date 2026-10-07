@@ -732,6 +732,10 @@ export function createPrivateMessagesIngestRuntime({
       }
     }
 
+    if (resolvedGroupChatPublicKey && preflightChat === undefined)
+      preflightChat = await chatDataService.getChatByPublicKey(chatPubkey);
+    if (preflightChat?.meta.deleted_locally === true && rumorEvent.kind !== 1014) return;
+
     if (
       rumorEvent.kind !== NostrKind.PrivateDirectMessage ||
       readMessageEditTargetEventId(rumorEvent.tags) ||
@@ -905,6 +909,9 @@ export function createPrivateMessagesIngestRuntime({
           seedRelayUrls: wrappedRelayUrls,
         },
       );
+      // Retain verified keys for an explicit reopen, without restoring notices
+      // or invitations to the inbox for a locally deleted group.
+      if (existingGroupChat?.meta.deleted_locally === true) return;
       queueBackgroundGroupContactRefresh(senderPubkeyHex, fallbackGroupName, wrappedRelayUrls);
       queueNewChatProfile();
 
@@ -1476,7 +1483,15 @@ export function createPrivateMessagesIngestRuntime({
         event_id: rumorEventId,
         meta: messageMeta,
       });
-      if (!createdMessage) throw new Error('Incoming message persistence failed');
+      if (!createdMessage) {
+        // Deletion may win the race after this message was staged for display.
+        const latestChat = await chatDataService.getChatByPublicKey(chat.public_key);
+        if (latestChat?.meta.deleted_locally === true) {
+          useMessageStore().removeChatMessages(chat.public_key);
+          return;
+        }
+        throw new Error('Incoming message persistence failed');
+      }
       if (processingGeneration !== ingestQueueGeneration) return false;
 
       let nextMessageRow = await applyPendingIncomingReactionsForMessage(createdMessage, {

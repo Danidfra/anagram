@@ -525,16 +525,12 @@ describe('nostr runtime core logic', () => {
     ]);
     expect(developerTraceDataServiceMock.appendEntry).toHaveBeenCalledTimes(2);
     expect(developerTraceVersion.value).toBe(2);
-    expect(console.info).toHaveBeenCalledWith(
-      '[subscription:private-messages] req',
-      'relays=wss://relay.one, wss://relay.two',
-      'reqStatement=["REQ","private-messages-1","{\\"kinds\\":[4],\\"limit\\":100}"]',
-      expect.objectContaining({
-        relayUrls: ['wss://relay.one', 'wss://relay.two'],
-        reqStatement: ['REQ', 'private-messages-1', '{"kinds":[4],"limit":100}'],
-        subId: 'private-messages-1',
-      }),
-    );
+    const consoleSnapshot = vi.mocked(console.info).mock.calls.at(-1)!;
+    expect(consoleSnapshot).toHaveLength(1);
+    expect(typeof consoleSnapshot[0]).toBe('string');
+    expect(consoleSnapshot[0]).toContain('[subscription:private-messages] req');
+    expect(consoleSnapshot[0]).toContain('relays=wss://relay.one, wss://relay.two');
+    expect(consoleSnapshot[0]).toContain('"subId":"private-messages-1"');
 
     runtime.setDeveloperDiagnosticsEnabled(false);
     await flushPromises();

@@ -83,6 +83,7 @@ interface StartupTaskRunOptions {
 }
 
 interface StartupContactSyncRuntimeDeps {
+  logStartupRestore?: (phase: string, details?: Record<string, unknown>) => void;
   applyContactCursorStateToContact: (
     contact: ContactRecord,
     cursor: ContactCursorContent,
@@ -144,15 +145,12 @@ interface StartupContactSyncRuntimeDeps {
   ) => Promise<void>;
 }
 
-function logStartupRestore(phase: string, details: Record<string, unknown> = {}): void {
-  console.log('[anagram][startup-restore]', phase, details);
-}
-
 function formatStartupRestoreError(error: unknown): string {
   return error instanceof Error ? error.message : String(error ?? '');
 }
 
 export function createStartupContactSyncRuntime({
+  logStartupRestore = () => {},
   applyContactCursorStateToContact,
   beginStartupStep,
   bumpContactListVersion,
@@ -205,7 +203,7 @@ export function createStartupContactSyncRuntime({
   async function refreshAllStoredContacts(): Promise<RefreshAllStoredContactsSummary> {
     await contactsService.init();
     const storedContacts = await contactsService.listContacts();
-    console.log('Starting stored contacts refresh after DM startup EOSE', {
+    logStartupRestore('contacts-refresh', {
       contactCount: storedContacts.length,
     });
     if (storedContacts.length === 0) {
@@ -241,7 +239,7 @@ export function createStartupContactSyncRuntime({
     let cursorAppliedCount = 0;
     let cursorUiReloaded = false;
     if (readPrivatePreferencesFromStorage() && refreshedContacts.length > 0) {
-      console.log('Starting per-contact cursor data refresh after DM startup EOSE', {
+      logStartupRestore('cursors-refresh', {
         contactCount: refreshedContacts.length,
       });
       const cursorsByDTag = await fetchContactCursorEvents(refreshedContacts);
@@ -262,7 +260,7 @@ export function createStartupContactSyncRuntime({
       }
 
       if (cursorAppliedCount > 0) {
-        console.log('Starting UI refresh after per-contact cursor data refresh', {
+        logStartupRestore('cursor-ui-refresh', {
           cursorAppliedCount,
         });
         const { useMessageStore } = await import('#src/stores/messageStore.ts');

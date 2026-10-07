@@ -137,7 +137,27 @@ p {
 .sidebar-content {
   flex: 1;
   overflow: auto;
+  scrollbar-width: none;
   min-height: 0;
+}
+.sidebar-content::-webkit-scrollbar {
+  display: none;
+}
+@media (hover: hover) {
+  .sidebar-content {
+    /* Reserve the narrow track when overflowing so hover doesn't move rows. */
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .sidebar-content:hover {
+    scrollbar-color: #526171 transparent;
+  }
+  .sidebar-content::-webkit-scrollbar {
+    display: block;
+  }
+  .sidebar-content:not(:hover)::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
 }
 .chat-item {
   width: 100%;
@@ -307,6 +327,7 @@ p {
 .message-row {
   position: relative;
   margin: 0 0 5px;
+  padding-right: 30px;
   padding-bottom: 2px;
 }
 .message-author {
@@ -924,7 +945,7 @@ input[type='range'] {
 
 .message-content {
   border: 0;
-  padding: 2px 90px 2px 46px;
+  padding: 2px 110px 2px 46px;
 }
 .nav-rail__btn {
   border-radius: 10px;
@@ -1160,4 +1181,98 @@ input[type='range'] {
   height: 100%;
   color: var(--nc-text-secondary);
   font-size: 14px;
+}
+
+/* Bubble layout keeps author names inside, with the avatar at the end of a run.
+   Text layout continues to use its existing author row and message spacing. */
+.bubble-layout {
+  --bubble-author-0: #267336;
+  --bubble-author-1: #176a9e;
+  --bubble-author-2: #975309;
+  --bubble-author-3: #7953ad;
+  --bubble-author-4: #a74373;
+  --bubble-author-5: #17746e;
+}
+body.body--dark .bubble-layout {
+  --bubble-author-0: #80df89;
+  --bubble-author-1: #64c6ff;
+  --bubble-author-2: #ffab53;
+  --bubble-author-3: #c49cff;
+  --bubble-author-4: #ff8dbd;
+  --bubble-author-5: #6cdbce;
+}
+.bubble-layout .message-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: end;
+  margin-bottom: 9px;
+}
+.bubble-layout .message-row.sender-continues { margin-bottom: 3px; }
+.bubble-layout .bubble-avatar {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: end;
+  display: flex;
+  padding: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+}
+.bubble-layout .message-content {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: start;
+  display: flow-root;
+  width: fit-content;
+  max-width: min(100%, 640px);
+  min-width: 0;
+  padding: 8px 12px 6px;
+  border-radius: 18px 18px 18px 6px;
+  background: var(--nc-received);
+}
+.bubble-layout .message-row.own .message-content { background: var(--nc-sent); }
+.bubble-layout .sender-continuation .message-content { border-top-left-radius: 6px; }
+.bubble-author-name {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 0;
+  margin-bottom: 2px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: left;
+}
+.bubble-layout .message-time {
+  position: static;
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  margin: 2px 0 0 12px;
+  line-height: 20px;
+}
+.bubble-time-only { display: contents; }
+.bubble-footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+.bubble-footer .message-time { float: none; order: 2; margin: 0 0 0 auto; }
+@media (max-width: 767px) {
+  .bubble-layout:not(.group-thread) .message-row.own {
+    grid-template-columns: minmax(0, 1fr) 38px;
+  }
+  .bubble-layout:not(.group-thread) .own .bubble-avatar { grid-column: 2; }
+  .bubble-layout:not(.group-thread) .own .message-content {
+    grid-column: 1;
+    justify-self: end;
+    border-radius: 18px 18px 6px 18px;
+  }
+  .bubble-layout:not(.group-thread) .own.sender-continuation .message-content {
+    border-top-right-radius: 6px;
+  }
 }

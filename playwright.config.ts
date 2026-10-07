@@ -3,7 +3,7 @@ const liveCalls = process.env.ANAGRAM_LIVE_CALL_TEST === '1';
 const port = Number(process.env.ANAGRAM_E2E_PORT ?? (liveCalls ? 5187 : 5173));
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: ['**/pwa/**'],
+  testIgnore: ['**/pwa/**', '**/memory-lifetime.spec.ts'],
   timeout: 90000,
   expect: { timeout: 15000 },
   fullyParallel: false,

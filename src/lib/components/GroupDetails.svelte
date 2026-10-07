@@ -1,4 +1,5 @@
 <script lang="ts">
+  import GroupInviteDialog from './GroupInviteDialog.svelte';
   import GroupSeedBackup from './GroupSeedBackup.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -34,16 +35,18 @@
   let replacementMembers = '';
   let replacementConfirmed = false;
   let profile: PublishUserMetadataInput = {};
-  let members = '';
   let reviewedStateId: string | undefined;
+  let reviewedMemberKeys: string[] = [];
   let knownOwners: string[] = [];
   let relayEntries: ContactRelay[] = [];
   let relayUrl = '';
   let busy = false;
+  let inviting = false;
   let error = '';
   let notice = '';
   let mounted = false;
   let revision = 0;
+  let resetPending = false;
   $: owner = Boolean(
     contact?.meta.owner_public_key === nostr.getLoggedInPublicKeyHex() &&
     contact?.meta.group_private_key_encrypted,
@@ -65,13 +68,16 @@
 
   async function load(reset: boolean) {
     const request = ++revision;
+    // A contact update can supersede an explicit refresh while it is loading.
+    // Carry the reset into the newer request so the reviewed form is refreshed too.
+    resetPending ||= reset || !contact || contact.public_key !== publicKey;
+    const resetForm = resetPending;
     const [next, chat] = await Promise.all([
       contactsService.getContactByPublicKey(publicKey),
       chatDataService.getChatByPublicKey(publicKey),
     ]);
-    const first = !contact || contact.public_key !== publicKey;
     const recovery =
-      (reset || first) &&
+      resetForm &&
       next?.meta.group_private_key_encrypted &&
       next.meta.owner_public_key === nostr.getLoggedInPublicKeyHex()
         ? await nostr.groupRecovery.secretFor(publicKey)
@@ -95,7 +101,8 @@
       }))
       .sort((a, b) => b.epoch_number - a.epoch_number);
     deliveries = tickets;
-    if (reset || first) {
+    if (resetForm) {
+      resetPending = false;
       const publicMeta = next?.meta ?? {};
       // Whitelist public profile fields: contact metadata also contains encrypted secrets.
       profile = Object.fromEntries(
@@ -116,17 +123,14 @@
           .map((key) => [key, publicMeta[key as keyof typeof publicMeta]]),
       );
       profile.name = profile.name || next?.name || '';
-      members = (next?.meta.group_members ?? meta.group_members ?? [])
-        .map((member) => nostr.encodeNpub(member.public_key))
-        .join('\n');
+      reviewedMemberKeys = (next?.meta.group_members ?? meta.group_members ?? []).map(
+        (member) => member.public_key,
+      );
       relayEntries = (next?.relays ?? []).map((entry) => ({ ...entry }));
       reviewedStateId = recovery?.recovery_state_id;
       knownOwners = recovery?.recovery_state?.owners ?? [];
       if (recovery) {
-        members = (recovery.recovery_state?.members ?? [])
-          .filter((key) => key !== nostr.getLoggedInPublicKeyHex())
-          .map((key) => nostr.encodeNpub(key))
-          .join('\n');
+        reviewedMemberKeys = [...(recovery.recovery_state?.members ?? [])];
       }
     }
   }
@@ -176,14 +180,7 @@
     await load(false);
     if (failures) throw new Error(`${failures} relay deliveries still need a retry.`);
   }
-  async function saveMembers(rotate = false) {
-    const keys: string[] = [];
-    for (const value of members.split(/[\s,]+/).filter(Boolean)) {
-      const found = await nostr.resolveIdentifier(value);
-      if (!found.normalizedPubkey)
-        throw new Error('Enter a valid public key or NIP-05 address for each member.');
-      keys.push(found.normalizedPubkey);
-    }
+  async function publishMembers(keys: string[], rotate = false) {
     if (!reviewedStateId) throw new Error('Refresh recovery before editing group membership.');
     const result = rotate
       ? await nostr.rotateGroupEpochAndSendTickets(publicKey, keys, [], reviewedStateId)
@@ -193,6 +190,32 @@
       throw new Error(
         `Membership saved, but ${result.failedMemberPubkeys.length} invitations need a retry. Use Resend invitation below.`,
       );
+  }
+  async function inviteMembers(keys: string[], hideEarlierMessages = false) {
+    if (!owner || busy) throw new Error('Group membership cannot be updated right now.');
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      // Preserve the reviewed membership and its concurrent-update guard.
+      const hasNewMembers = keys.some((key) => !reviewedMemberKeys.includes(key));
+      await publishMembers(
+        [...new Set([...reviewedMemberKeys, ...keys])],
+        hideEarlierMessages && hasNewMembers,
+      );
+      await useChatStore().reload();
+      notice = 'Invitations sent';
+    } finally {
+      busy = false;
+    }
+  }
+  async function removeMember(memberPublicKey: string) {
+    if (!owner || memberPublicKey === nostr.getLoggedInPublicKeyHex())
+      throw new Error('You cannot remove yourself from this group.');
+    if (!reviewedMemberKeys.includes(memberPublicKey))
+      throw new Error('Refresh recovery and review the members before removing someone.');
+    // Use the membership snapshot paired with reviewedStateId.
+    await publishMembers(reviewedMemberKeys.filter((key) => key !== memberPublicKey));
   }
   async function replaceMaster(phrase: string) {
     await run(async () => {
@@ -255,6 +278,19 @@
   }
 </script>
 
+{#if inviting && owner}
+  <GroupInviteDialog
+    existingKeys={[
+      publicKey,
+      nostr.getLoggedInPublicKeyHex() ?? '',
+      ...reviewedMemberKeys,
+      ...visibleMembers.map((member) => member.public_key),
+    ]}
+    oninvite={inviteMembers}
+    onclose={() => (inviting = false)}
+  />
+{/if}
+
 <div class="group-details" data-testid="group-details">
   <div class="tabs" role="tablist" aria-label="Group details">
     {#each ['Profile', 'Members', 'Relays', 'Epochs', ...(owner ? ['Recovery'] : [])] as name}
@@ -295,7 +331,12 @@
       <p>{contact.meta.about ?? ''}</p>{/if}
     <button class="outline" disabled={busy} onclick={() => run(refresh)}>Refresh group</button>
   {:else if tab === 'Members'}
-    <button class="outline" disabled={busy} onclick={() => run(refresh)}>Refresh members</button>
+    <div class="member-actions">
+      {#if owner}<button class="primary" disabled={busy} onclick={() => (inviting = true)}
+          >Invite members</button
+        >{/if}
+      <button class="outline" disabled={busy} onclick={() => run(refresh)}>Refresh members</button>
+    </div>
     {#if owner && deliveries.some( (delivery) => delivery.statuses.some((status) => status.direction === 'outbound' && status.status === 'failed') )}
       <button class="outline" disabled={busy} onclick={() => run(retryFailedInvitations)}
         >Retry all failed deliveries</button
@@ -331,28 +372,37 @@
                   >{/if}
               {/each}
             {/each}
-            <button
-              class="outline"
-              disabled={busy}
-              onclick={() =>
-                run(async () =>
-                  checkDelivery(await nostr.sendGroupEpochTicket(publicKey, member.public_key)),
-                )}>Resend invitation</button
-            >
+            <div class="member-actions">
+              <button
+                class="outline"
+                disabled={busy}
+                onclick={() =>
+                  run(async () =>
+                    checkDelivery(await nostr.sendGroupEpochTicket(publicKey, member.public_key)),
+                  )}>Resend invitation</button
+              >
+              {#if member.public_key !== nostr.getLoggedInPublicKeyHex()}
+                <button
+                  class="outline danger-text"
+                  data-testid="group-remove-member"
+                  disabled={busy}
+                  onclick={() => run(() => removeMember(member.public_key))}>Remove member</button
+                >
+              {/if}
+            </div>
           {/if}
         </div>
       </div>
     {/each}
     {#if owner}
-      <label>Member public keys<textarea rows="5" bind:value={members}></textarea></label>
       <p>
         Removing a member rotates the group keys. Existing messages remain available to previous
         members.
       </p>
-      <button class="primary" disabled={busy} onclick={() => run(() => saveMembers())}
-        >Update members</button
-      >
-      <button class="outline" disabled={busy} onclick={() => run(() => saveMembers(true))}
+      <button
+        class="outline"
+        disabled={busy}
+        onclick={() => run(() => publishMembers([...reviewedMemberKeys], true))}
         >Rotate group keys</button
       >
     {/if}
@@ -477,7 +527,10 @@
         class="outline"
         disabled={busy}
         onclick={() => {
-          replacementMembers = members;
+          replacementMembers = reviewedMemberKeys
+            .filter((key) => key !== nostr.getLoggedInPublicKeyHex())
+            .map((key) => nostr.encodeNpub(key))
+            .join('\n');
           replacementConfirmed = false;
           replacement = 'members';
         }}>Replace group master</button
@@ -522,6 +575,12 @@
     align-items: start;
     gap: 10px;
     padding: 12px 0;
+  }
+  .member-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
   }
   .member-info {
     min-width: 0;

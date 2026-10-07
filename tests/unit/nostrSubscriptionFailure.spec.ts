@@ -135,10 +135,44 @@ it('restores a dropped relay subscription when it reconnects alongside a healthy
   client.pool.emit('relay:connect', client.pool.getRelay(reconnecting, false));
   await vi.waitFor(() => expect(handlers.get(reconnecting)).not.toBe(dropped));
   expect(handlers.get(good)).toBe(healthy);
+  handlers.get(reconnecting).onevent({
+    id: 'recovered-live',
+    kind: 1059,
+    tags: [],
+    content: 'ciphertext',
+    created_at: 1,
+    pubkey: 'a'.repeat(64),
+  });
+  expect(onEvent).toHaveBeenCalledOnce();
+  subscription.stop();
+});
+
+it('keeps reconnect/auth cleanup bounded and start is idempotent', async () => {
+  const healthy = 'wss://healthy.example/',
+    flaky = 'wss://flaky.example/';
+  const { client, handlers, subscription, onEvent } = await setup([healthy, flaky], true);
+  const relay = client.pool.getRelay(flaky, false);
+  const retainedCleanups = () => (subscription as unknown as { closers: unknown[] }).closers.length;
+  const initial = retainedCleanups();
+  subscription.start();
+  await Promise.resolve();
+  expect(retainedCleanups()).toBe(initial);
+  for (let i = 0; i < 250; i++) {
+    relay.status = NostrRelayStatus.CONNECTED;
+    handlers.get(flaky).onclose('auth-required: authenticate');
+    relay.status = NostrRelayStatus.AUTHENTICATED;
+    relay.emit('authed');
+    const old = handlers.get(flaky);
+    old.onclose('connection closed');
+    client.pool.emit('relay:connect', relay);
+    await Promise.resolve();
+    expect(handlers.get(flaky)).not.toBe(old);
+    expect(retainedCleanups()).toBe(initial);
+  }
   handlers
-    .get(reconnecting)
+    .get(healthy)
     .onevent({
-      id: 'recovered-live',
+      id: 'still-live',
       kind: 1059,
       tags: [],
       content: 'ciphertext',
@@ -147,4 +181,5 @@ it('restores a dropped relay subscription when it reconnects alongside a healthy
     });
   expect(onEvent).toHaveBeenCalledOnce();
   subscription.stop();
+  expect(retainedCleanups()).toBe(0);
 });

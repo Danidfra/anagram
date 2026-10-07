@@ -298,6 +298,37 @@ body.native-mobile.mobile.nc-native-keyboard-visible .app-dialog__body {
   overflow-y: auto;
 }
 
+/* Shared by dialogs, text fields, lists and message history. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #526171 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #526171;
+  border-radius: 8px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #718092;
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 ::selection {
   background: rgba(46, 129, 255, 0.25);
 }

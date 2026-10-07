@@ -70,8 +70,10 @@ test('twelve words restore old epochs and co-owner access on a fresh account', a
 
     await openGroupContact(recovered.page, group);
     await recovered.page.getByRole('tab', { name: 'Members', exact: true }).click();
-    await recovered.page.getByLabel('Member public keys').fill(member.session.publicKey);
-    await recovered.page.getByRole('button', { name: 'Update members', exact: true }).click();
+    await recovered.page
+      .locator(`.member[data-public-key="${owner.session.publicKey}"]`)
+      .getByRole('button', { name: 'Remove member', exact: true })
+      .click();
     await expect(recovered.page.getByRole('alert')).toContainText('Replace group master');
 
     await recovered.page.getByRole('tab', { name: 'Recovery', exact: true }).click();
@@ -181,7 +183,9 @@ test('mobile group backup requires the saved words before creation and offers a 
   }
 });
 
-test('a co-owner cannot overwrite a removal from a stale membership form', async ({ browser }) => {
+test('a co-owner cannot reintroduce removed members by rotating a stale membership snapshot', async ({
+  browser,
+}) => {
   test.slow();
   const owner = await bootstrapUser(browser, TEST_ACCOUNTS.conflictOwner);
   const coowner = await bootstrapUser(browser, TEST_ACCOUNTS.conflictCoowner);
@@ -213,8 +217,10 @@ test('a co-owner cannot overwrite a removal from a stale membership form', async
     await owner.page.getByRole('tab', { name: 'Recovery', exact: true }).click();
     await owner.page.getByRole('button', { name: 'Refresh recovery', exact: true }).click();
     await owner.page.getByRole('tab', { name: 'Members', exact: true }).click();
-    const staleMembers = await owner.page.getByLabel('Member public keys').inputValue();
-    expect(staleMembers).not.toBe('');
+    await expect(
+      owner.page.getByRole('button', { name: 'Rotate group keys', exact: true }),
+    ).toBeEnabled();
+    await expect(owner.page.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
     await coowner.page.evaluate(
       async ({ group, originalOwner }) => {
         const { useNostrStore } = await import('/src/stores/nostrStore.ts');
@@ -222,8 +228,7 @@ test('a co-owner cannot overwrite a removal from a stale membership form', async
       },
       { group, originalOwner: owner.session.publicKey },
     );
-    await expect(owner.page.getByLabel('Member public keys')).toHaveValue(staleMembers);
-    await owner.page.getByRole('button', { name: 'Update members', exact: true }).click();
+    await owner.page.getByRole('button', { name: 'Rotate group keys', exact: true }).click();
     await expect(owner.page.getByRole('alert')).toContainText(/changed|Refresh recovery/);
     const current = await coowner.page.evaluate(async (group) => {
       const { useNostrStore } = await import('/src/stores/nostrStore.ts');

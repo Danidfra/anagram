@@ -11,6 +11,7 @@
     "quality:all": "npm run check",
     "test:unit": "vitest run",
     "test:e2e:local": "playwright test",
+    "test:e2e:memory": "playwright test --config playwright.memory.config.ts",
     "tauri": "tauri",
     "dev:desktop": "tauri dev",
     "build:desktop": "tauri build",

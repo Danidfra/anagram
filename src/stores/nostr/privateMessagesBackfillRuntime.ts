@@ -228,6 +228,7 @@ export function createPrivateMessagesBackfillRuntime({
     await chatDataService.init();
 
     const chat = await chatDataService.getChatByPublicKey(chatPublicKey);
+    if (chat?.meta.deleted_locally === true) return null;
     if (chat?.type === 'group') {
       const recipientPubkeys = Array.from(
         new Set(
@@ -902,7 +903,7 @@ export function createPrivateMessagesBackfillRuntime({
     const epoch = inputSanitizerService.normalizeHexKey(epochPublicKey);
     if (!owner || !group || !epoch) return;
     const chat = await chatDataService.getChatByPublicKey(group);
-    if (!chat || chat.type !== 'group') return;
+    if (!chat || chat.type !== 'group' || chat.meta.deleted_locally === true) return;
     const recipients = resolveGroupChatEpochEntries(chat).map((entry) => entry.epoch_public_key);
     if (!recipients.includes(epoch)) return;
     await ensureLiveRecipientSubscription();
@@ -1128,6 +1129,8 @@ export function createPrivateMessagesBackfillRuntime({
         chatDataService.listLatestMessages(chatPublicKey, 100),
         resolvePrivateMessageReadRelayUrls(),
       ]);
+      if (chat?.meta.deleted_locally === true) return { routes: [], timestamps: [] };
+      if (chat?.type === 'group') await ensureLiveRecipientSubscription();
       const recipients =
         chat?.type === 'group'
           ? resolveGroupChatEpochEntries(chat).map((entry) => entry.epoch_public_key)

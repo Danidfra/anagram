@@ -57,6 +57,11 @@ test('group delivery still works after both users restart', async ({ browser }) 
     await sendMessage(alice.page, beforeRestartMessage, {
       chatId: groupPublicKey,
     });
+    await expect(
+      threadMessage(alice.page, beforeRestartMessage)
+        .getByTestId('message-relay-status')
+        .locator('.bubble__status-segment--green'),
+    ).toBeVisible();
     await navigateToChat(bob.page, groupPublicKey);
     await waitForThreadMessage(bob.page, beforeRestartMessage, {
       chatId: groupPublicKey,
@@ -67,6 +72,19 @@ test('group delivery still works after both users restart', async ({ browser }) 
     bob = await bootstrapUser(browser, TEST_ACCOUNTS.groupRestartBob);
 
     await navigateToChat(alice.page, groupPublicKey);
+    await waitForThreadMessage(alice.page, beforeRestartMessage, { chatId: groupPublicKey });
+    const restoredStatus = threadMessage(alice.page, beforeRestartMessage).getByTestId(
+      'message-relay-status',
+    );
+    await expect(restoredStatus.locator('.bubble__status-segment--green')).toBeVisible();
+    await restoredStatus.click();
+    const statusDialog = alice.page.getByRole('dialog');
+    await expect(statusDialog.getByTestId('relay-status-panel-received')).toContainText(
+      E2E_RELAY_URL,
+    );
+    await expect(statusDialog.getByRole('tab')).toHaveCount(0);
+    await expect(statusDialog.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+    await alice.page.keyboard.press('Escape');
     await sendMessage(alice.page, afterRestartMessage, {
       chatId: groupPublicKey,
     });

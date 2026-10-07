@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import {
   acceptFirstRequest,
   addGroupMemberAndPublish,
+  selectGroupInviteMembers,
   bootstrapUser,
   createGroup,
   disposeUsers,
@@ -50,15 +51,21 @@ test('group owner can create a group, invite a member, and exchange messages bot
     });
 
     await pauseRelayService('relay-two');
-    await alice.page.getByRole('tab', { name: 'Members', exact: true }).click();
-    await alice.page.getByLabel('Member public keys').fill(bob.session.publicKey);
-    await alice.page.getByRole('button', { name: 'Update members', exact: true }).click();
+    const invite = await selectGroupInviteMembers(alice.page, [bob.session.publicKey]);
+    await invite.getByRole('button', { name: 'Invite (1)', exact: true }).click();
     await expect(alice.page.getByRole('alert')).toContainText('Could not verify group state');
-    await expect(alice.page.locator(`.member[data-public-key="${bob.session.publicKey}"]`)).toHaveCount(0);
+    await expect(
+      alice.page.locator(`.member[data-public-key="${bob.session.publicKey}"]`),
+    ).toHaveCount(0);
     await unpauseRelayService('relay-two');
-    await alice.page.getByRole('button', { name: 'Update members', exact: true }).click();
-    await expect(alice.page.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
-    const invitedMemberRow = alice.page.locator(`.member[data-public-key="${bob.session.publicKey}"]`);
+    await invite.getByRole('button', { name: 'Invite (1)', exact: true }).click();
+    await expect(invite).toBeHidden();
+    await expect(alice.page.getByTestId('group-details').getByRole('status')).toHaveText(
+      'Invitations sent',
+    );
+    const invitedMemberRow = alice.page.locator(
+      `.member[data-public-key="${bob.session.publicKey}"]`,
+    );
     await expect(invitedMemberRow).toContainText('Epoch 0');
     await expect(invitedMemberRow).toContainText(E2E_RELAY_URL);
     await expect(invitedMemberRow).toContainText(E2E_RELAY_URL_TWO);
@@ -243,8 +250,9 @@ test('group invite survives hard reload before acceptance and still opens a work
   }
 });
 
-
-test('new groups use verified recovery relays when another account relay is unavailable', async ({ browser }) => {
+test('new groups use verified recovery relays when another account relay is unavailable', async ({
+  browser,
+}) => {
   const alice = await bootstrapUser(browser, TEST_ACCOUNTS.groupAlice, {
     relayUrls: E2E_DUAL_RELAY_URLS,
   });

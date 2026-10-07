@@ -39,6 +39,7 @@
     data-chat-public-key={chat.publicKey}
   >
     <Avatar
+      privateGroup={chat.type === 'group'}
       publicKey={chat.publicKey}
       {name}
       picture={String(chat.meta.picture ?? '')}

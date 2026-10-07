@@ -57,6 +57,11 @@ export function mergeGroupEpochMetadata(
   stored: Record<string, unknown>,
   next: Record<string, unknown>,
 ): Record<string, unknown> {
+  // Only explicit local delete/reopen operations may change this marker.
+  // Stale profile, ticket and owner-backup writes must preserve the stored choice.
+  next = { ...next };
+  if (stored.deleted_locally === true) next.deleted_locally = true;
+  else delete next.deleted_locally;
   const epochs = new Map(
     normalizeChatGroupEpochKeysValue(stored.group_epoch_keys).map((entry) => [
       `${entry.epoch_number}:${entry.epoch_public_key}`,
@@ -80,8 +85,10 @@ export function mergeGroupEpochMetadata(
   const keys = [...epochs.values()].sort((a, b) => b.epoch_number - a.epoch_number);
   const current = keys[0];
   if (!current) return next;
-  const conflict = keys.filter((entry) => entry.epoch_number === current.epoch_number).length > 1 ||
-    Number(stored.group_conflicting_epoch ?? -1) >= current.epoch_number || Number(next.group_conflicting_epoch ?? -1) >= current.epoch_number;
+  const conflict =
+    keys.filter((entry) => entry.epoch_number === current.epoch_number).length > 1 ||
+    Number(stored.group_conflicting_epoch ?? -1) >= current.epoch_number ||
+    Number(next.group_conflicting_epoch ?? -1) >= current.epoch_number;
   return {
     ...next,
     group_conflicting_epoch: conflict ? current.epoch_number : -1,

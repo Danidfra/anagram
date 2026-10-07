@@ -5,6 +5,7 @@
   export let picture = '';
   export let publicKey = '';
   export let eager = false;
+  export let privateGroup = false;
   let failedUrl = '';
   $: profile = observePublicProfile(publicKey);
   $: resolvedPicture =
@@ -48,6 +49,22 @@
       referrerpolicy="no-referrer"
       onerror={(event) => (failedUrl = event.currentTarget.getAttribute('src') ?? '')}
     />{:else}{initials}{/if}
+  {#if privateGroup}
+    <span
+      class="private-group-badge"
+      role="img"
+      aria-label="Private group"
+      title="Private group"
+      style:width={`${Math.max(14, Math.round(size * 0.36))}px`}
+      style:height={`${Math.max(14, Math.round(size * 0.36))}px`}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <rect x="3" y="6.5" width="10" height="8" rx="2" fill="currentColor" />
+        <path d="M8 9.5v2" stroke="var(--nc-panel-sidebar-bg)" stroke-width="1.5" stroke-linecap="round" />
+      </svg>
+    </span>
+  {/if}
 </span>
 
 <style>
@@ -60,11 +77,26 @@
     font-weight: 700;
     color: white;
     font-size: 14px;
-    overflow: hidden;
+    position: relative;
   }
   .avatar img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    border-radius: inherit;
+  }
+  .private-group-badge {
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--q-primary);
+    pointer-events: none;
+  }
+  .private-group-badge svg {
+    width: 100%;
+    height: 100%;
   }
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { disableAndroidRelayNotifications } from '#src/services/androidRelayNotificationService.ts';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -196,6 +197,7 @@
 </div>
 <dialog
   bind:this={dialog}
+  use:dismissOnBackdrop={() => { if (!busy) dialog.close(); }}
   class="settings-dialog"
   oncancel={(e) => {
     if (busy) e.preventDefault();

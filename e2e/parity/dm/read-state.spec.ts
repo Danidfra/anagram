@@ -41,6 +41,8 @@ test('mark as read survives a hard reload', async ({ browser }) => {
     await sendMessage(alice.page, firstMessage, {
       chatId: bob.session.publicKey,
     });
+    const firstSecond = Math.floor(Date.now() / 1000);
+    await alice.page.waitForFunction((second) => Math.floor(Date.now() / 1000) > second, firstSecond);
     await sendMessage(alice.page, secondMessage, {
       chatId: bob.session.publicKey,
     });
@@ -107,7 +109,30 @@ test('active thread only marks incoming messages as read after the app regains f
     await waitForNoChatUnreadBadge(bob.page);
     await waitForNoUnreadChatTotalBadge(bob.page);
     await expect.poll(() => bob.page.title()).toBe('Anagram');
+    await expect(bob.page.getByTestId('thread-unread-separator')).toHaveCount(0);
     await expectNoUnexpectedBrowserErrors([alice, bob]);
+  } finally {
+    await disposeUsers(alice, bob);
+  }
+});
+
+
+test('opening an unread conversation removes its divider when the chat is marked read', async ({ browser }) => {
+  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.unreadDividerAlice);
+  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.unreadDividerBob);
+  try {
+    await establishAcceptedDirectChat(alice, bob);
+    await bob.page.goto('/settings/profile');
+    const setupSecond = Math.floor(Date.now() / 1000);
+    await alice.page.waitForFunction((second) => Math.floor(Date.now() / 1000) > second, setupSecond);
+    const text = `unread-divider-${Date.now()}`;
+    await sendMessage(alice.page, text, { chatId: bob.session.publicKey });
+    await waitForUnreadChatTotalBadge(bob.page, 1);
+    await navigateToChat(bob.page, alice.session.publicKey);
+    await waitForNoChatUnreadBadge(bob.page);
+    await expect(bob.page.getByTestId('thread-unread-separator')).toHaveCount(0);
+    await reloadAndWaitForApp(bob.page);
+    await expect(bob.page.getByTestId('thread-unread-separator')).toHaveCount(0);
   } finally {
     await disposeUsers(alice, bob);
   }

@@ -679,6 +679,7 @@ export class NostrSubscription extends Emitter {
   closed = false;
   private closers: { close(): void }[] = [];
   private failedTargets = new Set<NostrRelay>();
+  private started = false;
   constructor(
     private client: NostrClient,
     filters: Filter | Filter[],
@@ -689,7 +690,8 @@ export class NostrSubscription extends Emitter {
     this.subId = opts.subId ?? crypto.randomUUID();
   }
   start() {
-    if (this.closed) return;
+    if (this.closed || this.started) return;
+    this.started = true;
     const urls = this.opts.relaySet?.relayUrls ??
       this.opts.relayUrls ?? [...this.client.pool.relays.keys()];
     const seen = new Set<string>();
@@ -697,6 +699,16 @@ export class NostrSubscription extends Emitter {
     this.opts.relaySet ??= new NostrRelaySet(new Set(targets), this.client);
     urls.forEach((url) => this.relayFilters.set(url, this.filters));
     for (const target of targets) {
+      // One cleanup slot per relay, not one retained object per reconnect.
+      let currentSubscription: { close(): void } | undefined;
+      let cancelAuth: (() => void) | undefined;
+      this.closers.push({
+        close: () => {
+          cancelAuth?.();
+          currentSubscription?.close();
+          currentSubscription = undefined;
+        },
+      });
       const startTarget = async () => {
         this.failedTargets.delete(target);
         try {
@@ -716,6 +728,7 @@ export class NostrSubscription extends Emitter {
           const subscribeTarget = () => {
             if (this.closed) return;
             this.failedTargets.delete(target);
+            let ended = false;
             const sub = relay.subscribe(this.filters, {
               id: this.subId,
               // Only an actual EOSE is coverage evidence. Query owners enforce their own
@@ -743,6 +756,8 @@ export class NostrSubscription extends Emitter {
                 }
               },
               onclose: (reason) => {
+                ended = true;
+                currentSubscription = undefined;
                 if (this.closed) return;
                 this.eosesSeen.delete(target);
                 // AUTH often finishes after the first REQ was rejected. Recover
@@ -752,6 +767,7 @@ export class NostrSubscription extends Emitter {
                   authRetried = true;
                   let timer: ReturnType<typeof setTimeout> | undefined;
                   const cleanup = () => {
+                    cancelAuth = undefined;
                     clearTimeout(timer);
                     target.off('authed', retry);
                     target.off('auth:failed', failed);
@@ -770,7 +786,7 @@ export class NostrSubscription extends Emitter {
                     cleanup();
                     fail(reason);
                   };
-                  this.closers.push({ close: cleanup });
+                  cancelAuth = cleanup;
                   if (target.status === NostrRelayStatus.AUTHENTICATED) queueMicrotask(retry);
                   else {
                     target.on('authed', retry);
@@ -782,7 +798,8 @@ export class NostrSubscription extends Emitter {
                 fail(reason);
               },
             });
-            this.closers.push(sub);
+            if (ended || this.closed) sub.close();
+            else currentSubscription = sub;
           };
           subscribeTarget();
         } catch (error) {

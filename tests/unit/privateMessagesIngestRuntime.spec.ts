@@ -1447,7 +1447,7 @@ describe('privateMessagesIngestRuntime', () => {
     );
   });
 
-  it('persists historical group epoch tickets even when a newer epoch is already known', async () => {
+  it.each([false, true])('retains verified epoch tickets with a newer epoch known, locally deleted=%s', async (deleted) => {
     const deps = createDeps();
     const runtime = createPrivateMessagesIngestRuntime(deps);
     const createdAt = '2023-11-14T22:13:20.000Z';
@@ -1487,6 +1487,7 @@ describe('privateMessagesIngestRuntime', () => {
       unread_count: 0,
       meta: {
         inbox_state: 'accepted',
+        deleted_locally: deleted,
         accepted_at: createdAt,
       },
     });
@@ -1513,7 +1514,10 @@ describe('privateMessagesIngestRuntime', () => {
         invitationCreatedAt: createdAt,
       }),
     );
-    expect(serviceMocks.chatDataService.createMessage).toHaveBeenCalledWith(
+    if (deleted) {
+      expect(serviceMocks.chatDataService.createMessage).not.toHaveBeenCalled();
+      expect(deps.upsertIncomingGroupInviteRequestChat).not.toHaveBeenCalled();
+    } else expect(serviceMocks.chatDataService.createMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         chat_public_key: 'a'.repeat(64),
         message: 'Epoch 2',

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onMount } from 'svelte';
   import { observe } from '#src/lib/state/store.ts';
   import { useNostrStore } from '#src/stores/nostrStore.ts';
@@ -350,7 +351,7 @@
         )}{/if}</button
     >{/if}
 </div>
-{#if notifications}<div class="modal-backdrop">
+{#if notifications}<div class="modal-backdrop" use:dismissOnBackdrop={() => void notify(false)}>
     <div
       role="dialog"
       aria-modal="true"
