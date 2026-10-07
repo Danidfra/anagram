@@ -20,13 +20,18 @@ export function isPrivateMediaNoticeDismissed(): boolean {
   return false;
 }
 
-export function dismissPrivateMediaNotice(): void {
+// Set from the notice's "Don't show this again" and from Settings; both share this key.
+export function setPrivateMediaNoticeDismissed(dismissed: boolean): void {
   if (!canUseStorage()) {
     return;
   }
 
   try {
-    window.localStorage.setItem(PRIVATE_MEDIA_NOTICE_STORAGE_KEY, '1');
+    if (dismissed) {
+      window.localStorage.setItem(PRIVATE_MEDIA_NOTICE_STORAGE_KEY, '1');
+    } else {
+      window.localStorage.removeItem(PRIVATE_MEDIA_NOTICE_STORAGE_KEY);
+    }
   } catch (error) {
     console.error('Failed to persist private media notice preference.', error);
   }

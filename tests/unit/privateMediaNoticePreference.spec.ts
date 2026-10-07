@@ -1,6 +1,6 @@
 import {
-  dismissPrivateMediaNotice,
   isPrivateMediaNoticeDismissed,
+  setPrivateMediaNoticeDismissed,
 } from 'src/utils/privateMediaNoticePreference';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +10,9 @@ function stubStorage(initial: Record<string, string> = {}) {
     getItem: vi.fn((key: string) => store.get(key) ?? null),
     setItem: vi.fn((key: string, value: string) => {
       store.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      store.delete(key);
     }),
   };
   vi.stubGlobal('window', { localStorage });
@@ -31,10 +34,19 @@ describe('private media notice preference', () => {
   it('remembers that the notice was dismissed', () => {
     const { store } = stubStorage();
 
-    dismissPrivateMediaNotice();
+    setPrivateMediaNoticeDismissed(true);
 
     expect(store.get('ui-private-media-notice-dismissed')).toBe('1');
     expect(isPrivateMediaNoticeDismissed()).toBe(true);
+  });
+
+  it('shows the notice again once it is turned back on', () => {
+    const { store } = stubStorage({ 'ui-private-media-notice-dismissed': '1' });
+
+    setPrivateMediaNoticeDismissed(false);
+
+    expect(store.has('ui-private-media-notice-dismissed')).toBe(false);
+    expect(isPrivateMediaNoticeDismissed()).toBe(false);
   });
 
   it('only treats the exact stored flag as dismissed', () => {
@@ -45,7 +57,7 @@ describe('private media notice preference', () => {
 
   it('keeps showing the notice when storage is unavailable or throws', () => {
     expect(isPrivateMediaNoticeDismissed()).toBe(false);
-    expect(() => dismissPrivateMediaNotice()).not.toThrow();
+    expect(() => setPrivateMediaNoticeDismissed(true)).not.toThrow();
 
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { localStorage } = stubStorage();
@@ -56,7 +68,7 @@ describe('private media notice preference', () => {
       throw new Error('blocked');
     });
 
-    expect(() => dismissPrivateMediaNotice()).not.toThrow();
+    expect(() => setPrivateMediaNoticeDismissed(true)).not.toThrow();
     expect(isPrivateMediaNoticeDismissed()).toBe(false);
   });
 });

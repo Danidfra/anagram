@@ -363,8 +363,8 @@ import {
 import { normalizeBlossomServerUrl } from 'src/utils/blossomServer';
 import { shouldEncryptOutgoingMedia } from 'src/utils/encryptedMedia';
 import {
-  dismissPrivateMediaNotice,
   isPrivateMediaNoticeDismissed,
+  setPrivateMediaNoticeDismissed,
 } from 'src/utils/privateMediaNoticePreference';
 import { useChatStore } from 'src/stores/chatStore';
 import { useNostrStore } from 'src/stores/nostrStore';
@@ -831,7 +831,7 @@ async function handleMediaConsentConfirm(): Promise<void> {
   }
 
   if (shouldDismissMediaNotice.value) {
-    dismissPrivateMediaNotice();
+    setPrivateMediaNoticeDismissed(true);
   }
 
   isBlossomAuthInProgress.value = true;

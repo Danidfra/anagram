@@ -458,6 +458,7 @@
   "mediaDataStorage.blossomServerDescription": "Used for unencrypted uploads. Private photos, videos and audio always use the encrypted media server above.",
   "mediaDataStorage.privateMediaServer": "Encrypted media server",
   "mediaDataStorage.privateMediaServerDescription": "Photos, videos and audio are encrypted on your device before upload. This server must store the encrypted file exactly as uploaded. Use Test server to check.",
+  "mediaDataStorage.showPrivateMediaNotice": "Show encryption notice before uploading private media",
   "mediaDataStorage.privateMediaServerSaved": "Encrypted media server saved.",
   "mediaDataStorage.privateMediaServerSaveFailed": "The encrypted media server could not be saved.",
   "mediaDataStorage.testServer": "Test server",

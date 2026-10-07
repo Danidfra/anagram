@@ -578,6 +578,39 @@ test('private audio and video are encrypted, decrypt locally and play with nativ
       true
     );
 
+    // Settings shares the "Don't show this again" preference: it starts OFF here, turning it
+    // back ON restores the notice, and turning it OFF skips it again. Either way the upload is
+    // the same encrypted, ciphertext-only upload.
+    const sendAndExpectCiphertext = async (expectNotice: boolean, blobCount: number) => {
+      await navigateToChat(alice.page, bob.session.publicKey);
+      await sendPrivateMedia(
+        alice.page,
+        {
+          name: `tone-${blobCount}.wav`,
+          mimeType: 'audio/wav',
+          buffer: buildWavTone(blobCount),
+        },
+        { expectNotice }
+      );
+      await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(blobCount);
+      const upload = blossom.uploadAttempts.at(-1);
+      expect(upload?.contentType).toBe('application/octet-stream');
+      expect(upload?.body.includes(Buffer.from('RIFF'))).toBe(false);
+    };
+    const noticeToggle = alice.page.getByTestId('settings-private-media-notice-toggle');
+
+    await alice.page.goto('/#/settings/media-data-storage');
+    await expect(noticeToggle).toHaveAttribute('aria-checked', 'false');
+    await noticeToggle.click();
+    await expect(noticeToggle).toHaveAttribute('aria-checked', 'true');
+    await sendAndExpectCiphertext(true, startingBlobCount + 4);
+
+    await alice.page.goto('/#/settings/media-data-storage');
+    await expect(noticeToggle).toHaveAttribute('aria-checked', 'true');
+    await noticeToggle.click();
+    await expect(noticeToggle).toHaveAttribute('aria-checked', 'false');
+    await sendAndExpectCiphertext(false, startingBlobCount + 5);
+
     await expectNoUnexpectedBrowserErrors([alice, bob], {
       allowPatterns: [
         /503/u,

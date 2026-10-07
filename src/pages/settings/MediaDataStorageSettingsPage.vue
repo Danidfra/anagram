@@ -61,6 +61,13 @@
             />
           </div>
         </q-form>
+
+        <q-toggle
+          :model-value="showPrivateMediaNotice"
+          data-testid="settings-private-media-notice-toggle"
+          :label="$t('mediaDataStorage.showPrivateMediaNotice')"
+          @update:model-value="handlePrivateMediaNoticeToggle"
+        />
       </q-card-section>
     </q-card>
 
@@ -136,6 +143,10 @@ import {
   getBlossomServerHost,
   normalizeBlossomServerUrl,
 } from 'src/utils/blossomServer';
+import {
+  isPrivateMediaNoticeDismissed,
+  setPrivateMediaNoticeDismissed,
+} from 'src/utils/privateMediaNoticePreference';
 import { reportUiError } from 'src/utils/uiErrorHandler';
 
 const $q = useQuasar();
@@ -230,6 +241,15 @@ const privateField = useServerField({
 });
 
 const isTestingPrivateServer = ref(false);
+
+// Same preference as the upload notice's "Don't show this again". It only controls that
+// informational notice; private media is always encrypted either way.
+const showPrivateMediaNotice = ref(!isPrivateMediaNoticeDismissed());
+
+function handlePrivateMediaNoticeToggle(value: boolean): void {
+  setPrivateMediaNoticeDismissed(!value);
+  showPrivateMediaNotice.value = !isPrivateMediaNoticeDismissed();
+}
 
 // Tests whichever URL is in the field, so a server can be verified before it is saved.
 async function testPrivateServer(): Promise<void> {
