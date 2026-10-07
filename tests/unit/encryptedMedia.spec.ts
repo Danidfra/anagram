@@ -1,4 +1,5 @@
 import {
+  formatMediaByteSize,
   getMaxEncryptedBlobBytes,
   resolveEncryptedMediaKind,
   shouldEncryptOutgoingMedia,
@@ -62,5 +63,16 @@ describe('encrypted media kinds', () => {
     expect(shouldEncryptOutgoingMedia({ type: 'audio/flac' })).toBe(true);
     expect(shouldEncryptOutgoingMedia({ type: 'image/png' })).toBe(true);
     expect(shouldEncryptOutgoingMedia({ type: 'video/quicktime' })).toBe(false);
+  });
+});
+
+describe('formatMediaByteSize', () => {
+  it('formats placeholder sizes and hides unknown ones', () => {
+    expect(formatMediaByteSize(16_044)).toBe('16 KB');
+    expect(formatMediaByteSize(300)).toBe('1 KB');
+    expect(formatMediaByteSize(5 * 1024 * 1024 + 16)).toBe('5.0 MB');
+    expect(formatMediaByteSize(0)).toBe('');
+    expect(formatMediaByteSize(undefined)).toBe('');
+    expect(formatMediaByteSize(Number.NaN)).toBe('');
   });
 });

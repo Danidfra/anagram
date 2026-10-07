@@ -57,3 +57,16 @@ export function getMaxEncryptedBlobBytes(info: EncryptedMediaKindInfo): number {
 export function shouldEncryptOutgoingMedia(file: Pick<File, 'type'>): boolean {
   return resolveEncryptedMediaKind(file.type) !== null;
 }
+
+// Approximate size shown on a media placeholder before it is downloaded.
+export function formatMediaByteSize(bytes: unknown): string {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) {
+    return '';
+  }
+
+  if (bytes < MIB) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  return `${(bytes / MIB).toFixed(1)} MB`;
+}

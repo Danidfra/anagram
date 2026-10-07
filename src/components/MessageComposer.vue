@@ -232,6 +232,15 @@
         </div>
       </div>
 
+      <q-checkbox
+        v-model="shouldDismissMediaNotice"
+        dense
+        class="composer__media-notice-dismiss"
+        data-testid="composer-media-notice-dont-show"
+        :disable="isBlossomAuthInProgress"
+        :label="$t('message.mediaNoticeDontShowAgain')"
+      />
+
       <q-linear-progress
         v-if="isBlossomAuthInProgress"
         indeterminate
@@ -353,6 +362,10 @@ import {
 } from 'src/services/privateMediaUploadSession';
 import { normalizeBlossomServerUrl } from 'src/utils/blossomServer';
 import { shouldEncryptOutgoingMedia } from 'src/utils/encryptedMedia';
+import {
+  dismissPrivateMediaNotice,
+  isPrivateMediaNoticeDismissed,
+} from 'src/utils/privateMediaNoticePreference';
 import { useChatStore } from 'src/stores/chatStore';
 import { useNostrStore } from 'src/stores/nostrStore';
 import type { Message, MessageAttachmentMetadata, MessageReplyPreview } from 'src/types/chat';
@@ -384,6 +397,7 @@ const emojiPickerRef = ref<{ reset: () => void } | null>(null);
 const isComposerMenuOpen = ref(false);
 const isEmojiMenuOpen = ref(false);
 const isMediaPrivacyDialogOpen = ref(false);
+const shouldDismissMediaNotice = ref(false);
 const isBlossomAuthInProgress = ref(false);
 const isMediaUploadDialogOpen = ref(false);
 const isMediaUploadInProgress = ref(false);
@@ -750,6 +764,14 @@ function handlePhotoVideoAction(): void {
   }
 
   isComposerMenuOpen.value = false;
+  if (isPrivateMediaNoticeDismissed()) {
+    // Opened straight from the click so the browser keeps the user gesture for the picker.
+    if (!isBlossomAuthInProgress.value && !isMediaUploadInProgress.value) {
+      openMediaFileBrowser();
+    }
+    return;
+  }
+
   openMediaPrivacyDialog();
 }
 
@@ -781,7 +803,15 @@ function openMediaPrivacyDialog(file: File | null = null): void {
     }
   }
 
+  // The notice is informational only; once dismissed, media goes straight to the same
+  // encrypted upload flow, with the same error, retry and change-server handling.
+  if (file && isPrivateMediaNoticeDismissed()) {
+    void uploadAndSendMediaFile(file);
+    return;
+  }
+
   activePrivateServerUrl.value = nostrStore.getPrivateMediaBlossomServerUrl();
+  shouldDismissMediaNotice.value = false;
   pendingInlineMediaFile.value = file;
   isMediaPrivacyDialogOpen.value = true;
 }
@@ -798,6 +828,10 @@ function handleMediaConsentCancel(): void {
 async function handleMediaConsentConfirm(): Promise<void> {
   if (isBlossomAuthInProgress.value) {
     return;
+  }
+
+  if (shouldDismissMediaNotice.value) {
+    dismissPrivateMediaNotice();
   }
 
   isBlossomAuthInProgress.value = true;
@@ -923,7 +957,11 @@ async function uploadAndSendMediaFile(file: File): Promise<void> {
   }
 
   activePrivateServerUrl.value = privateMediaUpload.refreshActiveServerUrl();
-  await runMediaUpload(() => privateMediaUpload.start(file));
+  await runMediaUpload(async () => {
+    // Also covers uploads that skipped the notice dialog, which otherwise performs this check.
+    await nostrStore.ensureBlossomUploadAuthentication();
+    return privateMediaUpload.start(file);
+  });
 }
 
 async function runMediaUpload(start: () => Promise<PrivateMediaUploadOutcome>): Promise<void> {
@@ -1505,6 +1543,10 @@ defineExpose({
   min-width: 34px;
   padding-right: 8px;
   color: var(--nc-text-secondary);
+}
+
+.composer__media-notice-dismiss {
+  margin-top: 12px;
 }
 
 .composer__media-warning {

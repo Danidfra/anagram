@@ -371,13 +371,14 @@
         <div
           v-for="attachment in playableEncryptedAttachments"
           :key="`${attachment.url}::${attachment.sha256 ?? ''}`"
-          class="bubble__file-attachment"
+          class="bubble__media-attachment"
           data-testid="message-encrypted-media-attachment"
           @click.stop
         >
           <MessageAttachmentMedia
             :attachment="attachment"
             :label="resolveMediaAttachmentLabel(attachment)"
+            :auto-load="isSenderTrustedForImages"
           />
         </div>
         <div
@@ -1929,6 +1930,10 @@ onBeforeUnmount(() => {
 
 .bubble__image-attachment {
   max-width: min(100%, 360px);
+}
+
+.bubble__media-attachment {
+  margin-top: 6px;
 }
 
 .bubble__file-attachment {

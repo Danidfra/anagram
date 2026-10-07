@@ -75,6 +75,9 @@ const CORS_HEADERS = {
 function createFakeBlossom() {
   const blobs = new Map<string, StoredBlob>();
   const downloads: string[] = [];
+  // Every upload request body, including the ones answered with an error.
+  const uploadAttempts: { body: Buffer; contentType: string }[] = [];
+  const state = { failUploads: false };
 
   async function handle(route: Route): Promise<void> {
     const request = route.request();
@@ -87,6 +90,15 @@ function createFakeBlossom() {
     if (request.method() === 'PUT' && url.pathname === '/upload') {
       const body = request.postDataBuffer() ?? Buffer.alloc(0);
       const headers = await request.allHeaders();
+      uploadAttempts.push({ body, contentType: headers['content-type'] ?? '' });
+      if (state.failUploads) {
+        await route.fulfill({
+          status: 503,
+          headers: CORS_HEADERS,
+          body: 'unavailable',
+        });
+        return;
+      }
       const sha256 = createHash('sha256').update(body).digest('hex');
       blobs.set(sha256, {
         body,
@@ -125,6 +137,8 @@ function createFakeBlossom() {
   return {
     blobs,
     downloads,
+    uploadAttempts,
+    state,
     async install(context: BrowserContext): Promise<void> {
       await context.route(`${BLOSSOM_ORIGIN}/**`, handle);
     },
@@ -164,7 +178,11 @@ async function sendImageFromComposer(page: Page, file: { name: string; buffer: B
   const fileChooserPromise = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'OK', exact: true }).click();
   const fileChooser = await fileChooserPromise;
-  await fileChooser.setFiles({ name: file.name, mimeType: 'image/png', buffer: file.buffer });
+  await fileChooser.setFiles({
+    name: file.name,
+    mimeType: 'image/png',
+    buffer: file.buffer,
+  });
 }
 
 async function readRenderedImage(page: Page) {
@@ -193,7 +211,10 @@ test('private images are encrypted before upload and decrypted by the recipient'
     await navigateToChat(alice.page, bob.session.publicKey);
 
     const png = buildPngWithMetadata();
-    await sendImageFromComposer(alice.page, { name: 'holiday.png', buffer: png });
+    await sendImageFromComposer(alice.page, {
+      name: 'holiday.png',
+      buffer: png,
+    });
     await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(1);
 
     // What the server received: ciphertext only, declared as an opaque blob.
@@ -226,7 +247,10 @@ test('private images are encrypted before upload and decrypted by the recipient'
     // The recipient gets back exactly the original image; its metadata travelled encrypted.
     const decrypted = await bobImage.evaluate(async (element) => {
       const blob = await (await fetch((element as HTMLImageElement).src)).blob();
-      return { type: blob.type, bytes: Array.from(new Uint8Array(await blob.arrayBuffer())) };
+      return {
+        type: blob.type,
+        bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
+      };
     });
     expect(decrypted.type).toBe('image/png');
     expect(Buffer.from(decrypted.bytes).equals(png)).toBe(true);
@@ -263,7 +287,9 @@ test('private images are encrypted before upload and decrypted by the recipient'
     await reloadAndWaitForApp(alice.page);
     blossom.downloads.length = 0;
     await navigateToChat(alice.page, bob.session.publicKey);
-    await waitForThreadMessage(alice.page, 'lazy-filler-39', { chatId: bob.session.publicKey });
+    await waitForThreadMessage(alice.page, 'lazy-filler-39', {
+      chatId: bob.session.publicKey,
+    });
     const pendingImage = alice.page.getByTestId('message-image-pending').first();
     await expect(pendingImage).toBeAttached();
     await alice.page.waitForTimeout(1500);
@@ -286,6 +312,281 @@ test('private images are encrypted before upload and decrypted by the recipient'
     await expect(bob.page.getByTestId('message-image-preview')).toHaveCount(0);
 
     await expectNoUnexpectedBrowserErrors([alice, bob]);
+  } finally {
+    await disposeUsers(alice, bob);
+  }
+});
+
+// A real, playable 1 second mono 16-bit PCM WAV (440 Hz tone).
+function buildWavTone(seconds = 1, sampleRate = 8000): Buffer {
+  const samples = seconds * sampleRate;
+  const data = Buffer.alloc(samples * 2);
+  for (let index = 0; index < samples; index += 1) {
+    const value = Math.sin((index / sampleRate) * 440 * 2 * Math.PI) * 8000;
+    data.writeInt16LE(Math.round(value), index * 2);
+  }
+
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'latin1');
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVE', 8, 'latin1');
+  header.write('fmt ', 12, 'latin1');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36, 'latin1');
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+// Records a short, real WebM clip in the browser, so the test needs no binary fixture.
+async function recordWebmClip(page: Page): Promise<Buffer> {
+  const bytes = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 48;
+    const context = canvas.getContext('2d');
+    const recorder = new MediaRecorder(canvas.captureStream(15), {
+      mimeType: 'video/webm',
+    });
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (event) => chunks.push(event.data);
+    const stopped = new Promise((resolve) => (recorder.onstop = resolve));
+    recorder.start();
+    for (let frame = 0; frame < 12; frame += 1) {
+      if (context) {
+        context.fillStyle = `hsl(${frame * 30}, 80%, 50%)`;
+        context.fillRect(0, 0, 64, 48);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    recorder.stop();
+    await stopped;
+    return Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer()));
+  });
+  return Buffer.from(bytes);
+}
+
+// Opens the media picker. The encryption notice is expected unless it was dismissed earlier.
+async function sendPrivateMedia(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+  options: { expectNotice: boolean; dontShowAgain?: boolean }
+) {
+  await page.getByTestId('message-composer-menu').click();
+  const fileChooserPromise = page.waitForEvent('filechooser');
+  await page.getByText('Photo or Video', { exact: true }).click();
+  if (options.expectNotice) {
+    await expect(page.getByText(/end-to-end encrypted on your device/u)).toBeVisible();
+    if (options.dontShowAgain) {
+      await page.getByTestId('composer-media-notice-dont-show').click();
+    }
+    await page.getByRole('button', { name: 'OK', exact: true }).click();
+  } else {
+    await expect(page.getByTestId('composer-media-notice-dont-show')).toHaveCount(0);
+  }
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.setFiles(file);
+}
+
+interface PlayerSnapshot {
+  width: number;
+  height: number;
+  src: string;
+  duration: number;
+  currentTime: number;
+  paused: boolean;
+}
+
+function readPlayer(page: Page, testId: string): Promise<PlayerSnapshot> {
+  return page
+    .getByTestId(testId)
+    .last()
+    .evaluate((element: HTMLMediaElement) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        width: rect.width,
+        height: rect.height,
+        src: element.src,
+        duration: element.duration,
+        currentTime: element.currentTime,
+        paused: element.paused,
+      };
+    });
+}
+
+async function expectUsablePlayer(page: Page, testId: string): Promise<PlayerSnapshot> {
+  const player = page.getByTestId(testId).last();
+  await expect(player).toHaveAttribute('src', /^blob:/u, { timeout: 30_000 });
+  await expect(player).toHaveAttribute('controls', '');
+  await expect
+    .poll(() => player.evaluate((element: HTMLMediaElement) => element.readyState), {
+      timeout: 15_000,
+    })
+    .toBeGreaterThanOrEqual(1);
+  const snapshot = await readPlayer(page, testId);
+  // Regression: the player used to collapse to a 0px wide box, hiding its native controls.
+  expect(snapshot.width).toBeGreaterThan(200);
+  expect(snapshot.height).toBeGreaterThan(20);
+  return snapshot;
+}
+
+test('private audio and video are encrypted, decrypt locally and play with native controls', async ({
+  browser,
+}) => {
+  test.slow();
+
+  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.encryptedMediaAlice);
+  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.encryptedMediaBob);
+  const blossom = createFakeBlossom();
+
+  try {
+    await blossom.install(alice.context);
+    await blossom.install(bob.context);
+    await establishAcceptedDirectChat(alice, bob);
+    await useBlossomServer(alice, BLOSSOM_ORIGIN);
+    await navigateToChat(alice.page, bob.session.publicKey);
+    const startingBlobCount = blossom.blobs.size;
+
+    // Audio: the notice is shown the first time and dismissed for good.
+    const wav = buildWavTone();
+    await sendPrivateMedia(
+      alice.page,
+      { name: 'tone.wav', mimeType: 'audio/wav', buffer: wav },
+      { expectNotice: true, dontShowAgain: true }
+    );
+    await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(startingBlobCount + 1);
+    const audioUpload = blossom.uploadAttempts.at(-1);
+    expect(audioUpload?.contentType).toBe('application/octet-stream');
+    expect(audioUpload?.body.length).toBe(wav.length + 16);
+    expect(audioUpload?.body.includes(Buffer.from('RIFF'))).toBe(false);
+    expect(audioUpload?.body.includes(Buffer.from('WAVE'))).toBe(false);
+
+    // Own media is trusted, so it decrypts on its own once visible and shows a real player.
+    const audio = alice.page.getByTestId('message-encrypted-audio').last();
+    const aliceAudio = await expectUsablePlayer(alice.page, 'message-encrypted-audio');
+    expect(aliceAudio.duration).toBeCloseTo(1, 1);
+    const decryptedAudio = await audio.evaluate(async (element: HTMLMediaElement) => {
+      const blob = await (await fetch(element.src)).blob();
+      return {
+        type: blob.type,
+        bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
+      };
+    });
+    expect(decryptedAudio.type).toBe('audio/wav');
+    expect(Buffer.from(decryptedAudio.bytes).equals(wav)).toBe(true);
+
+    // Play, pause, seek and replay through the native element.
+    await audio.evaluate((element: HTMLMediaElement) => element.play());
+    await expect
+      .poll(async () => (await readPlayer(alice.page, 'message-encrypted-audio')).currentTime)
+      .toBeGreaterThan(0);
+    await audio.evaluate((element: HTMLMediaElement) => element.pause());
+    expect((await readPlayer(alice.page, 'message-encrypted-audio')).paused).toBe(true);
+    await audio.evaluate((element: HTMLMediaElement) => {
+      element.currentTime = 0.5;
+    });
+    await expect
+      .poll(async () => (await readPlayer(alice.page, 'message-encrypted-audio')).currentTime)
+      .toBeCloseTo(0.5, 1);
+    await audio.evaluate((element: HTMLMediaElement) => element.play());
+    await expect
+      .poll(() => audio.evaluate((element: HTMLMediaElement) => element.ended), { timeout: 10_000 })
+      .toBe(true);
+    await audio.evaluate((element: HTMLMediaElement) => element.play());
+    await expect
+      .poll(async () => (await readPlayer(alice.page, 'message-encrypted-audio')).paused)
+      .toBe(false);
+    await audio.evaluate((element: HTMLMediaElement) => element.pause());
+
+    // Video: the notice stays dismissed and the picker opens directly.
+    const webm = await recordWebmClip(alice.page);
+    await sendPrivateMedia(
+      alice.page,
+      { name: 'clip.webm', mimeType: 'video/webm', buffer: webm },
+      { expectNotice: false }
+    );
+    await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(startingBlobCount + 2);
+    const videoUpload = blossom.uploadAttempts.at(-1);
+    expect(videoUpload?.contentType).toBe('application/octet-stream');
+    expect(videoUpload?.body.subarray(0, 4).equals(webm.subarray(0, 4))).toBe(false);
+    await expectUsablePlayer(alice.page, 'message-encrypted-video');
+
+    // The recipient has not trusted the sender: nothing is downloaded until they press play.
+    blossom.downloads.length = 0;
+    await navigateToChat(bob.page, alice.session.publicKey);
+    await expect(bob.page.getByTestId('message-encrypted-media-placeholder')).toHaveCount(2, {
+      timeout: 30_000,
+    });
+    await bob.page.waitForTimeout(1500);
+    expect(blossom.downloads).toHaveLength(0);
+
+    await bob.page.getByTestId('message-encrypted-media-load').first().click();
+    const bobAudio = await expectUsablePlayer(bob.page, 'message-encrypted-audio');
+    expect(bobAudio.duration).toBeCloseTo(1, 1);
+    await bob.page.getByTestId('message-encrypted-media-load').first().click();
+    await expectUsablePlayer(bob.page, 'message-encrypted-video');
+    const video = bob.page.getByTestId('message-encrypted-video').last();
+    await video.evaluate((element: HTMLMediaElement) => element.play());
+    await expect
+      .poll(async () => (await readPlayer(bob.page, 'message-encrypted-video')).paused)
+      .toBe(false);
+    await video.evaluate((element: HTMLMediaElement) => element.pause());
+    expect((await readPlayer(bob.page, 'message-encrypted-video')).paused).toBe(true);
+
+    // The decrypted object URL is released once the thread is no longer shown.
+    const bobAudioUrl = (await readPlayer(bob.page, 'message-encrypted-audio')).src;
+    await bob.page.goto('/#/settings/media-data-storage');
+    await expect(bob.page.getByTestId('settings-private-media-input')).toBeVisible();
+    const isRevoked = await bob.page.evaluate(async (url) => {
+      try {
+        await fetch(url);
+        return false;
+      } catch {
+        return true;
+      }
+    }, bobAudioUrl);
+    expect(isRevoked).toBe(true);
+
+    // With the notice dismissed, upload failures still surface with retry and change-server, and
+    // a retry re-sends the identical ciphertext. Plaintext is never offered or uploaded.
+    blossom.state.failUploads = true;
+    const attemptsBeforeFailure = blossom.uploadAttempts.length;
+    await sendPrivateMedia(
+      alice.page,
+      { name: 'tone-again.wav', mimeType: 'audio/wav', buffer: wav },
+      { expectNotice: false }
+    );
+    await expect(alice.page.getByTestId('composer-media-upload-retry')).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(alice.page.getByTestId('composer-media-upload-change-server')).toBeVisible();
+    await expect(alice.page.getByText(/plaintext|unencrypted/iu)).toHaveCount(0);
+    const failedAttempt = blossom.uploadAttempts.at(-1);
+    expect(blossom.uploadAttempts.length).toBe(attemptsBeforeFailure + 1);
+    expect(failedAttempt?.contentType).toBe('application/octet-stream');
+    expect(failedAttempt?.body.includes(Buffer.from('RIFF'))).toBe(false);
+
+    blossom.state.failUploads = false;
+    await alice.page.getByTestId('composer-media-upload-retry').click();
+    await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(startingBlobCount + 3);
+    expect(blossom.uploadAttempts.at(-1)?.body.equals(failedAttempt?.body ?? Buffer.alloc(0))).toBe(
+      true
+    );
+
+    await expectNoUnexpectedBrowserErrors([alice, bob], {
+      allowPatterns: [
+        /503/u,
+        /Failed to upload media to Blossom/u,
+        /unavailable/u,
+        // The deliberate fetch of the revoked object URL above.
+        /ERR_FILE_NOT_FOUND/u,
+      ],
+    });
   } finally {
     await disposeUsers(alice, bob);
   }
