@@ -62,10 +62,10 @@ test('link cards display GitHub and Open Graph metadata, respect media trust, an
     await sendMessage(alice.page, `Read this ${article}`);
     const card = threadMessage(alice.page, 'Read this').getByTestId('message-link-preview');
     await expect(card).toContainText('Open Graph title');
-    await expect(card.locator('img')).toHaveAttribute(
-      'src',
-      'https://preview.example.org/cover.svg',
-    );
+    await expect(card.locator('img')).toHaveAttribute('src', /^blob:/);
+    await expect
+      .poll(() => card.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth))
+      .toBe(100);
     for (const layout of ['bubbles', 'text']) {
       await alice.page.evaluate((layout) => {
         localStorage.setItem('ui-desktop-message-layout', layout);
@@ -119,4 +119,50 @@ test('link cards display GitHub and Open Graph metadata, respect media trust, an
   } finally {
     await disposeUsers(alice, bob);
   }
+});
+
+test('preview metadata and thumbnails reject private targets and never follow redirects', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const privateRequests: string[] = [];
+  await page.route(
+    /^https:\/\/(?:127\.0\.0\.1|10\.0\.0\.1|169\.254\.169\.254)(?::\d+)?\//,
+    (route) => {
+      privateRequests.push(route.request().url());
+      return route.abort();
+    },
+  );
+  await page.route('https://preview.example.org/redirect-*', (route) =>
+    route.fulfill({
+      status: 302,
+      headers: { location: 'https://127.0.0.1/private', 'access-control-allow-origin': '*' },
+    }),
+  );
+  await page.route('https://preview.example.org/private-image', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      headers: { 'access-control-allow-origin': '*' },
+      body: '<title>Safe text</title><meta property="og:image" content="https://169.254.169.254/latest/meta-data">',
+    }),
+  );
+  const results = await page.evaluate(async () => {
+    const { loadLinkPreview, loadPreviewImage } =
+      await import('/src/services/linkPreviewService.ts');
+    return {
+      metadataRedirect: await loadLinkPreview('https://preview.example.org/redirect-page'),
+      imageRedirect: await loadPreviewImage('https://preview.example.org/redirect-image'),
+      local: await loadLinkPreview('https://127.0.0.1/private'),
+      localImage: await loadPreviewImage('https://10.0.0.1/private.png'),
+      metadata: await loadLinkPreview('https://preview.example.org/private-image'),
+    };
+  });
+  expect(results).toMatchObject({
+    metadataRedirect: null,
+    imageRedirect: null,
+    local: null,
+    localImage: null,
+    metadata: { title: 'Safe text', image: '' },
+  });
+  expect(privateRequests).toEqual([]);
 });

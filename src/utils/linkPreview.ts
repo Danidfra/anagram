@@ -23,7 +23,7 @@ export function previewUrl(value: string, base?: string): string | null {
       !hostname.includes('.') ||
       /^[\d.]+$/.test(hostname) ||
       hostname.includes(':') ||
-      /\.(localhost|local|internal|test|invalid)$/i.test(hostname)
+      /\.(localhost|local|localdomain|internal|home|lan|arpa|test|invalid)$/i.test(hostname)
     )
       return null;
     url.hash = '';

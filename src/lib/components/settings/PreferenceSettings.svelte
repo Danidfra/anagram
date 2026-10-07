@@ -14,11 +14,13 @@
   import { useNostrStore } from '#src/stores/nostrStore.ts';
   import { observe } from '#src/lib/state/store.ts';
   import Icon from '../Icon.svelte';
+  import { THEME_ACCENTS, readThemeAccent, saveThemeAccent } from '#src/utils/themeAccent.ts';
   export let section: string;
   const nostr = useNostrStore();
   const startup = observe(() => nostr.isRestoringStartupState);
   let dark = readDarkModePreference() ?? document.body.classList.contains('body--dark');
   let layout = readDesktopMessageLayoutPreference();
+  let accent = readThemeAccent();
   let saved = nostr.getBlossomServerUrl(),
     server = saved,
     busy = false,
@@ -45,6 +47,7 @@
     }
   }
   function sync() {
+    accent = readThemeAccent();
     if (!busy && server === saved) {
       saved = nostr.getBlossomServerUrl();
       server = saved;
@@ -78,6 +81,24 @@
         /></label
       >
     </div>
+    <fieldset class="accent-picker">
+      <legend>{$translate('settings.theme.accentColor')}</legend>
+      <div class="accent-swatches">
+        {#each THEME_ACCENTS as option}
+          <label class="accent-choice" title={$translate(`settings.theme.color.${option.id}`)}>
+            <input
+              type="radio"
+              name="theme-accent"
+              value={option.id}
+              bind:group={accent}
+              aria-label={$translate(`settings.theme.color.${option.id}`)}
+              onchange={() => saveThemeAccent(accent)}
+            />
+            <span class="accent-swatch" style:--swatch={option.swatch} aria-hidden="true"></span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
     <hr />
     <div>
       <h3>{$translate('settings.desktopMessageLayout.title')}</h3>
@@ -169,3 +190,60 @@
       </p>{/if}
   </div>
 {/if}
+
+<style>
+  .accent-picker {
+    border: 0;
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+  }
+  .accent-picker legend {
+    font-size: 13px;
+    color: var(--nc-text-secondary);
+    padding: 0;
+    margin-bottom: 6px;
+  }
+  .accent-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .accent-choice {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+  }
+  .accent-choice input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    opacity: 0;
+    z-index: 1;
+    cursor: pointer;
+  }
+  .accent-swatch {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--swatch);
+  }
+  .accent-choice input:checked + .accent-swatch {
+    box-shadow: inset 0 0 0 4px var(--nc-sidebar);
+    outline: 3px solid var(--swatch);
+    outline-offset: -1px;
+  }
+  .accent-choice:hover .accent-swatch {
+    transform: scale(1.08);
+  }
+  .accent-choice input:focus-visible + .accent-swatch {
+    outline: 2px solid var(--nc-text);
+    outline-offset: 4px;
+  }
+</style>

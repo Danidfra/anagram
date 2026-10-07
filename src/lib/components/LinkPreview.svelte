@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { loadLinkPreview } from '#src/services/linkPreviewService.ts';
+  import { loadLinkPreview, loadPreviewImage } from '#src/services/linkPreviewService.ts';
   import { previewUrl, type LinkPreview } from '#src/utils/linkPreview.ts';
   import { useNostrStore } from '#src/stores/nostrStore.ts';
   export let url: string;
@@ -9,13 +9,21 @@
   let revealed = false;
   let visible = false;
   let preview: LinkPreview | null = null;
-  let failedImage = '';
+  let imageUrl = '';
+  let imageRequest: AbortController | null = null;
+  function clearImage() {
+    imageRequest?.abort();
+    imageRequest = null;
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+    imageUrl = '';
+  }
   let revision = 0;
   let disposed = false;
   $: void refresh(url, visible && (allowed || revealed));
   async function refresh(value: string, enabled: boolean) {
     const request = ++revision;
     preview = null;
+    clearImage();
     if (!enabled) return;
     const target = previewUrl(value);
     const nostr = useNostrStore();
@@ -29,6 +37,11 @@
             ? result.image
             : '',
       };
+      if (preview.image) {
+        imageRequest = new AbortController();
+        const blob = await loadPreviewImage(preview.image, imageRequest.signal);
+        if (blob && !disposed && request === revision) imageUrl = URL.createObjectURL(blob);
+      }
     }
   }
   function watch(node: HTMLElement) {
@@ -47,6 +60,7 @@
   onDestroy(() => {
     disposed = true;
     revision++;
+    clearImage();
   });
 </script>
 
@@ -69,12 +83,12 @@
         ><small>{preview.site}</small><strong>{preview.title}</strong>
         {#if preview.description}<span class="description">{preview.description}</span>{/if}
       </span>
-      {#if preview.image && failedImage !== preview.image}<img
-          src={preview.image}
+      {#if imageUrl}<img
+          src={imageUrl}
           alt=""
           loading="lazy"
           referrerpolicy="no-referrer"
-          onerror={() => (failedImage = preview?.image || '')}
+          onerror={clearImage}
         />{/if}
     </a>
   {/if}

@@ -370,3 +370,82 @@ test('settings keep compact controls and relay rows on desktop and mobile', asyn
     }
   }
 });
+
+test('accent swatches persist and restore the exact original light and dark palettes', async ({
+  page,
+}, info) => {
+  await login(page);
+  await page.goto('/settings/theme');
+  const picker = page.getByRole('group', { name: 'Accent color' });
+  const dark = page.getByRole('switch', { name: 'Dark mode', exact: true });
+  const original = picker.getByRole('radio', { name: 'Default blue', exact: true });
+  const colors = ['Cyan', 'Green', 'Pink', 'Orange', 'Purple', 'Red', 'Slate', 'Gold'];
+  const palette = () =>
+    page.evaluate(() => {
+      const style = getComputedStyle(document.body);
+      return Object.fromEntries(
+        Array.from(style)
+          .filter((name) => name.startsWith('--nc-') || name.startsWith('--q-'))
+          .map((name) => [name, style.getPropertyValue(name).trim()]),
+      );
+    });
+  await expect(picker.getByRole('radio')).toHaveCount(9);
+  await expect(original).toBeChecked();
+  for (const mode of ['light', 'dark']) {
+    await dark.setChecked(mode === 'dark');
+    const baseline = await palette();
+    expect(baseline['--q-primary']).toBe(mode === 'dark' ? '#64b5f6' : '#4fa9e6');
+    expect(baseline['--nc-sent']).toBe(mode === 'dark' ? '#2b5278' : '#dfefff');
+    expect(baseline['--nc-active']).toBe(mode === 'dark' ? '#2b5278' : '#5a9bd5');
+    for (const color of colors) {
+      await picker.getByRole('radio', { name: color, exact: true }).check();
+      const selected = await palette();
+      expect(selected['--q-primary']).not.toBe(baseline['--q-primary']);
+      expect(selected['--nc-sent']).not.toBe(baseline['--nc-sent']);
+      expect(selected['--nc-active']).not.toBe(baseline['--nc-active']);
+      for (const token of [
+        '--nc-bg',
+        '--nc-sidebar',
+        '--nc-thread-bg',
+        '--nc-received',
+        '--nc-text',
+        '--nc-border',
+      ])
+        expect(selected[token]).toBe(baseline[token]);
+      await expect(picker.locator('input:checked')).toHaveCount(1);
+    }
+    await picker.getByRole('radio', { name: 'Purple', exact: true }).check();
+    await page.screenshot({ path: info.outputPath(`accent-purple-${mode}.png`) });
+    await original.check();
+    expect(await palette()).toEqual(baseline);
+    await page.screenshot({ path: info.outputPath(`accent-default-${mode}.png`) });
+  }
+  await picker.getByRole('radio', { name: 'Green', exact: true }).check();
+  await page.reload();
+  await expect(picker.getByRole('radio', { name: 'Green', exact: true })).toBeChecked();
+  expect((await palette())['--q-primary']).toBe('#80bd83');
+  await dark.uncheck();
+  expect((await palette())['--q-primary']).toBe('#39733f');
+  await page.reload();
+  await expect(picker.getByRole('radio', { name: 'Green', exact: true })).toBeChecked();
+  expect((await palette())['--q-primary']).toBe('#39733f');
+  await page.setViewportSize({ width: 320, height: 844 });
+  for (const radio of await picker.getByRole('radio').all()) {
+    const rect = await radio.boundingBox();
+    expect(rect!.width).toBeGreaterThanOrEqual(44);
+    expect(rect!.x).toBeGreaterThanOrEqual(0);
+    expect(rect!.x + rect!.width).toBeLessThanOrEqual(320);
+  }
+  await picker.getByRole('radio', { name: 'Green', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(picker.getByRole('radio', { name: 'Pink', exact: true })).toBeChecked();
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('ui-accent-color')))
+    .toBe('pink');
+  await page.screenshot({ path: info.outputPath('accent-mobile.png') });
+  await original.check();
+  await page.reload();
+  await expect(original).toBeChecked();
+  expect((await palette())['--q-primary']).toBe('#4fa9e6');
+  await expect(page.locator('body')).not.toHaveAttribute('data-accent');
+});

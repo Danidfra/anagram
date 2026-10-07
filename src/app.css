@@ -148,6 +148,29 @@ body.body--dark {
   --nc-active-subtext: #dcecff;
 }
 
+/* Optional accents only. The original light/dark rules above remain the default. */
+body[data-accent] {
+  --q-primary: var(--theme-accent-light);
+  --nc-sent: color-mix(in srgb, var(--q-primary) 14%, white);
+  --nc-active: var(--theme-accent-light);
+  --nc-chip-hover-bg: color-mix(in srgb, var(--q-primary) 12%, transparent);
+  --nc-reaction-accent-bg: color-mix(in srgb, var(--q-primary) 12%, transparent);
+  --nc-reaction-accent-bg-hover: color-mix(in srgb, var(--q-primary) 18%, transparent);
+  --nc-reaction-accent-border: color-mix(in srgb, var(--q-primary) 26%, transparent);
+  --nc-reaction-accent-text: var(--q-primary);
+  --nc-reaction-accent-icon-bg: var(--q-primary);
+}
+body.body--dark[data-accent] {
+  --q-primary: var(--theme-accent-dark);
+  --nc-sent: color-mix(in srgb, var(--q-primary) 35%, var(--nc-thread-bg));
+  --nc-active: var(--nc-sent);
+  --nc-active-subtext: color-mix(in srgb, var(--q-primary) 15%, white);
+  --nc-chip-hover-bg: color-mix(in srgb, var(--q-primary) 18%, transparent);
+  --nc-reaction-accent-bg: color-mix(in srgb, var(--q-primary) 20%, transparent);
+  --nc-reaction-accent-bg-hover: color-mix(in srgb, var(--q-primary) 28%, transparent);
+  --nc-reaction-accent-border: color-mix(in srgb, var(--q-primary) 34%, transparent);
+}
+
 body.body--dark .q-btn.q-btn--flat.q-btn--round:not(.text-negative):not(.text-positive):not(.text-warning):not(.text-info),
 body.body--dark .q-btn.q-btn--outline.q-btn--round:not(.text-negative):not(.text-positive):not(.text-warning):not(.text-info) {
   color: var(--nc-text-secondary) !important;

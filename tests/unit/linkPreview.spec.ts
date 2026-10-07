@@ -1,6 +1,12 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { parseLinkPreview, previewUrl } from '../../src/utils/linkPreview';
-import { loadLinkPreview, clearLinkPreviews } from '../../src/services/linkPreviewService';
+import {
+  loadLinkPreview,
+  loadPreviewImage,
+  clearLinkPreviews,
+} from '../../src/services/linkPreviewService';
+
+beforeEach(() => vi.stubGlobal('window', {}));
 
 afterEach(() => {
   clearLinkPreviews();
@@ -48,6 +54,16 @@ describe('link previews', () => {
     'https://127.1',
     'https://0x7f000001',
     'https://127.0.0.1',
+    'https://2130706433',
+    'https://0177.0.0.1',
+    'https://10.0.0.1',
+    'https://172.16.0.1',
+    'https://192.168.1.1',
+    'https://169.254.169.254/latest/meta-data',
+    'https://[::ffff:127.0.0.1]',
+    'https://metadata.google.internal',
+    'https://router.home.arpa',
+    'https://printer.lan',
     'https://[::1]',
     'https://printer.local',
     'https://example.org:444/path',
@@ -58,8 +74,84 @@ describe('link previews', () => {
     'https://example.org/%256esec1secret',
     'https://example.org/%',
     'https://example.org/' + 'a'.repeat(4096),
-  ])('does not fetch unsafe target %s', (value) => {
+  ])('does not fetch unsafe target %s', async (value) => {
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
     expect(previewUrl(value)).toBeNull();
+    expect(await loadLinkPreview(value)).toBeNull();
+    expect(await loadPreviewImage(value)).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it('never performs preview or thumbnail requests in a server environment', async () => {
+    vi.stubGlobal('window', undefined);
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    expect(await loadLinkPreview('https://example.org/server')).toBeNull();
+    expect(await loadPreviewImage('https://example.org/server.png')).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it('loads bounded thumbnail blobs without redirects, credentials or referrers', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response('image bytes', {
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetcher);
+    const blob = await loadPreviewImage('https://example.org/cover.png');
+    expect(blob?.type).toBe('image/png');
+    expect(await blob?.text()).toBe('image bytes');
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://example.org/cover.png',
+      expect.objectContaining({
+        mode: 'cors',
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+        redirect: 'error',
+        cache: 'no-store',
+      }),
+    );
+    fetcher.mockResolvedValue(
+      new Response('<script>bad()</script>', { headers: { 'content-type': 'text/html' } }),
+    );
+    expect(await loadPreviewImage('https://example.org/fake.png')).toBeNull();
+    const cancel = vi.fn();
+    fetcher.mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(2 * 1024 * 1024 + 1));
+          },
+          cancel,
+        }),
+        { headers: { 'content-type': 'image/png' } },
+      ),
+    );
+    expect(await loadPreviewImage('https://example.org/large.png')).toBeNull();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+  it('aborts thumbnail requests when their component is removed', async () => {
+    const aborted = vi.fn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url, options) =>
+          new Promise((_resolve, reject) => {
+            options.signal.addEventListener(
+              'abort',
+              () => {
+                aborted();
+                reject(new DOMException('Aborted', 'AbortError'));
+              },
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const controller = new AbortController();
+    const pending = loadPreviewImage('https://example.org/slow.png', controller.signal);
+    controller.abort();
+    expect(await pending).toBeNull();
+    expect(aborted).toHaveBeenCalledOnce();
   });
   it('bounds malformed metadata and ignores unterminated script/comment contents', () => {
     const source = 'https://example.org';

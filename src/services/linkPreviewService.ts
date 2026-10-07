@@ -30,21 +30,42 @@ async function boundedText(response: Response, html = false): Promise<string> {
     await reader.cancel().catch(() => {});
   }
 }
-async function fetchPreview(url: string): Promise<LinkPreview | null> {
+// Keep preview traffic in the browser/webview; never turn this into a server fetcher.
+async function previewRequest<T>(
+  request: (options: RequestInit) => Promise<T | null>,
+  signal?: AbortSignal,
+): Promise<T | null> {
+  if (typeof window === 'undefined' || signal?.aborted || queue.length >= 30) return null;
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
   requests.add(controller);
   if (active >= 3) await new Promise<void>((resolve) => queue.push(resolve));
   else active++;
-  const timer = setTimeout(() => controller.abort(), 6000);
-  const options: RequestInit = {
-    credentials: 'omit',
-    cache: 'no-store',
-    referrerPolicy: 'no-referrer',
-    redirect: 'error',
-    signal: controller.signal,
-  };
+  const timer = setTimeout(abort, 6000);
   try {
     if (controller.signal.aborted) return null;
+    return await request({
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      redirect: 'error',
+      signal: controller.signal,
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+    requests.delete(controller);
+    const next = queue.shift();
+    if (next) next();
+    else active--;
+  }
+}
+async function fetchPreview(url: string): Promise<LinkPreview | null> {
+  return previewRequest(async (options) => {
     const parsed = new URL(url);
     // GitHub's page HTML is not CORS-readable, but its public repository API is.
     const repo =
@@ -77,19 +98,41 @@ async function fetchPreview(url: string): Promise<LinkPreview | null> {
       return null;
     }
     return parseLinkPreview(await boundedText(response, true), url);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-    requests.delete(controller);
-    const next = queue.shift();
-    if (next) next();
-    else active--;
-  }
+  });
+}
+
+/** Use the same request policy for thumbnails; a direct img URL would follow redirects. */
+export function loadPreviewImage(value: string, signal?: AbortSignal): Promise<Blob | null> {
+  const url = previewUrl(value);
+  if (!url) return Promise.resolve(null);
+  return previewRequest(async (options) => {
+    const response = await fetch(url, options);
+    const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!response.ok || !/^image\/(?:png|jpeg|gif|webp|avif|svg\+xml)$/.test(type)) {
+      await response.body?.cancel();
+      return null;
+    }
+    if (!response.body) return null;
+    const reader = response.body.getReader();
+    const chunks: ArrayBuffer[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 2 * 1024 * 1024) return null;
+        chunks.push(new Uint8Array(value).buffer);
+      }
+      return size ? new Blob(chunks, { type }) : null;
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+  }, signal);
 }
 export function loadLinkPreview(value: string): Promise<LinkPreview | null> {
   const url = previewUrl(value);
-  if (!url) return Promise.resolve(null);
+  if (!url || typeof window === 'undefined') return Promise.resolve(null);
   const cached = cache.get(url);
   if (cached && cached.expires > Date.now()) return cached.result;
   if (queue.length >= 30) return Promise.resolve(null);

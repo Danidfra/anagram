@@ -25,4 +25,4 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e:pwa
-      - run: npm run test:e2e:local -- e2e/app.spec.ts e2e/dm-relay-discovery.spec.ts e2e/group-history.spec.ts
+      - run: npm run test:e2e:local -- e2e/app.spec.ts e2e/dm-relay-discovery.spec.ts e2e/group-history.spec.ts e2e/message-formatting.spec.ts e2e/parity/dm/link-preview.spec.ts
