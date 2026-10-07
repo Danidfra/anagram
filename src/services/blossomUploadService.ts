@@ -5,6 +5,7 @@ import {
   getBlossomServerHost,
   requireBlossomServerUrl,
 } from 'src/utils/blossomServer';
+import { type EncryptedMediaKind, resolveEncryptedMediaKind } from 'src/utils/encryptedMedia';
 import { encryptMediaBytes, MEDIA_ENCRYPTION_ALGORITHM, sha256Hex } from 'src/utils/mediaCrypto';
 import { resolveSafeInlineImageMimeType } from 'src/utils/messageAttachments';
 
@@ -111,10 +112,35 @@ export function validateEncryptedImageFile(file: File): string | null {
   return null;
 }
 
-// Images are always sent encrypted; video and audio still use the plaintext upload path.
-export function validateOutgoingMediaFile(file: File): string | null {
-  return isImageMediaFile(file) ? validateEncryptedImageFile(file) : validateBlossomMediaFile(file);
+const UNSUPPORTED_ENCRYPTED_MEDIA_MESSAGES: Record<EncryptedMediaKind, string> = {
+  image: 'Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.',
+  video: 'Only MP4 and WebM videos can be sent encrypted.',
+  audio: 'Only MP3, MP4/AAC, Ogg, WebM, WAV, and FLAC audio can be sent encrypted.',
+};
+
+// Validates image, video and audio for private (encrypted) sending: type allowlist and the
+// per-kind size limit from the central resolver.
+export function validateEncryptedMediaFile(file: File): string | null {
+  const baseError = validateBlossomMediaFile(file);
+  if (baseError) {
+    return baseError;
+  }
+
+  const info = resolveEncryptedMediaKind(file.type);
+  if (!info) {
+    const category = file.type.split('/')[0].toLowerCase() as EncryptedMediaKind;
+    return UNSUPPORTED_ENCRYPTED_MEDIA_MESSAGES[category];
+  }
+
+  if (file.size > info.maxBytes) {
+    return `Encrypted ${info.kind} uploads are limited to ${info.maxBytes / (1024 * 1024)} MiB.`;
+  }
+
+  return null;
 }
+
+// Private media is always encrypted; the plaintext upload path is not reachable from sending.
+export const validateOutgoingMediaFile = validateEncryptedMediaFile;
 
 const ASCII = (value: string): number[] => Array.from(value, (char) => char.charCodeAt(0));
 const IMAGE_FTYP_BRANDS = new Set(['avif', 'avis', 'heic', 'heix', 'heim', 'heis', 'mif1', 'msf1']);
@@ -204,7 +230,8 @@ async function putBlossomBlob(input: PutBlossomBlobInput): Promise<BlossomBlobDe
   return descriptor;
 }
 
-// Plaintext upload path, kept for video and audio. Images must use uploadEncryptedImage.
+// Plaintext upload path, kept for compatibility. The private-media composer flow never calls it,
+// and failed encrypted uploads are never routed here. Images are refused outright.
 export async function uploadBlossomMedia(
   file: File,
   options: UploadBlossomMediaOptions
@@ -250,7 +277,7 @@ export async function uploadBlossomMedia(
 
 // Everything an encrypted upload needs, produced by a single encryption pass. A retry reuses
 // this object so the key, nonce and ciphertext never change between attempts.
-export interface PreparedEncryptedImage {
+export interface PreparedEncryptedMedia {
   ciphertext: Uint8Array<ArrayBuffer>;
   sha256: string;
   mimeType: string;
@@ -258,13 +285,13 @@ export interface PreparedEncryptedImage {
   encryption: NonNullable<MessageAttachmentMetadata['encryption']>;
 }
 
-// Encrypts the original image bytes once. The key and nonce stay on the client until they are
+// Encrypts the original media bytes once. The key and nonce stay on the client until they are
 // placed in the gift-wrapped kind 15 rumor.
-export async function prepareEncryptedImage(file: File): Promise<PreparedEncryptedImage> {
-  const validationError = validateEncryptedImageFile(file);
-  const mimeType = resolveSafeInlineImageMimeType(file.type);
+export async function prepareEncryptedMedia(file: File): Promise<PreparedEncryptedMedia> {
+  const validationError = validateEncryptedMediaFile(file);
+  const mimeType = resolveEncryptedMediaKind(file.type)?.canonicalMime;
   if (validationError || !mimeType) {
-    throw new Error(validationError ?? 'Unsupported image type.');
+    throw new Error(validationError ?? 'Unsupported media type.');
   }
 
   const plaintext = new Uint8Array(await file.arrayBuffer());
@@ -287,8 +314,8 @@ export async function prepareEncryptedImage(file: File): Promise<PreparedEncrypt
 
 // Uploads only ciphertext to the private-media Blossom server. There is deliberately no
 // plaintext fallback: failures are thrown to the caller, which may retry this same payload.
-export async function uploadPreparedEncryptedImage(
-  prepared: PreparedEncryptedImage,
+export async function uploadPreparedEncryptedMedia(
+  prepared: PreparedEncryptedMedia,
   options: UploadBlossomMediaOptions
 ): Promise<BlossomUploadResult> {
   const { ciphertext, sha256, mimeType, name, encryption } = prepared;
@@ -326,11 +353,11 @@ export async function uploadPreparedEncryptedImage(
   };
 }
 
-export async function uploadEncryptedImage(
+export async function uploadEncryptedMedia(
   file: File,
   options: UploadBlossomMediaOptions
 ): Promise<BlossomUploadResult> {
-  return uploadPreparedEncryptedImage(await prepareEncryptedImage(file), options);
+  return uploadPreparedEncryptedMedia(await prepareEncryptedMedia(file), options);
 }
 
 export interface PrivateMediaServerCheckResult {

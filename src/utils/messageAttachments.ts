@@ -1,4 +1,5 @@
 import type { MessageAttachmentEncryption, MessageAttachmentMetadata } from 'src/types/chat';
+import { normalizeMimeType, resolveEncryptedMediaKind } from 'src/utils/encryptedMedia';
 import {
   isValidMediaKeyHex,
   isValidMediaNonceHex,
@@ -8,6 +9,8 @@ import {
 
 const IMETA_TAG_NAME = 'imeta';
 export const IMAGE_ATTACHMENT_PREVIEW_TEXT = 'Picture';
+export const VIDEO_ATTACHMENT_PREVIEW_TEXT = 'Video';
+export const AUDIO_ATTACHMENT_PREVIEW_TEXT = 'Audio';
 const FILE_ATTACHMENT_PREVIEW_TEXT = 'File';
 
 // NIP-17 rumor kinds rendered as chat messages.
@@ -21,16 +24,6 @@ const DECRYPTION_NONCE_TAG = 'decryption-nonce';
 const HASH_TAG = 'x';
 const ORIGINAL_HASH_TAG = 'ox';
 const SIZE_TAG = 'size';
-
-// Raster formats that are safe to hand to <img> from a decrypted blob. SVG and anything
-// document-like is deliberately excluded.
-const SAFE_INLINE_IMAGE_MIME_TYPES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-  'image/avif',
-]);
 
 export interface MessageReplyPreviewContent {
   text: string;
@@ -60,14 +53,9 @@ function readImetaField(entry: string, key: string): string {
   return entry.startsWith(prefix) ? entry.slice(prefix.length).trim() : '';
 }
 
-function normalizeMimeType(value: unknown): string {
-  return normalizeText(value).split(';')[0]?.trim().toLowerCase() ?? '';
-}
-
 export function resolveSafeInlineImageMimeType(value: unknown): string | null {
-  const mimeType = normalizeMimeType(value);
-  const canonical = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
-  return SAFE_INLINE_IMAGE_MIME_TYPES.has(canonical) ? canonical : null;
+  const info = resolveEncryptedMediaKind(value);
+  return info?.kind === 'image' ? info.canonicalMime : null;
 }
 
 export function normalizeEncryptedMediaUrl(value: unknown): string | null {
@@ -336,6 +324,16 @@ export function isImageAttachment(attachment: MessageAttachmentMetadata): boolea
     : /^image\//iu.test(attachment.mimeType);
 }
 
+// Encrypted attachments rendered with <video> or <audio> after an explicit user action.
+export function isPlayableEncryptedAttachment(attachment: MessageAttachmentMetadata): boolean {
+  if (attachment.type !== 'media' || !attachment.encryption) {
+    return false;
+  }
+
+  const kind = resolveEncryptedMediaKind(attachment.mimeType)?.kind;
+  return kind === 'video' || kind === 'audio';
+}
+
 function readMediaAttachmentsFromMeta(
   meta:
     | {
@@ -353,6 +351,14 @@ function readMediaAttachmentsFromMeta(
     .filter((attachment): attachment is MessageAttachmentMetadata => attachment !== null);
 }
 
+export function readPlayableEncryptedAttachmentsFromMeta(
+  meta: { attachments?: unknown } | null | undefined
+): MessageAttachmentMetadata[] {
+  return readMediaAttachmentsFromMeta(meta).filter((attachment) =>
+    isPlayableEncryptedAttachment(attachment)
+  );
+}
+
 export function readImageAttachmentsFromMeta(
   meta:
     | {
@@ -364,7 +370,7 @@ export function readImageAttachmentsFromMeta(
   return readMediaAttachmentsFromMeta(meta).filter((attachment) => isImageAttachment(attachment));
 }
 
-// Encrypted attachments that cannot be shown inline (video, audio, unsupported image formats).
+// Encrypted attachments that cannot be shown at all (unsupported image, video, audio or file types).
 export function readUnsupportedEncryptedAttachmentsFromMeta(
   meta:
     | {
@@ -374,7 +380,10 @@ export function readUnsupportedEncryptedAttachmentsFromMeta(
     | undefined
 ): MessageAttachmentMetadata[] {
   return readMediaAttachmentsFromMeta(meta).filter(
-    (attachment) => isEncryptedAttachment(attachment) && !isImageAttachment(attachment)
+    (attachment) =>
+      isEncryptedAttachment(attachment) &&
+      !isImageAttachment(attachment) &&
+      !isPlayableEncryptedAttachment(attachment)
   );
 }
 
@@ -411,8 +420,19 @@ export function buildImageAttachmentPreviewText(
   const fallbackText =
     readImageAttachmentsFromMeta(meta).length > 0
       ? IMAGE_ATTACHMENT_PREVIEW_TEXT
-      : FILE_ATTACHMENT_PREVIEW_TEXT;
+      : resolveEncryptedPreviewFallback(meta);
   return previewText.replace(/\s+/gu, ' ').trim() || fallbackText;
+}
+
+function resolveEncryptedPreviewFallback(
+  meta: { attachments?: unknown } | null | undefined
+): string {
+  const attachment = readPlayableEncryptedAttachmentsFromMeta(meta)[0];
+  const kind = attachment ? resolveEncryptedMediaKind(attachment.mimeType)?.kind : null;
+  if (kind === 'video') {
+    return VIDEO_ATTACHMENT_PREVIEW_TEXT;
+  }
+  return kind === 'audio' ? AUDIO_ATTACHMENT_PREVIEW_TEXT : FILE_ATTACHMENT_PREVIEW_TEXT;
 }
 
 export function buildMessageReplyPreviewContent(

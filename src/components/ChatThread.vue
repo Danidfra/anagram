@@ -424,7 +424,11 @@ const emit = defineEmits<{
   (event: 'edit-message', payload: { message: Message; text: string }): void;
   (
     event: 'send-media',
-    payload: { attachment: MessageAttachmentMetadata; replyTo: MessageReplyPreview | null }
+    payload: {
+      attachment: MessageAttachmentMetadata;
+      replyTo: MessageReplyPreview | null;
+      privateMediaServerToPersist?: string;
+    }
   ): void;
   (event: 'back'): void;
   (event: 'open-profile', publicKey: string): void;
@@ -1891,12 +1895,18 @@ function handleSend(payload: { text: string }): void {
   }
 }
 
-function handleSendMedia(payload: { attachment: MessageAttachmentMetadata }): void {
+function handleSendMedia(payload: {
+  attachment: MessageAttachmentMetadata;
+  privateMediaServerToPersist?: string;
+}): void {
   try {
     pendingSentMessageReveal = true;
     emit('send-media', {
       attachment: payload.attachment,
       replyTo: activeReply.value,
+      ...(payload.privateMediaServerToPersist
+        ? { privateMediaServerToPersist: payload.privateMediaServerToPersist }
+        : {}),
     });
     activeReply.value = null;
   } catch (error) {

@@ -227,10 +227,9 @@
         <div>{{ $t('message.mediaEncryptionNotice') }}</div>
         <div>
           {{
-            $t('message.mediaUpload.usingPrivateMediaServer', { server: privateMediaServerUrl })
+            $t('message.mediaUpload.usingPrivateMediaServer', { server: activePrivateServerUrl })
           }}
         </div>
-        <div>{{ $t('message.mediaUpload.usingBlossomServer', { server: blossomServerUrl }) }}</div>
       </div>
 
       <q-linear-progress
@@ -277,6 +276,21 @@
         <div class="composer__media-upload-status">
           {{ mediaUploadStatusMessage }}
         </div>
+        <q-input
+          v-if="isChangingPrivateServer && failedEncryptedUpload"
+          v-model="privateServerDraft"
+          outlined
+          dense
+          type="url"
+          inputmode="url"
+          autocapitalize="none"
+          spellcheck="false"
+          data-testid="composer-media-upload-server-input"
+          :label="$t('mediaDataStorage.serverUrl')"
+          :hint="$t('message.mediaUpload.changeServerHint')"
+          :error="Boolean(privateServerDraft.trim()) && !normalizedPrivateServerDraft"
+          :error-message="$t('mediaDataStorage.serverUrlInvalid')"
+        />
       </div>
 
       <template v-if="mediaUploadError" #actions>
@@ -288,15 +302,15 @@
           @click="handleMediaUploadDismiss"
         />
         <q-btn
-          v-if="failedEncryptedUpload"
+          v-if="failedEncryptedUpload && !isChangingPrivateServer"
           flat
           no-caps
           :label="$t('message.mediaUpload.changeServer')"
           data-testid="composer-media-upload-change-server"
-          @click="handleChangePrivateMediaServer"
+          @click="startChangingPrivateServer"
         />
         <q-btn
-          v-if="failedEncryptedUpload"
+          v-if="failedEncryptedUpload && !isChangingPrivateServer"
           unelevated
           no-caps
           color="primary"
@@ -304,15 +318,24 @@
           data-testid="composer-media-upload-retry"
           @click="handleRetryEncryptedUpload"
         />
+        <q-btn
+          v-if="failedEncryptedUpload && isChangingPrivateServer"
+          unelevated
+          no-caps
+          color="primary"
+          :label="$t('message.mediaUpload.useServerAndRetry')"
+          :disable="!normalizedPrivateServerDraft"
+          data-testid="composer-media-upload-use-server"
+          @click="handleUseServerAndRetry"
+        />
       </template>
     </AppDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useQuasar } from 'quasar';
-import { useRouter } from 'vue-router';
 import AppDialog from 'src/components/AppDialog.vue';
 import CachedAvatar from 'src/components/CachedAvatar.vue';
 import EmojiPickerPanel from 'src/components/EmojiPickerPanel.vue';
@@ -320,13 +343,16 @@ import { TOP_500_EMOJIS, filterEmojiEntries, type EmojiOption } from 'src/data/t
 import { t } from 'src/i18n';
 import MessageAttachmentImage from 'src/components/MessageAttachmentImage.vue';
 import {
-  isImageMediaFile,
-  prepareEncryptedImage,
-  uploadBlossomMedia,
-  uploadPreparedEncryptedImage,
+  prepareEncryptedMedia,
+  uploadPreparedEncryptedMedia,
   validateOutgoingMediaFile,
-  type PreparedEncryptedImage,
 } from 'src/services/blossomUploadService';
+import {
+  createPrivateMediaUploadSession,
+  type PrivateMediaUploadOutcome,
+} from 'src/services/privateMediaUploadSession';
+import { normalizeBlossomServerUrl } from 'src/utils/blossomServer';
+import { shouldEncryptOutgoingMedia } from 'src/utils/encryptedMedia';
 import { useChatStore } from 'src/stores/chatStore';
 import { useNostrStore } from 'src/stores/nostrStore';
 import type { Message, MessageAttachmentMetadata, MessageReplyPreview } from 'src/types/chat';
@@ -347,7 +373,6 @@ const props = defineProps<{
 }>();
 
 const $q = useQuasar();
-const router = useRouter();
 const chatStore = useChatStore();
 const nostrStore = useNostrStore();
 const draft = ref('');
@@ -365,9 +390,9 @@ const isMediaUploadInProgress = ref(false);
 const pendingInlineMediaFile = ref<File | null>(null);
 const mediaUploadStatus = ref<'uploading' | 'sending'>('uploading');
 const mediaUploadError = ref('');
-// Ciphertext and key material of an image whose encrypted upload failed. Kept so a retry sends
-// the identical payload; it is never replaced by, or converted to, a plaintext upload.
-const failedEncryptedUpload = ref<PreparedEncryptedImage | null>(null);
+// True while a failed encrypted upload can be retried. The prepared ciphertext, key and nonce
+// live in privateMediaUpload and are never replaced by, or converted to, a plaintext upload.
+const failedEncryptedUpload = ref(false);
 const shouldRefocusAfterEmojiMenuHide = ref(false);
 const activeMentionAutocompleteIndex = ref(0);
 const activeEmojiAutocompleteIndex = ref(0);
@@ -382,7 +407,10 @@ let editChatId: string | null = null;
 const emit = defineEmits<{
   (event: 'send', payload: { text: string }): void;
   (event: 'edit', payload: { text: string }): void;
-  (event: 'send-media', payload: { attachment: MessageAttachmentMetadata }): void;
+  (
+    event: 'send-media',
+    payload: { attachment: MessageAttachmentMetadata; privateMediaServerToPersist?: string }
+  ): void;
   (event: 'cancel-edit'): void;
   (event: 'cancel-reply'): void;
 }>();
@@ -397,13 +425,27 @@ function normalizeChatIdentifier(value: string | null | undefined): string | nul
 }
 
 const activeChatId = computed(() => normalizeChatIdentifier(props.chatId));
-const blossomServerUrl = computed(() => nostrStore.getBlossomServerUrl());
-const privateMediaServerUrl = computed(() => nostrStore.getPrivateMediaBlossomServerUrl());
+// The server used by the current upload. This is local state rather than a computed over the
+// storage-backed preference getter, which has no reactive dependency and would go stale.
+const activePrivateServerUrl = ref(nostrStore.getPrivateMediaBlossomServerUrl());
+const privateMediaUpload = createPrivateMediaUploadSession<File>({
+  prepare: prepareEncryptedMedia,
+  upload: (prepared, serverUrl) =>
+    uploadPreparedEncryptedMedia(prepared, {
+      serverUrl,
+      signUploadAuthHeader: nostrStore.signBlossomUploadAuthHeader,
+    }),
+  getPersistedServerUrl: () => nostrStore.getPrivateMediaBlossomServerUrl(),
+});
+const isChangingPrivateServer = ref(false);
+const privateServerDraft = ref('');
+const normalizedPrivateServerDraft = computed(() =>
+  normalizeBlossomServerUrl(privateServerDraft.value)
+);
 const sendButtonIcon = computed(() =>
   props.editingMessage ? 'check' : $q.screen.lt.sm ? 'north' : 'send'
 );
 const mentionProfiles = computed(() => props.mentionProfiles ?? []);
-const isEncryptedUploadActive = ref(false);
 const mediaUploadStatusMessage = computed(() => {
   if (mediaUploadError.value) {
     return mediaUploadError.value;
@@ -412,7 +454,7 @@ const mediaUploadStatusMessage = computed(() => {
   return mediaUploadStatus.value === 'sending'
     ? t('message.mediaUpload.sending')
     : t('message.mediaUpload.uploadingToServer', {
-        server: isEncryptedUploadActive.value ? privateMediaServerUrl.value : blossomServerUrl.value,
+        server: activePrivateServerUrl.value,
       });
 });
 
@@ -739,6 +781,7 @@ function openMediaPrivacyDialog(file: File | null = null): void {
     }
   }
 
+  activePrivateServerUrl.value = nostrStore.getPrivateMediaBlossomServerUrl();
   pendingInlineMediaFile.value = file;
   isMediaPrivacyDialogOpen.value = true;
 }
@@ -865,72 +908,42 @@ function handleComposerDrop(event: DragEvent): void {
 }
 
 async function uploadAndSendMediaFile(file: File): Promise<void> {
-  const isImage = isImageMediaFile(file);
-  failedEncryptedUpload.value = null;
-  isEncryptedUploadActive.value = isImage;
+  clearEncryptedUploadFailureState();
   mediaUploadStatus.value = 'uploading';
   mediaUploadError.value = '';
   isMediaUploadInProgress.value = true;
   isMediaUploadDialogOpen.value = true;
 
-  // Images are encrypted locally and sent as NIP-17 kind 15; the private-media server only
-  // receives ciphertext. Other media keeps using the regular Blossom server.
-  if (!isImage) {
-    await runMediaUpload(() =>
-      uploadBlossomMedia(file, {
-        serverUrl: blossomServerUrl.value,
-        signUploadAuthHeader: nostrStore.signBlossomUploadAuthHeader,
-      })
-    );
-    return;
-  }
-
-  let prepared: PreparedEncryptedImage;
-  try {
-    prepared = await prepareEncryptedImage(file);
-  } catch (error) {
-    reportUiError('Failed to encrypt media', error);
-    mediaUploadError.value =
-      error instanceof Error && error.message.trim()
-        ? error.message.trim()
-        : t('errors.failedUploadMedia');
+  // Private media is encrypted locally and sent as NIP-17 kind 15; the private-media server
+  // only receives ciphertext. Media that cannot be encrypted is refused, never sent in plaintext.
+  if (!shouldEncryptOutgoingMedia(file)) {
+    mediaUploadError.value = validateOutgoingMediaFile(file) ?? t('errors.failedUploadMedia');
     isMediaUploadInProgress.value = false;
     return;
   }
 
-  await uploadPreparedImage(prepared);
+  activePrivateServerUrl.value = privateMediaUpload.refreshActiveServerUrl();
+  await runMediaUpload(() => privateMediaUpload.start(file));
 }
 
-function uploadPreparedImage(prepared: PreparedEncryptedImage): Promise<void> {
-  return runMediaUpload(
-    () =>
-      uploadPreparedEncryptedImage(prepared, {
-        serverUrl: privateMediaServerUrl.value,
-        signUploadAuthHeader: nostrStore.signBlossomUploadAuthHeader,
-      }),
-    prepared
-  );
-}
-
-async function runMediaUpload(
-  upload: () => Promise<{ attachment: MessageAttachmentMetadata }>,
-  prepared: PreparedEncryptedImage | null = null
-): Promise<void> {
+async function runMediaUpload(start: () => Promise<PrivateMediaUploadOutcome>): Promise<void> {
   const minProgressDelay = new Promise((resolve) => window.setTimeout(resolve, 2000));
 
   try {
-    const uploadResult = await upload();
+    const { result, serverToPersist } = await start();
     await minProgressDelay;
     mediaUploadStatus.value = 'sending';
-    failedEncryptedUpload.value = null;
+    failedEncryptedUpload.value = false;
+    // The parent persists serverToPersist only after the kind 15 send has succeeded.
     emit('send-media', {
-      attachment: uploadResult.attachment,
+      attachment: result.attachment,
+      ...(serverToPersist ? { privateMediaServerToPersist: serverToPersist } : {}),
     });
     isMediaUploadDialogOpen.value = false;
   } catch (error) {
     await minProgressDelay;
     reportUiError('Failed to upload media to Blossom', error);
-    failedEncryptedUpload.value = prepared;
+    failedEncryptedUpload.value = privateMediaUpload.hasPreparedUpload();
     mediaUploadError.value =
       error instanceof Error && error.message.trim()
         ? error.message.trim()
@@ -940,26 +953,58 @@ async function runMediaUpload(
   }
 }
 
+function clearEncryptedUploadFailureState(): void {
+  privateMediaUpload.reset();
+  failedEncryptedUpload.value = false;
+  isChangingPrivateServer.value = false;
+  privateServerDraft.value = '';
+}
+
 function handleRetryEncryptedUpload(): void {
-  const prepared = failedEncryptedUpload.value;
-  if (!prepared || isMediaUploadInProgress.value) {
+  if (!failedEncryptedUpload.value || isMediaUploadInProgress.value) {
     return;
   }
 
   mediaUploadStatus.value = 'uploading';
   mediaUploadError.value = '';
   isMediaUploadInProgress.value = true;
-  void uploadPreparedImage(prepared);
+  void runMediaUpload(() => privateMediaUpload.retry());
 }
 
+// Cancel and the dialog's close button both end up here, via the dialog's model.
 function handleMediaUploadDismiss(): void {
-  failedEncryptedUpload.value = null;
   isMediaUploadDialogOpen.value = false;
 }
 
-function handleChangePrivateMediaServer(): void {
-  handleMediaUploadDismiss();
-  void router.push({ name: 'settings-media-data-storage' });
+watch(isMediaUploadDialogOpen, (isOpen) => {
+  if (!isOpen) {
+    clearEncryptedUploadFailureState();
+  }
+});
+
+onBeforeUnmount(() => {
+  privateMediaUpload.reset();
+});
+
+function startChangingPrivateServer(): void {
+  privateServerDraft.value = activePrivateServerUrl.value;
+  isChangingPrivateServer.value = true;
+}
+
+// Retries the SAME prepared ciphertext, key and nonce against the entered server right away.
+// The saved preference only changes after that upload succeeds.
+function handleUseServerAndRetry(): void {
+  const serverUrl = normalizedPrivateServerDraft.value;
+  if (!failedEncryptedUpload.value || !serverUrl || isMediaUploadInProgress.value) {
+    return;
+  }
+
+  activePrivateServerUrl.value = serverUrl;
+  isChangingPrivateServer.value = false;
+  mediaUploadStatus.value = 'uploading';
+  mediaUploadError.value = '';
+  isMediaUploadInProgress.value = true;
+  void runMediaUpload(() => privateMediaUpload.retryWithServer(serverUrl));
 }
 
 function handleFileAction(): void {
@@ -1193,7 +1238,6 @@ watch(
     isMediaUploadInProgress.value = false;
     pendingInlineMediaFile.value = null;
     mediaUploadError.value = '';
-    failedEncryptedUpload.value = null;
     shouldRefocusAfterEmojiMenuHide.value = false;
   },
   { immediate: true }

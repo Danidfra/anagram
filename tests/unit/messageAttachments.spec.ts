@@ -12,6 +12,7 @@ import {
   parseNip17FileMessageAttachment,
   readHiddenAttachmentUrls,
   readImageAttachmentsFromMeta,
+  readPlayableEncryptedAttachmentsFromMeta,
   readUnsupportedEncryptedAttachmentsFromMeta,
   redactFileMessageSecretTags,
   resolveChatMessageRumorKind,
@@ -311,7 +312,7 @@ describe('message attachment helpers', () => {
     it('only treats allowlisted raster types as inline encrypted images', () => {
       const svg = { ...encryptedAttachment, mimeType: 'image/svg+xml' };
       const html = { ...encryptedAttachment, mimeType: 'text/html' };
-      const video = { ...encryptedAttachment, mimeType: 'video/mp4' };
+      const video = { ...encryptedAttachment, mimeType: 'video/quicktime' };
       const meta = { attachments: [encryptedAttachment, svg, html, video] };
 
       expect(readImageAttachmentsFromMeta(meta)).toEqual([encryptedAttachment]);
@@ -323,13 +324,36 @@ describe('message attachment helpers', () => {
       expect(resolveSafeInlineImageMimeType(' image/PNG; charset=x ')).toBe('image/png');
     });
 
+    it('classifies encrypted video and audio as playable and everything else as unsupported', () => {
+      const mp4 = { ...encryptedAttachment, mimeType: 'video/mp4' };
+      const webm = { ...encryptedAttachment, mimeType: 'video/webm; codecs=vp9' };
+      const mp3 = { ...encryptedAttachment, mimeType: 'audio/mpeg' };
+      const mov = { ...encryptedAttachment, mimeType: 'video/quicktime' };
+      const mkv = { ...encryptedAttachment, mimeType: 'video/x-matroska' };
+      const meta = { attachments: [encryptedAttachment, mp4, webm, mp3, mov, mkv] };
+
+      expect(readPlayableEncryptedAttachmentsFromMeta(meta)).toEqual([mp4, webm, mp3]);
+      expect(readImageAttachmentsFromMeta(meta)).toEqual([encryptedAttachment]);
+      expect(readUnsupportedEncryptedAttachmentsFromMeta(meta)).toEqual([mov, mkv]);
+    });
+
+    it('never treats a plaintext attachment as playable encrypted media', () => {
+      const plain = { type: 'media', url: blobUrl, mimeType: 'video/mp4', size: 10 };
+
+      expect(readPlayableEncryptedAttachmentsFromMeta({ attachments: [plain] })).toEqual([]);
+    });
+
     it('hides encrypted blob URLs from message text and previews', () => {
       const meta = { attachments: [encryptedAttachment] };
       const videoMeta = { attachments: [{ ...encryptedAttachment, mimeType: 'video/mp4' }] };
+      const audioMeta = { attachments: [{ ...encryptedAttachment, mimeType: 'audio/mpeg' }] };
+      const movMeta = { attachments: [{ ...encryptedAttachment, mimeType: 'video/quicktime' }] };
 
       expect(readHiddenAttachmentUrls(meta)).toEqual([blobUrl]);
       expect(buildImageAttachmentPreviewText(blobUrl, meta)).toBe('Picture');
-      expect(buildImageAttachmentPreviewText(blobUrl, videoMeta)).toBe('File');
+      expect(buildImageAttachmentPreviewText(blobUrl, videoMeta)).toBe('Video');
+      expect(buildImageAttachmentPreviewText(blobUrl, audioMeta)).toBe('Audio');
+      expect(buildImageAttachmentPreviewText(blobUrl, movMeta)).toBe('File');
     });
 
     it('builds reply previews that carry decryption data instead of a plain image URL', () => {
@@ -339,6 +363,29 @@ describe('message attachment helpers', () => {
         text: 'Picture',
         imageAttachment: encryptedAttachment,
       });
+    });
+
+    it('keeps reply previews of encrypted video and audio text-only, without decryption data', () => {
+      for (const mimeType of ['video/mp4', 'audio/mpeg']) {
+        const preview = buildMessageReplyPreviewContent(blobUrl, {
+          attachments: [{ ...encryptedAttachment, mimeType }],
+        });
+
+        expect(preview).toEqual({ text: mimeType.startsWith('video') ? 'Video' : 'Audio' });
+      }
+    });
+
+    it('round-trips video and audio file-type through kind 15 tags', () => {
+      for (const mimeType of ['video/mp4', 'video/webm', 'audio/mpeg', 'audio/flac']) {
+        const attachment = { ...encryptedAttachment, mimeType };
+        const tags = buildNip17FileMessageTags(attachment);
+
+        expect(parseNip17FileMessageAttachment(blobUrl, tags)).toMatchObject({
+          mimeType,
+          sha256: attachment.sha256,
+          encryption: attachment.encryption,
+        });
+      }
     });
 
     it('redacts decryption material for diagnostics', () => {

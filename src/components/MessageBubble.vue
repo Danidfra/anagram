@@ -369,6 +369,18 @@
           </div>
         </div>
         <div
+          v-for="attachment in playableEncryptedAttachments"
+          :key="`${attachment.url}::${attachment.sha256 ?? ''}`"
+          class="bubble__file-attachment"
+          data-testid="message-encrypted-media-attachment"
+          @click.stop
+        >
+          <MessageAttachmentMedia
+            :attachment="attachment"
+            :label="resolveMediaAttachmentLabel(attachment)"
+          />
+        </div>
+        <div
           v-for="attachment in unsupportedEncryptedAttachments"
           :key="`${attachment.url}::${attachment.sha256 ?? ''}`"
           class="bubble__file-attachment"
@@ -725,6 +737,7 @@ import AppTooltip from 'src/components/AppTooltip.vue';
 import CachedAvatar from 'src/components/CachedAvatar.vue';
 import EmojiPickerPanel from 'src/components/EmojiPickerPanel.vue';
 import MessageAttachmentImage from 'src/components/MessageAttachmentImage.vue';
+import MessageAttachmentMedia from 'src/components/MessageAttachmentMedia.vue';
 import {
   isRetryableStatusScope,
   type StatusListItem,
@@ -747,6 +760,7 @@ import {
   isEncryptedAttachment,
   readHiddenAttachmentUrls,
   readImageAttachmentsFromMeta,
+  readPlayableEncryptedAttachmentsFromMeta,
   readUnsupportedEncryptedAttachmentsFromMeta,
   redactFileMessageSecretTags
 } from 'src/utils/messageAttachments';
@@ -764,6 +778,7 @@ import { reportUiError } from 'src/utils/uiErrorHandler';
 import { isPackagedAppRuntime } from 'src/utils/runtimePlatform';
 import { formatCompactPublicKey } from 'src/utils/publicKeyText';
 import { getDateTimeLocale, t } from 'src/i18n';
+import { resolveEncryptedMediaKind } from 'src/utils/encryptedMedia';
 
 const props = defineProps<{
   message: Message;
@@ -1094,6 +1109,23 @@ const imageAttachments = computed(() => {
 
   return readImageAttachmentsFromMeta(props.message.meta);
 });
+
+const playableEncryptedAttachments = computed(() => {
+  if (isDeletedMessage.value) {
+    return [];
+  }
+
+  return readPlayableEncryptedAttachmentsFromMeta(props.message.meta);
+});
+
+function resolveMediaAttachmentLabel(attachment: MessageAttachmentMetadata): string {
+  return (
+    attachment.name?.trim() ||
+    (resolveEncryptedMediaKind(attachment.mimeType)?.kind === 'audio'
+      ? t('message.encryptedMedia.audio')
+      : t('message.encryptedMedia.video'))
+  );
+}
 
 const unsupportedEncryptedAttachments = computed(() => {
   if (isDeletedMessage.value) {

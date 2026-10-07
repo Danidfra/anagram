@@ -153,7 +153,7 @@ async function useBlossomServer(user: BootstrappedUser, serverUrl: string): Prom
   }
 
   await saveButton.click();
-  await expect(user.page.getByText('Encrypted photo server saved.', { exact: true })).toBeVisible({
+  await expect(user.page.getByText('Encrypted media server saved.', { exact: true })).toBeVisible({
     timeout: 12_000,
   });
 }

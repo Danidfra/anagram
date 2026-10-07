@@ -245,6 +245,7 @@ import type { ContactRecord } from 'src/types/contact';
 import { resolveContactAppRelayFallback } from 'src/utils/messageRelayFallback';
 import { areMessageEditTimestampsEqual } from 'src/utils/messageEdits';
 import { reportUiError } from 'src/utils/uiErrorHandler';
+import { sendMediaThenPersistServer } from 'src/utils/sendMediaThenPersistServer';
 import ContactLookupDialog from 'src/components/ContactLookupDialog.vue';
 import ReconnectHealingBanner from 'src/components/ReconnectHealingBanner.vue';
 import StartupHistoryBanner from 'src/components/StartupHistoryBanner.vue';
@@ -661,6 +662,7 @@ async function handleSend(payload: { text: string; replyTo: MessageReplyPreview 
 async function handleSendMedia(payload: {
   attachment: MessageAttachmentMetadata;
   replyTo: MessageReplyPreview | null;
+  privateMediaServerToPersist?: string;
 }): Promise<void> {
   try {
     const targetChatId = activeChatId.value;
@@ -669,38 +671,49 @@ async function handleSendMedia(payload: {
       return;
     }
 
-    let created;
-    try {
-      created = await messageStore.sendMediaAttachment(
-        targetChatId,
-        payload.attachment,
-        payload.replyTo
-      );
-    } catch (error) {
-      if (!isMissingContactRelaysError(error)) {
-        throw error;
-      }
+    const created = await sendMediaThenPersistServer({
+      send: async () => {
+        try {
+          return await messageStore.sendMediaAttachment(
+            targetChatId,
+            payload.attachment,
+            payload.replyTo
+          );
+        } catch (error) {
+          if (!isMissingContactRelaysError(error)) {
+            throw error;
+          }
 
-      const fallbackRelayUrls = await resolveFallbackRelayUrls(
-        error.chatPublicKey,
-        targetChatName
-      );
-      if (!fallbackRelayUrls) {
-        return;
-      }
+          const fallbackRelayUrls = await resolveFallbackRelayUrls(
+            error.chatPublicKey,
+            targetChatName
+          );
+          if (!fallbackRelayUrls) {
+            return null;
+          }
 
-      created = await messageStore.sendMediaAttachment(
-        targetChatId,
-        payload.attachment,
-        payload.replyTo,
-        {
-          relayUrls: fallbackRelayUrls,
-          ...(typeof error.localMessageId === 'number' && error.localMessageId > 0
-            ? { continueFromMessageId: error.localMessageId }
-            : {})
+          return messageStore.sendMediaAttachment(
+            targetChatId,
+            payload.attachment,
+            payload.replyTo,
+            {
+              relayUrls: fallbackRelayUrls,
+              ...(typeof error.localMessageId === 'number' && error.localMessageId > 0
+                ? { continueFromMessageId: error.localMessageId }
+                : {})
+            }
+          );
         }
-      );
-    }
+      },
+      serverToPersist: payload.privateMediaServerToPersist,
+      persistServer: (serverUrl) => nostrStore.savePrivateMediaBlossomServerUrl(serverUrl),
+      onPersistError: (error) =>
+        reportUiError(
+          'Failed to save private media Blossom server preference',
+          error,
+          t('message.mediaUpload.serverNotSaved')
+        )
+    });
 
     if (created) {
       await chatStore.updateChatPreview(targetChatId, created.text, created.sentAt, {

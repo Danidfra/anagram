@@ -326,6 +326,39 @@ describe('messageStore send', () => {
       expect(created?.meta.kind).toBe(15);
     });
 
+    it.each([
+      ['video/mp4'],
+      ['video/webm'],
+      ['audio/mpeg'],
+    ])('sends and forwards encrypted %s as kind 15 with its MIME type', async (mimeType) => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      const media = { ...encryptedAttachment, mimeType };
+      const store = useMessageStore();
+
+      await store.sendMediaAttachment(CHAT_ID, media);
+      await store.forwardMessage('e'.repeat(64), {
+        text: blobUrl,
+        meta: { kind: 15, attachments: [media], reactions: [] },
+      });
+
+      for (const call of serviceMocks.nostrStore.sendDirectMessage.mock.calls) {
+        expect(call[3]).toEqual(
+          expect.objectContaining({
+            rumorKind: 15,
+            additionalTags: expectedFileTags.map((tag) =>
+              tag[0] === 'file-type' ? ['file-type', mimeType] : tag
+            ),
+          })
+        );
+        expect(JSON.stringify(call[3].additionalTags)).not.toContain('imeta');
+      }
+      expect(serviceMocks.nostrStore.sendDirectMessage).toHaveBeenCalledTimes(2);
+      // Forwarding is by reference: nothing is downloaded, decrypted or re-uploaded.
+      expect(fetchSpy).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    });
+
     it('sends encrypted images to the current group epoch key', async () => {
       serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue(
         makeChatRow({ type: 'group', meta: { current_epoch_public_key: EPOCH_PUBLIC_KEY } })

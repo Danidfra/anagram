@@ -1,12 +1,9 @@
 import type { MessageAttachmentMetadata } from 'src/types/chat';
+import { getMaxEncryptedBlobBytes, resolveEncryptedMediaKind } from 'src/utils/encryptedMedia';
 import { verifyAndDecryptMediaBytes } from 'src/utils/mediaCrypto';
-import {
-  isEncryptedAttachment,
-  normalizeEncryptedMediaUrl,
-  resolveSafeInlineImageMimeType,
-} from 'src/utils/messageAttachments';
+import { isEncryptedAttachment, normalizeEncryptedMediaUrl } from 'src/utils/messageAttachments';
 
-const ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+const TOO_LARGE_MESSAGE = 'Encrypted media is too large to download.';
 
 interface ObjectUrlEntry {
   refs: number;
@@ -26,17 +23,49 @@ function buildCacheKey(attachment: MessageAttachmentMetadata): string {
   return `${attachment.sha256 ?? ''}:${encryption?.key ?? ''}:${encryption?.nonce ?? ''}`;
 }
 
-async function readLimitedBody(response: Response): Promise<Uint8Array<ArrayBuffer>> {
+// Reads the body while counting bytes, so a server that omits or understates Content-Length
+// cannot make the client buffer more than maxBytes.
+async function readLimitedBody(
+  response: Response,
+  maxBytes: number
+): Promise<Uint8Array<ArrayBuffer>> {
   const declaredLength = Number(response.headers.get('Content-Length'));
-  if (Number.isFinite(declaredLength) && declaredLength > ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES) {
-    throw new Error('Encrypted media is too large to download.');
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(TOO_LARGE_MESSAGE);
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > ENCRYPTED_MEDIA_MAX_DOWNLOAD_BYTES) {
-    throw new Error('Encrypted media is too large to download.');
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) {
+      throw new Error(TOO_LARGE_MESSAGE);
+    }
+    return bytes;
   }
 
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    received += value.byteLength;
+    if (received > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(TOO_LARGE_MESSAGE);
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   return bytes;
 }
 
@@ -50,9 +79,16 @@ export function createEncryptedMediaService(deps: EncryptedMediaServiceDeps) {
       throw new Error('Attachment is not encrypted.');
     }
 
-    const mimeType = resolveSafeInlineImageMimeType(attachment.mimeType);
-    if (!mimeType) {
+    const mediaKind = resolveEncryptedMediaKind(attachment.mimeType);
+    if (!mediaKind) {
       throw new Error('This encrypted attachment type cannot be displayed.');
+    }
+
+    // The ciphertext is the plaintext limit plus the AES-GCM tag. A declared size is checked
+    // before any request; the streamed byte count below is the authoritative limit.
+    const maxCiphertextBytes = getMaxEncryptedBlobBytes(mediaKind);
+    if (attachment.size && attachment.size > maxCiphertextBytes) {
+      throw new Error(TOO_LARGE_MESSAGE);
     }
 
     const url = normalizeEncryptedMediaUrl(attachment.url);
@@ -68,14 +104,14 @@ export function createEncryptedMediaService(deps: EncryptedMediaServiceDeps) {
       throw new Error(`Encrypted media download failed with HTTP ${response.status}.`);
     }
 
-    const ciphertext = await readLimitedBody(response);
+    const ciphertext = await readLimitedBody(response, maxCiphertextBytes);
     const plaintext = await verifyAndDecryptMediaBytes(ciphertext, {
       sha256: attachment.sha256,
       key: attachment.encryption.key,
       nonce: attachment.encryption.nonce,
     });
 
-    return new Blob([plaintext], { type: mimeType });
+    return new Blob([plaintext], { type: mediaKind.canonicalMime });
   }
 
   // Reference-counted object URLs shared by every view of the same attachment.
