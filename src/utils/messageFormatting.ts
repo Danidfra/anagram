@@ -1,4 +1,8 @@
-import { buildMessageTextParts, type MessageTextPart } from './messageTextParts.ts';
+import {
+  buildMessageTextParts,
+  withoutPreviewMediaUrls,
+  type MessageTextPart,
+} from './messageTextParts.ts';
 import type { NostrMentionProfile } from './nostrMentions.ts';
 
 export type MessageFormat = 'bold' | 'italic' | 'underline' | 'strike' | 'spoiler';
@@ -56,6 +60,11 @@ export function formatMessage(
     if (text[cursor] === '\\' && /[\\*_~|`\[\]()]/.test(text[cursor + 1] ?? '')) {
       buffer += text[cursor + 1];
       cursor += 2;
+      continue;
+    }
+    if ((cursor === 0 || text[cursor - 1] === '\n') && /^[*-] +(?=\S)/.test(rest)) {
+      buffer += '• ';
+      cursor += rest.match(/^[*-] +/)![0].length;
       continue;
     }
     urlPattern.lastIndex = cursor;
@@ -227,4 +236,20 @@ export function collapseFormattedMessage(
     return result;
   }
   return visit(parts);
+}
+
+/** Remove duplicate media links without changing literal code, spoilers or link labels. */
+export function withoutFormattedMediaUrls(
+  parts: FormattedMessagePart[],
+  attachments: ReadonlyArray<{ url: string; mimeType: string }>,
+): FormattedMessagePart[] {
+  if (!attachments.length) return parts;
+  return parts.flatMap((part): FormattedMessagePart[] => {
+    if (part.type === 'format' && part.format !== 'spoiler') {
+      const children = withoutFormattedMediaUrls(part.children, attachments);
+      return children.length ? [{ ...part, children }] : [];
+    }
+    if (part.type === 'url' && !withoutPreviewMediaUrls(part.text, attachments)) return [];
+    return [part];
+  });
 }

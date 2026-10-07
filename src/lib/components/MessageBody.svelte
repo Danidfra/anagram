@@ -1,6 +1,12 @@
 <script lang="ts">
   import type { Message } from '#src/types/chat.ts';
-  import { buildMessageTextParts, withoutPreviewMediaUrls } from '#src/utils/messageTextParts.ts';
+  import {
+    formatMessage,
+    collapseFormattedMessage,
+    messageFormatUrls,
+    withoutFormattedMediaUrls,
+  } from '#src/utils/messageFormatting.ts';
+  import FormattedMessage from './FormattedMessage.svelte';
   import { openExternalHttpUrl } from '#src/utils/externalLinks.ts';
   import { parseRoomLink } from '#src/utils/callRoom.ts';
   import { readCallHistory, callHistoryDuration } from '#src/utils/callHistory.ts';
@@ -15,10 +21,7 @@
   import MediaViewer from './MediaViewer.svelte';
   import LinkPreview from './LinkPreview.svelte';
   import { previewUrl } from '#src/utils/linkPreview.ts';
-  import {
-    shouldCollapseMessageText,
-    truncateCollapsedMessageText,
-  } from '#src/utils/messageTextExpansion.ts';
+  import { shouldCollapseMessageText } from '#src/utils/messageTextExpansion.ts';
   import type { CallMode } from '#src/types/call.ts';
   export let mentionProfiles: NostrMentionProfile[] = [];
   export let canRedial = false;
@@ -35,27 +38,27 @@
   let expanded = false,
     showMedia = false;
   $: history = readCallHistory(message.meta.call_history);
-  $: caption = mediaAllowed
-    ? withoutPreviewMediaUrls(message.text, message.meta.attachments ?? [])
-    : message.text;
-  $: text = expanded ? caption : truncateCollapsedMessageText(caption);
-  $: parts = buildMessageTextParts(text, mentionProfiles).map((part) => ({
-    ...part,
-    roomLink: part.type === 'url' && Boolean(parseRoomLink(part.href)),
-  }));
-  $: previewLinks = [
-    ...new Set(
-      parts.flatMap((part) =>
-        part.type === 'url' &&
-        !part.roomLink &&
-        previewUrl(part.href) &&
-        !(message.meta.attachments ?? []).some((attachment) => attachment.url === part.href) &&
-        !/\.(?:png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|pdf)(?:[?#]|$)/i.test(part.href)
-          ? [part.href]
-          : [],
-      ),
-    ),
-  ].slice(0, 2);
+  $: formatted = formatMessage(message.text, mentionProfiles);
+  $: formatUrls = messageFormatUrls(formatted);
+  $: attachments = (message.meta.attachments ?? []).filter((attachment) => {
+    try {
+      const href = new URL(attachment.url).href;
+      return !formatUrls.hidden.has(href) || formatUrls.visible.has(href);
+    } catch {
+      return false;
+    }
+  });
+  $: content = mediaAllowed ? withoutFormattedMediaUrls(formatted, attachments) : formatted;
+  $: parts = expanded ? content : collapseFormattedMessage(content);
+  $: previewLinks = [...messageFormatUrls(parts).visible]
+    .filter(
+      (href) =>
+        !parseRoomLink(href) &&
+        previewUrl(href) &&
+        !attachments.some((attachment) => attachment.url === href) &&
+        !/\.(?:png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|pdf)(?:[?#]|$)/i.test(href),
+    )
+    .slice(0, 2);
   $: mediaAllowed =
     showMedia || message.sender === 'me' || $trust.includes(message.authorPublicKey);
   async function open(url: string) {
@@ -170,44 +173,31 @@
     class="message-body"
     class:bubble-media-body={bubbleLayout &&
       mediaAllowed &&
-      (message.meta.attachments ?? []).some(
+      attachments.some(
         (attachment) =>
           /^(image|video)\//.test(attachment.mimeType) && /^https:\/\//.test(attachment.url),
       )}
   >
-    {#if text}<span
+    {#if parts.length}<span
         class="message-text"
         class:single-emoji={isSingleEmoji(message.text) && !message.meta.attachments?.length}
-        >{#each parts as part (part.key)}{#if part.type === 'url'}<a
-              data-testid="message-url-link"
-              class:room-link={part.roomLink}
-              href={part.href}
-              rel="noopener noreferrer"
-              target="_blank"
-              oncontextmenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                linkMenu = {
-                  href: part.href,
-                  x: Math.max(8, Math.min(event.clientX, innerWidth - 160)),
-                  y: Math.max(8, Math.min(event.clientY, innerHeight - 55)),
-                };
-              }}
-              onclick={(e) => {
-                e.preventDefault();
-                void open(part.href);
-              }}
-              >{#if part.roomLink}{$translate('room.joinGroupCall')}<Icon
-                  name="group"
-                />{:else}{part.text}{/if}</a
-            >{:else if part.type === 'mention' && part.publicKey}<button
-              class="mention"
-              data-testid="message-mention-link"
-              onclick={() => oncontact(part.publicKey!)}>{part.text}</button
-            >{:else}{part.text}{/if}{/each}</span
+        ><FormattedMessage
+          {parts}
+          onopen={open}
+          {oncontact}
+          onlinkmenu={(event, href) => {
+            event.preventDefault();
+            event.stopPropagation();
+            linkMenu = {
+              href,
+              x: Math.max(8, Math.min(event.clientX, innerWidth - 160)),
+              y: Math.max(8, Math.min(event.clientY, innerHeight - 55)),
+            };
+          }}
+        /></span
       >
     {/if}
-    {#if shouldCollapseMessageText(caption)}<button
+    {#if shouldCollapseMessageText(message.text)}<button
         class="link"
         onclick={() => (expanded = !expanded)}
         >{$translate(expanded ? 'Show less' : 'Show more')}</button
@@ -215,7 +205,7 @@
     {#each previewLinks as url (url)}
       <LinkPreview {url} allowed={mediaAllowed} onopen={open} />
     {/each}
-    {#if message.meta.attachments?.length && !mediaAllowed}<div class="media-prompt">
+    {#if attachments.length && !mediaAllowed}<div class="media-prompt">
         <button class="outline" onclick={() => (showMedia = true)}
           >{$translate('Load media')}</button
         ><button class="link" onclick={() => trusted.trustImageSender(message.authorPublicKey)}
@@ -223,7 +213,7 @@
         >
       </div>{/if}
     {#if mediaAllowed}
-      {#each message.meta.attachments ?? [] as attachment}
+      {#each attachments as attachment}
         {#if /^https:\/\//.test(attachment.url)}
           {#if /^(image|video)\//.test(attachment.mimeType)}
             <div class="media-attachment">
@@ -318,31 +308,8 @@
   .single-emoji {
     font-size: 3em;
   }
-  a,
-  .mention {
+  a {
     color: var(--q-primary);
-  }
-  .room-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border: 1px solid var(--q-primary);
-    border-radius: 10px;
-    text-decoration: none;
-    white-space: normal;
-    vertical-align: middle;
-    font-weight: 600;
-  }
-  .room-link:hover {
-    background: color-mix(in srgb, var(--q-primary) 12%, transparent);
-  }
-  .room-link:focus-visible {
-    outline: 2px solid var(--q-primary);
-    outline-offset: 2px;
-  }
-  .mention {
-    padding: 0;
   }
   .call-history {
     display: flex;

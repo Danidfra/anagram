@@ -3,6 +3,7 @@ import {
   formatMessage,
   messageFormatUrls,
   collapseFormattedMessage,
+  withoutFormattedMediaUrls,
   type FormattedMessagePart,
 } from '#src/utils/messageFormatting.ts';
 import { nip19 } from '#src/lib/nostr/client.ts';
@@ -99,6 +100,20 @@ describe('Telegram-style message formatting', () => {
     expect(parts).toHaveLength(1);
     expect(parts[0]).toMatchObject({ type: 'format', format: 'spoiler' });
     expect(visibleText(parts).length).toBeLessThanOrEqual(4097);
+  });
+  it('renders bullet lines while preserving escaped markers and literal code', () => {
+    const parts = formatMessage('Items\n* one\n- **two**\n\\* literal\n`* code`\n```\n- code\n```');
+    expect(visibleText(parts)).toBe('Items\n• one\n• two\n* literal\n* code\n- code');
+  });
+  it('hides duplicate media links without stripping code, spoilers or named links', () => {
+    const url = 'https://example.org/photo.png';
+    const parts = formatMessage(`**${url}** [Photo](${url}) \`${url}\` ||${url}||`);
+    const caption = withoutFormattedMediaUrls(parts, [{ url, mimeType: 'image/png' }]);
+    expect(caption.some((part) => part.type === 'format' && part.format === 'bold')).toBe(false);
+    expect(caption.find((part) => part.type === 'url')).toMatchObject({ text: 'Photo', href: url });
+    expect(caption.find((part) => part.type === 'code')).toMatchObject({ text: url });
+    expect(caption.find((part) => part.type === 'format')).toMatchObject({ format: 'spoiler' });
+    expect(visibleText(caption)).toBe(` Photo ${url} ${url}`);
   });
   it('bounds nesting/components and handles hostile unmatched delimiters', () => {
     const parts = formatMessage('[no link '.repeat(10000) + '**x** '.repeat(10000));
