@@ -7,7 +7,10 @@ import {
 } from 'src/utils/blossomServer';
 import { type EncryptedMediaKind, resolveEncryptedMediaKind } from 'src/utils/encryptedMedia';
 import { encryptMediaBytes, MEDIA_ENCRYPTION_ALGORITHM, sha256Hex } from 'src/utils/mediaCrypto';
-import { resolveSafeInlineImageMimeType } from 'src/utils/messageAttachments';
+import {
+  normalizeEncryptedMediaUrl,
+  resolveSafeInlineImageMimeType,
+} from 'src/utils/messageAttachments';
 
 export const BLOSSOM_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
 const ENCRYPTED_BLOB_CONTENT_TYPE = 'application/octet-stream';
@@ -335,13 +338,20 @@ export async function uploadPreparedEncryptedMedia(
     throw new Error(`${serverHost} stored a blob with an unexpected hash.`);
   }
 
+  // Same HTTPS rule the kind 15 message and its receivers enforce. Checked here so a bad URL is
+  // an upload error the user can retry or route to another server, not a silently dropped send.
+  const blobUrl = normalizeEncryptedMediaUrl(descriptor.url);
+  if (!blobUrl) {
+    throw new Error(`${serverHost} returned a blob URL that does not use HTTPS.`);
+  }
+
   const uploadedAt = descriptor.uploaded ? new Date(descriptor.uploaded * 1000).toISOString() : '';
 
   return {
     descriptor,
     attachment: {
       type: 'media',
-      url: descriptor.url,
+      url: blobUrl,
       mimeType,
       size: ciphertext.byteLength,
       sha256,

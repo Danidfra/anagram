@@ -319,6 +319,28 @@ describe('blossomUploadService', () => {
       );
     });
 
+    it('rejects a descriptor whose blob URL is not HTTPS as an upload error', async () => {
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = readRequestBody(init);
+        const sha256 = await sha256Hex(body);
+        return new Response(
+          JSON.stringify({
+            url: `http://blossom.example.com/${sha256}`,
+            sha256,
+            size: body.byteLength,
+            type: 'application/octet-stream',
+          }),
+          { status: 201 }
+        );
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
+        'media.example.com returned a blob URL that does not use HTTPS.'
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('does not upload unsupported image types', async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
