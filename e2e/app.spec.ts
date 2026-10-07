@@ -286,6 +286,24 @@ test('a 20,000-message account opens a bounded cached window', async ({ page }) 
   expect(Date.now() - started).toBeLessThan(5000);
   expect(await page.getByTestId('message-bubble').count()).toBeLessThanOrEqual(100);
   const thread = page.getByTestId('chat-thread');
+  for (const fraction of [0.2, 0.8, 0.35, 1]) {
+    const visible = await thread.evaluate(async (node, fraction) => {
+      node.scrollTop = fraction * (node.scrollHeight - node.clientHeight);
+      await new Promise(requestAnimationFrame);
+      const viewport = node.getBoundingClientRect();
+      return [...node.querySelectorAll<HTMLElement>('.message-row')]
+        .filter(row => {
+          const box = row.getBoundingClientRect();
+          return box.bottom > viewport.top + 40 && box.top < viewport.bottom;
+        })
+        .map(row => ({
+          painted: row.checkVisibility({ contentVisibilityAuto: true }),
+          text: row.querySelector('.message-content')?.textContent?.trim(),
+        }));
+    }, fraction);
+    expect(visible.length).toBeGreaterThan(0);
+    expect(visible.every(row => row.painted && row.text?.includes('Cached message'))).toBe(true);
+  }
   const more = page.getByTestId('thread-load-older');
   await expect(more).toHaveText('More');
   async function loadKeepingAnchor(action: () => Promise<unknown>) {

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, cpSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export function prepareAndroid(root = new URL('../', import.meta.url)) {
@@ -10,7 +10,11 @@ export function prepareAndroid(root = new URL('../', import.meta.url)) {
     readFileSync(gradle, 'utf8')
       .replace(/compileSdk = \d+/, 'compileSdk = 36')
       .replace(/targetSdk = \d+/, 'targetSdk = 36')
-      .replace(/optimization\s*\{\s*enable = true\s*\}/, 'isMinifyEnabled = true'),
+      .replace(/optimization\s*\{\s*enable = true\s*\}/, 'isMinifyEnabled = true')
+      .replace(
+        /(dependencies \{\n)(?!    implementation\("com.squareup.okhttp3:okhttp:4.12.0"\))/,
+        '$1    implementation("com.squareup.okhttp3:okhttp:4.12.0")\n',
+      ),
   );
   const project = new URL('src-tauri/gen/android/build.gradle.kts', root);
   writeFileSync(
@@ -30,7 +34,7 @@ export function prepareAndroid(root = new URL('../', import.meta.url)) {
   );
   writeFileSync(
     new URL('src-tauri/gen/android/app/secure-keys.pro', root),
-    '-keep class com.nostr.anagram.SecureKeysPlugin { *; }\n-keep class com.nostr.anagram.PrivateKeyArgs { *; }\n',
+    '-keep class com.nostr.anagram.SecureKeysPlugin { *; }\n-keep class com.nostr.anagram.PrivateKeyArgs { *; }\n-keep class com.nostr.anagram.AndroidRelayNotificationsPlugin { *; }\n',
   );
   const wrapper = new URL('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', root);
   writeFileSync(
@@ -43,7 +47,16 @@ export function prepareAndroid(root = new URL('../', import.meta.url)) {
     writeFileSync(properties, gradleProperties + '\nandroid.useAndroidX=true\n');
   const manifest = new URL('src-tauri/gen/android/app/src/main/AndroidManifest.xml', root);
   let xml = readFileSync(manifest, 'utf8');
-  for (const name of ['RECORD_AUDIO', 'CAMERA', 'MODIFY_AUDIO_SETTINGS']) {
+  for (const name of [
+    'RECORD_AUDIO',
+    'CAMERA',
+    'MODIFY_AUDIO_SETTINGS',
+    'ACCESS_NETWORK_STATE',
+    'POST_NOTIFICATIONS',
+    'RECEIVE_BOOT_COMPLETED',
+    'FOREGROUND_SERVICE',
+    'FOREGROUND_SERVICE_SPECIAL_USE',
+  ]) {
     if (!xml.includes(`android.permission.${name}`))
       xml = xml.replace(
         '<application',
@@ -60,12 +73,31 @@ export function prepareAndroid(root = new URL('../', import.meta.url)) {
   }
   if (!xml.includes('android:allowBackup='))
     xml = xml.replace('<application', '<application android:allowBackup="false"');
+  if (!xml.includes('android:name=".RelayNotificationService"'))
+    xml = xml.replace(
+      '</application>',
+      `<service android:name=".RelayNotificationService" android:exported="false" android:foregroundServiceType="specialUse" android:stopWithTask="false">
+      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Nostr relay subscriptions for private message notifications." />
+    </service>
+    <receiver android:name=".BootCompletedReceiver" android:enabled="true" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
+    </receiver>
+    <receiver android:name=".NotificationDismissReceiver" android:exported="false" />
+    </application>`,
+    );
   writeFileSync(manifest, xml);
   const java = new URL('src-tauri/gen/android/app/src/main/java/com/nostr/anagram/', root);
   mkdirSync(java, { recursive: true });
-  copyFileSync(
-    new URL('src-tauri/mobile/android/SecureKeysPlugin.kt', root),
-    new URL('SecureKeysPlugin.kt', java),
+  const native = new URL('src-tauri/mobile/android/', root);
+  for (const file of readdirSync(native).filter((name) => /\.(kt|java)$/.test(name)))
+    copyFileSync(new URL(file, native), new URL(file, java));
+  cpSync(new URL('res/', native), new URL('src-tauri/gen/android/app/src/main/res/', root), {
+    recursive: true,
+  });
+  cpSync(
+    new URL('tests/', native),
+    new URL('src-tauri/gen/android/app/src/test/java/com/nostr/anagram/', root),
+    { recursive: true },
   );
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) prepareAndroid();

@@ -656,6 +656,8 @@ export class NostrRelaySet {
   }
 }
 export interface NostrSubscriptionOptions {
+  // Delivery diagnostics may need observations from each replica, not only the first.
+  includeRelayDuplicates?: boolean;
   closeOnEose?: boolean;
   relaySet?: NostrRelaySet;
   relayUrls?: string[];
@@ -735,7 +737,7 @@ export class NostrSubscription extends Emitter {
               // deadlines; a silent/disconnected relay must never advance history cursors.
               eoseTimeout: 2147483647,
               onevent: (raw) => {
-                if (this.closed || seen.has(raw.id)) return;
+                if (this.closed || (seen.has(raw.id) && !this.opts.includeRelayDuplicates)) return;
                 seen.add(raw.id);
                 if (seen.size > 10000) seen.delete(seen.values().next().value!);
                 const event = new ClientEvent(this.client, raw);

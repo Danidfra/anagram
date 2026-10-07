@@ -1,5 +1,21 @@
 <script lang="ts">
+  import {
+    isAndroidRelayNotificationSupported,
+    createAndroidNotificationConversationSignature,
+    refreshAndroidRelayNotificationListener,
+    startAndroidRelayNotificationListeners,
+    ingestPendingAndroidRelayNotificationEvents,
+    clearAndroidRelayNotificationForChat,
+  } from '#src/services/androidRelayNotificationService.ts';
   import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
+  import PublicGroupDialog from './public/PublicGroupDialog.svelte';
+  import PublicGroupThread from './public/PublicGroupThread.svelte';
+  import ChatListRow from './ChatListRow.svelte';
+  import { decodeRoomLink, encodeRoomLink } from '#src/stores/nostr/publicGroups.ts';
+  let newPublicGroup = false;
+  function openPublicGroup(link: string) {
+    void goto(`/public/${encodeRoomLink(decodeRoomLink(link))}`);
+  }
   import GroupSeedBackup from './GroupSeedBackup.svelte';
   import GroupRestore from './GroupRestore.svelte';
   let groupFlow: 'choose' | 'details' | 'backup' | 'restore' = 'choose';
@@ -71,6 +87,14 @@
     messages = useMessageStore(),
     nostr = useNostrStore(),
     relays = useRelayStore();
+  const androidNotifications = isAndroidRelayNotificationSupported();
+  let notificationsReady = false;
+  $: notificationPlan = androidNotifications
+    ? `${$state.contactVersion}:${createAndroidNotificationConversationSignature($state.chats)}:${JSON.stringify($state.relayEntries)}`
+    : '';
+  $: if (notificationsReady && notificationPlan) void refreshAndroidRelayNotificationListener().catch(fail);
+  const publicGroups = nostr.publicGroups;
+  const publicState = publicGroups.sidebar;
   relays.init();
   const state = observe(() => ({
     chats: chats.visibleChats,
@@ -372,13 +396,14 @@
       : '';
   $: if (section === 'contacts' && $state.contactVersion >= 0) void loadContacts();
   $: showRequests = $page.url.pathname === '/chats/requests';
+  $: publicLink = $page.url.pathname.startsWith('/public/') ? $page.url.pathname.slice(8) : '';
   $: routedChatId = section === 'chats' ? $page.url.pathname.split('/')[2] : undefined;
   $: if (routedChatId && $state.chatIds.has(routedChatId) && $state.selected?.id !== routedChatId)
     chats.selectChat(routedChatId);
   $: mobileThread =
     section === 'contacts'
       ? Boolean(contactSelectedKey)
-      : section === 'chats' && /^\/chats\/[^/]+/.test($page.url.pathname);
+      : section === 'chats' && (/^\/chats\/[^/]+/.test($page.url.pathname) || !!publicLink);
   $: if ($state.selected?.id && $state.selected.id !== currentId) {
     currentId = $state.selected.id;
     draft = chats.getComposerDraft(currentId);
@@ -388,10 +413,12 @@
     void loadThread(currentId);
   }
   $: visibleChatId =
-    section === 'chats' && !showRequests && (!mobileViewport || mobileThread)
+    section === 'chats' && !publicLink && !showRequests && (!mobileViewport || mobileThread)
       ? ($state.selected?.id ?? null)
       : null;
   $: nostr.setAppLifecycleRouteChatId(visibleChatId);
+  $: if (notificationsReady && visibleChatId)
+    void clearAndroidRelayNotificationForChat(visibleChatId).catch(fail);
   $: nostr.prioritizeThreadHistory(visibleChatId);
   $: if ($state.thread.items.length && nearBottom)
     void tick().then(() => {
@@ -997,12 +1024,34 @@
       }
     });
     nostr.startAppLifecycleRuntime();
-    void nostr.initializeSessionState().catch(fail);
+    let disposed = false;
+    let pendingNotificationChat: string | null | undefined;
+    const drainNotifications = () => {
+      if (notificationsReady) void ingestPendingAndroidRelayNotificationEvents().catch(fail);
+    };
+    const openNotification = (pubkey: string | null) => {
+      if (!notificationsReady) { pendingNotificationChat = pubkey; return; }
+      void goto(pubkey ? `/chats/${pubkey}` : '/chats');
+      drainNotifications();
+    };
+    const stopNotifications = startAndroidRelayNotificationListeners(openNotification, drainNotifications);
+    void nostr.initializeSessionState().then(async () => {
+      if (disposed) return;
+      await publicGroups.init();
+      if (disposed) return;
+      notificationsReady = androidNotifications;
+      if (pendingNotificationChat !== undefined) openNotification(pendingNotificationChat);
+      drainNotifications();
+    }).catch(fail);
     return () => {
       window.removeEventListener(DESKTOP_MESSAGE_LAYOUT_CHANGED_EVENT, updateLayout);
       clearTimeout(searchTimer);
       cancelMessagePress();
       cancelAnimationFrame(scrollFrame);
+      disposed = true;
+      notificationsReady = false;
+      stopNotifications();
+      publicGroups.stop();
       nostr.stopAppLifecycleRuntime();
       chats.setVisibleChatId(null);
       nostr.prioritizeThreadHistory(null);
@@ -1149,6 +1198,10 @@
               modalError = '';
               menu = false;
             }}>New private group</button
+          ><button onclick={() => {
+            newPublicGroup = true;
+            menu = false;
+          }}>New public group</button
           ><button
             onclick={() => {
               modal = 'room';
@@ -1195,11 +1248,21 @@
                 ></span
               ></button
             >{/if}
+          {#each $publicState.rooms.filter(item => item.room.name.toLowerCase().includes(query.toLowerCase())) as item (item.address)}
+            <ChatListRow
+              active={!!publicLink && $publicState.address === item.address}
+              onselect={() => openPublicGroup(encodeRoomLink(item.room))}
+              testId="public-chat-item"
+            >
+              <Avatar name={item.room.name} picture={item.room.picture} size={48} fontSize={14} publicGroup />
+              <span class="chat-copy"><span class="chat-top"><strong>{item.room.name}</strong></span><span class="chat-preview">Public group</span></span>
+            </ChatListRow>
+          {/each}
           {#each $state.chats as chat (chat.id)}
             <ChatRow
               {chat}
               ownPublicKey={nostr.getLoggedInPublicKeyHex() ?? ''}
-              active={$state.selected?.id === chat.id}
+              active={!publicLink && $state.selected?.id === chat.id}
               onselect={open}
               onaction={chatAction}
             />
@@ -1254,7 +1317,9 @@
       onkeydown={resizeKey}
     ></div>
     <main class="main-panel">
-      {#if section === 'contacts'}
+      {#if publicLink}
+        {#key publicLink}<PublicGroupThread link={publicLink} onauthor={openAuthor}/>{/key}
+      {:else if section === 'contacts'}
         <div class="contact-panel" data-testid="contact-panel">
           {#if contactSelectedKey}{#key contactSelectedKey}<ContactDetails
                 publicKey={contactSelectedKey}
@@ -1457,7 +1522,6 @@
               data-testid="message-bubble"
               data-chat-public-key={message.chatId}
               data-author-public-key={message.authorPublicKey}
-              style="content-visibility:auto;contain-intrinsic-size:auto 80px"
             >
               {#if messageLayout === 'bubbles'}
                 {#if !senderContinues}<button class="bubble-avatar"
@@ -1925,4 +1989,9 @@
     margin-top: 12px;
   }
   .group-choices button { min-height: 48px; }
+
 </style>
+
+{#if newPublicGroup}
+  <PublicGroupDialog onclose={() => newPublicGroup = false} onopen={openPublicGroup} />
+{/if}

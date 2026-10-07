@@ -13,6 +13,9 @@
   import Icon from './Icon.svelte';
   import ProfileSearchResults from './ProfileSearchResults.svelte';
 
+  export let title = 'Invite members';
+  export let actionLabel = 'Invite';
+  export let showHistoryOption = true;
   export let existingKeys: string[] = [];
   export let oninvite: (keys: string[], hideEarlierMessages: boolean) => Promise<void>;
   export let onclose: () => void;
@@ -99,15 +102,17 @@
 <dialog
   use:portal
   use:showDialog
-  aria-label="Invite members"
+  aria-label={title}
   {onclose}
   oncancel={(event) => {
     if (submitting) event.preventDefault();
   }}
-  use:dismissOnBackdrop={() => { if (!submitting) onclose(); }}
+  use:dismissOnBackdrop={() => {
+    if (!submitting) onclose();
+  }}
 >
   <header>
-    <h2>Invite members</h2>
+    <h2>{title}</h2>
     <button
       class="icon-button"
       aria-label="Close invitation dialog"
@@ -193,23 +198,28 @@
       onselect={select}
     />
   </div>
-  <label class="history-option">
-    <input
-      type="checkbox"
-      bind:checked={hideEarlierMessages}
-      disabled={submitting}
-      aria-describedby="group-invite-history-hint"
-    />
-    Hide earlier messages from new members
-  </label>
-  <p id="group-invite-history-hint" class="history-hint">
-    Rotates the group keys with these invitations. Existing members keep their history.
-  </p>
+  {#if showHistoryOption}<label class="history-option">
+      <input
+        type="checkbox"
+        bind:checked={hideEarlierMessages}
+        disabled={submitting}
+        aria-describedby="group-invite-history-hint"
+      />
+      Hide earlier messages from new members
+    </label>
+    <p id="group-invite-history-hint" class="history-hint">
+      Rotates the group keys with these invitations. Existing members keep their history.
+    </p>
+  {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <footer>
     <button class="outline" disabled={submitting} onclick={onclose}>Cancel</button>
     <button class="primary" disabled={submitting || !selected.length} onclick={invite}>
-      {submitting ? 'Inviting…' : `Invite${selected.length ? ` (${selected.length})` : ''}`}
+      {submitting
+        ? showHistoryOption
+          ? 'Inviting…'
+          : 'Saving…'
+        : `${actionLabel}${selected.length ? ` (${selected.length})` : ''}`}
     </button>
   </footer>
 </dialog>

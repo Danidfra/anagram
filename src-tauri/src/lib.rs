@@ -1,5 +1,7 @@
 #[cfg(desktop)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(target_os = "android")]
+mod android_notifications;
 mod secure_storage;
 use tauri::Manager;
 #[cfg(desktop)]
@@ -64,11 +66,35 @@ async fn remove_private_key(window: tauri::WebviewWindow) -> Result<(), String> 
         .await
         .map_err(|_| "Secure storage operation failed".to_string())?
 }
+#[tauri::command]
+async fn android_notification_command(
+    window: tauri::WebviewWindow,
+    method: String,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    authorize_key_access(&window)?;
+    #[cfg(target_os = "android")]
+    {
+        let app = window.app_handle().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            android_notifications::call(&app, &method, args)
+        })
+        .await
+        .map_err(|_| "Android notification operation failed".to_string())?
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (method, args);
+        Err("Android notifications are unavailable on this platform".into())
+    }
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(secure_storage::android_plugin());
+    let builder = builder
+        .plugin(secure_storage::android_plugin())
+        .plugin(android_notifications::plugin());
     builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -141,7 +167,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_private_key,
             write_private_key,
-            remove_private_key
+            remove_private_key,
+            android_notification_command
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Anagram");

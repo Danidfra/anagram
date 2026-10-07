@@ -96,3 +96,8 @@ This list is based on the current app code, especially `src/stores/nostrStore.ts
 
 - This appears to be a repo-local draft/private-group scheme layered on top of NIP-17.
 - The app implements `kind:1014` epoch tickets, verifies them on receipt, and routes group DMs through the current epoch public key. Group identity and epoch keys derive from a 12-word owner recovery master. Group-signed, self-encrypted NIP-78 recovery revisions preserve epoch descriptors and detect concurrent owner changes; replacing a master creates a new group identity. See [the current draft](nip171b.md).
+
+## Public groups
+
+- Public groups reuse NIP-72 `kind:34550` metadata with Anagram trust/block tags, NIP-C7 `kind:9` messages, NIP-19 `naddr` links and NIP-92 attachments. They do not implement NIP-72 approval moderation or NIP-29.
+- Signed successor/predecessor pointers support ownership handover. See [Public groups](../docs/public-groups.md) for the small protocol extension and its limits.

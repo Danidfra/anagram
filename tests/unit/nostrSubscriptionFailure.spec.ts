@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import NostrClient, { NostrRelayStatus } from '#src/lib/nostr/client.ts';
 
-async function setup(urls: string[], auth = false) {
+async function setup(urls: string[], auth = false, includeRelayDuplicates = false) {
   const client = new NostrClient();
   const handlers = new Map<string, any>();
   for (const url of urls) vi.spyOn(client.pool.getRelay(url, false), 'connect').mockResolvedValue();
@@ -21,7 +21,7 @@ async function setup(urls: string[], auth = false) {
     onEvent = vi.fn();
   const subscription = client.subscribe(
     { kinds: [1059] },
-    { relayUrls: urls, onClose, onEose, onEvent },
+    { relayUrls: urls, onClose, onEose, onEvent, includeRelayDuplicates },
   );
   await vi.waitFor(() => expect(handlers.size).toBe(urls.length));
   return { client, handlers, subscription, onClose, onEose, onEvent };
@@ -169,17 +169,37 @@ it('keeps reconnect/auth cleanup bounded and start is idempotent', async () => {
     expect(handlers.get(flaky)).not.toBe(old);
     expect(retainedCleanups()).toBe(initial);
   }
-  handlers
-    .get(healthy)
-    .onevent({
-      id: 'still-live',
-      kind: 1059,
-      tags: [],
-      content: 'ciphertext',
-      created_at: 1,
-      pubkey: 'a'.repeat(64),
-    });
+  handlers.get(healthy).onevent({
+    id: 'still-live',
+    kind: 1059,
+    tags: [],
+    content: 'ciphertext',
+    created_at: 1,
+    pubkey: 'a'.repeat(64),
+  });
   expect(onEvent).toHaveBeenCalledOnce();
   subscription.stop();
   expect(retainedCleanups()).toBe(0);
 });
+
+it.each([false, true])(
+  'keeps cross-relay deduplication opt-in diagnostics isolated (%s)',
+  async (duplicates) => {
+    const urls = ['wss://one.example/', 'wss://two.example/'];
+    const { handlers, subscription, onEvent } = await setup(urls, false, duplicates);
+    const event = {
+      id: 'a'.repeat(64),
+      pubkey: 'b'.repeat(64),
+      kind: 9,
+      created_at: 1,
+      content: 'test',
+      tags: [],
+      sig: 'c'.repeat(128),
+    };
+    for (const url of urls) handlers.get(url).onevent(event);
+    expect(onEvent).toHaveBeenCalledTimes(duplicates ? 2 : 1);
+    expect(onEvent.mock.calls[0][1].url).toBe(urls[0]);
+    if (duplicates) expect(onEvent.mock.calls[1][1].url).toBe(urls[1]);
+    subscription.stop();
+  },
+);

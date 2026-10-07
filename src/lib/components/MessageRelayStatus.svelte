@@ -15,6 +15,8 @@
   export let message: Message;
   export let contactName = '';
   export let contactRelayUrls: string[] = [];
+  export let publicGroup = false;
+  export let onretry: ((relayUrl: string) => Promise<void>) | undefined = undefined;
   let opened = false;
   let tab = 'recipient';
   let retrying: string[] = [];
@@ -22,7 +24,13 @@
 
   // Project the existing status model only when props change. No subscriptions,
   // relay queries or timers are needed to display recorded delivery results.
-  function viewFor(message: Message, name: string, urls: string[], _locale: string) {
+  function viewFor(
+    message: Message,
+    name: string,
+    urls: string[],
+    _locale: string,
+    publicGroup: boolean,
+  ) {
     const state = useMessageBubbleStatus({
       message: computed(() => message),
       isMine: computed(() => message.sender === 'me'),
@@ -34,10 +42,15 @@
       outbound: state.showOutboundStatus.value,
       title: state.statusDialogTitle.value,
       segments: state.statusSegments.value,
-      sections: state.statusSections.value,
+      sections:
+        publicGroup && state.showOutboundStatus.value
+          ? state.statusSections.value
+              .filter((s) => s.key === 'recipient')
+              .map((s) => ({ ...s, title: name || 'Group relays' }))
+          : state.statusSections.value,
     };
   }
-  $: view = viewFor(message, contactName, contactRelayUrls, $locale);
+  $: view = viewFor(message, contactName, contactRelayUrls, $locale, publicGroup);
   $: sections = view.outbound
     ? view.sections.filter((section) => section.key === tab)
     : view.sections;
@@ -47,7 +60,7 @@
   }
   async function retry(items: StatusListItem[]) {
     const id = Number(message.id);
-    if (!Number.isSafeInteger(id) || id <= 0) return;
+    if (!onretry && (!Number.isSafeInteger(id) || id <= 0)) return;
     error = '';
     await Promise.all(
       items.map(async (item) => {
@@ -55,7 +68,8 @@
           return;
         retrying = [...retrying, item.key];
         try {
-          await useNostrStore().retryDirectMessageRelay(id, item.relayUrl, item.scope);
+          if (onretry) await onretry(item.relayUrl);
+          else await useNostrStore().retryDirectMessageRelay(id, item.relayUrl, item.scope);
         } catch (cause) {
           error = cause instanceof Error ? cause.message : 'Unable to retry relay delivery.';
         } finally {
@@ -102,7 +116,7 @@
         ><Icon name="close" /></button
       >
     </header>
-    {#if view.outbound}
+    {#if view.outbound && view.sections.length > 1}
       <div class="tabs" role="tablist" aria-label={view.title}>
         {#each view.sections as section}
           <button
@@ -116,7 +130,7 @@
     {/if}
     {#each sections as section (section.key)}
       <section data-testid={`relay-status-panel-${section.key}`} aria-label={section.title}>
-        {#if !view.outbound}<h3>{section.title}</h3>{/if}
+        {#if !view.outbound || view.sections.length === 1}<h3>{section.title}</h3>{/if}
         <ul>
           {#each section.items as item (item.key)}
             <li>

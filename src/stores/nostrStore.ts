@@ -1,3 +1,4 @@
+import { createPublicGroupRuntime } from '#src/stores/nostr/publicGroupRuntime.ts';
 import { chatDataService } from '#src/services/chatDataService.ts';
 import { createGroupRecoveryRuntime } from './nostr/groupRecoveryRuntime.ts';
 import {
@@ -2268,7 +2269,16 @@ export const useNostrStore = defineStore('nostrStore', () => {
     );
   }
 
+  const publicGroups = createPublicGroupRuntime({
+    client: ndk,
+    account: getLoggedInPublicKeyHex,
+    signer: () => getOrCreateSignerRuntime(),
+    relays: resolveLoggedInReadRelayUrls,
+    containsSecret: containsSessionSecret,
+  });
+
   return {
+    publicGroups,
     containsSessionSecret,
     searchProfiles: async (
       query: string,

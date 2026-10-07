@@ -4,6 +4,7 @@ fn main() {
             "read_private_key",
             "write_private_key",
             "remove_private_key",
+            "android_notification_command",
         ]),
     ))
     .expect("failed to build Anagram permissions");

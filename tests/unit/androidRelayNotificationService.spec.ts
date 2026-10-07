@@ -14,6 +14,8 @@ import {
   readAndroidRelayConversationDetailsPreference,
   refreshAndroidRelayNotificationListener,
   requestAndroidRelayNotificationsAfterLogin,
+  disableAndroidRelayNotifications,
+  startAndroidRelayNotificationListeners,
 } from '#src/services/androidRelayNotificationService.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,7 +49,7 @@ const moduleMocks = vi.hoisted(() => ({
         startOnBoot: true,
         showConversationDetails: options.showConversationDetails,
         permission: 'granted',
-      })
+      }),
     ),
     getState: vi.fn(async () => ({
       enabled: true,
@@ -79,16 +81,12 @@ const moduleMocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('#src/lib/platform/legacyNative.ts', () => ({
-  Capacitor: {
-    getPlatform: () => 'android',
-    isNativePlatform: () => true,
-  },
-  registerPlugin: () => moduleMocks.plugin,
+vi.mock('#src/lib/platform/androidNotifications.ts', () => ({
+  isAndroidNative: () => true,
+  androidNotificationPlugin: () => moduleMocks.plugin,
 }));
-
-vi.mock('#src/services/androidSecurePrivateKeyStorage.ts', () => ({
-  readAndroidSecurePrivateKeyHex: vi.fn(async () => null),
+vi.mock('#src/lib/platform/secureKeys.ts', () => ({
+  readNativeKey: vi.fn(async () => null),
 }));
 
 vi.mock('#src/services/chatDataService.ts', () => ({
@@ -153,7 +151,7 @@ describe('androidRelayNotificationService', () => {
       'ui-android-relay-notifications-selected-relays',
       JSON.stringify({
         [new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://relay.example'],
-      })
+      }),
     );
     vi.stubGlobal('window', {
       localStorage: {
@@ -167,6 +165,67 @@ describe('androidRelayNotificationService', () => {
     __androidRelayNotificationServiceTestUtils.resetRefreshState();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('does not re-enable or retain keys when disabled during an in-flight configuration', async () => {
+    let finish!: (value: {
+      enabled: boolean;
+      startOnBoot: boolean;
+      showConversationDetails: boolean;
+      permission: string;
+    }) => void;
+    moduleMocks.plugin.configure.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const enabling = requestAndroidRelayNotificationsAfterLogin();
+    const cancelled = expect(enabling).rejects.toThrow('cancelled');
+    await vi.waitFor(() => expect(moduleMocks.plugin.configure).toHaveBeenCalledOnce());
+    const disabling = disableAndroidRelayNotifications();
+    finish({
+      enabled: true,
+      startOnBoot: true,
+      showConversationDetails: true,
+      permission: 'granted',
+    });
+    await cancelled;
+    await disabling;
+    expect(moduleMocks.plugin.stop).toHaveBeenCalledOnce();
+    await refreshAndroidRelayNotificationListener();
+    expect(moduleMocks.plugin.configure).toHaveBeenCalledOnce();
+    expect(localStorageValues.get('ui-android-relay-notifications')).toBe('0');
+  });
+  it('removes listeners whose registration completes after the UI unmounts', async () => {
+    const remove = vi.fn(async () => {});
+    moduleMocks.plugin.addListener
+      .mockResolvedValueOnce({ remove })
+      .mockResolvedValueOnce({ remove });
+    const stop = startAndroidRelayNotificationListeners(vi.fn(), vi.fn());
+    stop();
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledTimes(2));
+    const stopAgain = startAndroidRelayNotificationListeners(vi.fn(), vi.fn());
+    expect(moduleMocks.plugin.addListener).toHaveBeenCalledTimes(4);
+    stopAgain();
+  });
+
+  it('ignores a notification tap from a different account', async () => {
+    const action = vi.fn();
+    const stop = startAndroidRelayNotificationListeners(action, vi.fn());
+    const registrations = moduleMocks.plugin.addListener.mock.calls as unknown as Array<
+      [string, (value: unknown) => void]
+    >;
+    const callback = registrations.find(([name]) => name === 'notificationActionPerformed')![1];
+    callback({ ownerPubkey: 'f'.repeat(64), chatPubkey: 'a'.repeat(64) });
+    expect(action).not.toHaveBeenCalled();
+    callback({
+      ownerPubkey: new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey,
+      chatPubkey: 'a'.repeat(64),
+    });
+    expect(action).toHaveBeenCalledWith('a'.repeat(64));
+    stop();
+    await Promise.resolve();
   });
 
   it('builds a normalized watch plan from private-message relays and recipient pubkeys', () => {
@@ -197,7 +256,7 @@ describe('androidRelayNotificationService', () => {
         appRelayUrls: ['wss://shared.example/', 'wss://app.example'],
         groupRelayUrls: ['wss://shared.example', 'wss://group.example'],
         selectedRelayUrls: ['wss://removed.example'],
-      })
+      }),
     ).toEqual([
       {
         url: 'wss://shared.example/',
@@ -250,8 +309,8 @@ describe('androidRelayNotificationService', () => {
           userRelayUrls: [],
           appRelayUrls: ['wss://app.example', 'wss://second-app.example'],
           groupRelayUrls: ['wss://group.example'],
-        })
-      )
+        }),
+      ),
     ).toEqual(['wss://app.example/']);
   });
 
@@ -374,7 +433,7 @@ describe('androidRelayNotificationService', () => {
     expect(moduleMocks.pendingEvents[0]).toEqual(
       expect.objectContaining({
         id: retryEventId,
-      })
+      }),
     );
   });
 
@@ -439,19 +498,19 @@ describe('androidRelayNotificationService', () => {
       isAndroidDirectNotificationContactEligible({
         type: 'user',
         meta: {},
-      })
+      }),
     ).toBe(false);
     expect(
       isAndroidDirectNotificationContactEligible({
         type: 'group',
         meta: { private_contact_list_member: true },
-      })
+      }),
     ).toBe(false);
     expect(
       isAndroidDirectNotificationContactEligible({
         type: 'user',
         meta: { private_contact_list_member: true },
-      })
+      }),
     ).toBe(true);
   });
 
@@ -460,7 +519,7 @@ describe('androidRelayNotificationService', () => {
       isAndroidDirectNotificationConversationPolicyEligible({
         chatMeta: {},
         contact: null,
-      })
+      }),
     ).toBe(false);
     expect(
       isAndroidDirectNotificationConversationPolicyEligible({
@@ -469,25 +528,25 @@ describe('androidRelayNotificationService', () => {
           type: 'user',
           meta: { private_contact_list_member: true },
         },
-      })
+      }),
     ).toBe(true);
     expect(
       isAndroidDirectNotificationConversationPolicyEligible({
         chatMeta: { inbox_state: 'accepted' },
         contact: null,
-      })
+      }),
     ).toBe(true);
     expect(
       isAndroidDirectNotificationConversationPolicyEligible({
         chatMeta: { accepted_at: '2026-08-28T12:00:00.000Z' },
         contact: null,
-      })
+      }),
     ).toBe(true);
     expect(
       isAndroidDirectNotificationConversationPolicyEligible({
         chatMeta: { last_outgoing_message_at: '2026-08-28T12:00:00.000Z' },
         contact: null,
-      })
+      }),
     ).toBe(true);
   });
 
@@ -501,31 +560,31 @@ describe('androidRelayNotificationService', () => {
       isAndroidDirectNotificationConversationEnabled({
         chatMeta: {},
         contact,
-      })
+      }),
     ).toBe(true);
     expect(
       isAndroidDirectNotificationConversationEnabled({
         chatMeta: { inbox_state: 'accepted' },
         contact: null,
-      })
+      }),
     ).toBe(true);
     expect(
       isAndroidDirectNotificationConversationEnabled({
         chatMeta: { inbox_state: 'accepted', muted: true },
         contact: null,
-      })
+      }),
     ).toBe(false);
     expect(
       isAndroidDirectNotificationConversationEnabled({
         chatMeta: { muted: true },
         contact,
-      })
+      }),
     ).toBe(false);
     expect(
       isAndroidDirectNotificationConversationEnabled({
         chatMeta: { inbox_state: 'blocked', last_outgoing_message_at: '2026-08-28T12:00:00.000Z' },
         contact: null,
-      })
+      }),
     ).toBe(false);
     expect(
       isAndroidDirectNotificationConversationEnabled({
@@ -534,7 +593,7 @@ describe('androidRelayNotificationService', () => {
           ...contact,
           meta: { ...contact.meta, muted: true },
         },
-      })
+      }),
     ).toBe(false);
     expect(
       isAndroidDirectNotificationConversationEnabled({
@@ -543,7 +602,7 @@ describe('androidRelayNotificationService', () => {
           ...contact,
           meta: { ...contact.meta, blocked: true },
         },
-      })
+      }),
     ).toBe(false);
   });
 
@@ -570,7 +629,7 @@ describe('androidRelayNotificationService', () => {
         type: 'user',
         name: 'Unknown request',
         meta: {},
-      }
+      },
     );
 
     await expect(requestAndroidRelayNotificationsAfterLogin()).resolves.toBe('granted');
@@ -612,7 +671,7 @@ describe('androidRelayNotificationService', () => {
       'ui-android-relay-notifications-selected-relays',
       JSON.stringify({
         [new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://selected-app.example'],
-      })
+      }),
     );
 
     await expect(requestAndroidRelayNotificationsAfterLogin()).resolves.toBe('granted');
@@ -627,7 +686,7 @@ describe('androidRelayNotificationService', () => {
       'ui-android-relay-notifications-selected-relays',
       JSON.stringify({
         [new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey]: ['wss://removed-relay.example'],
-      })
+      }),
     );
 
     await expect(refreshAndroidRelayNotificationListener()).resolves.toBeUndefined();
@@ -668,7 +727,7 @@ describe('androidRelayNotificationService', () => {
         ownerPubkey: 'invalid',
         relayUrls: ['wss://relay.example'],
         watchedPubkeys: [],
-      })
+      }),
     ).toThrow('logged-in public key');
   });
 
@@ -678,7 +737,7 @@ describe('androidRelayNotificationService', () => {
         ownerPubkey: OWNER_PUBKEY,
         relayUrls: ['https://not-a-relay.example'],
         watchedPubkeys: [],
-      })
+      }),
     ).toThrow('readable relay');
   });
 });

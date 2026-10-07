@@ -1,0 +1,16 @@
+# Public groups
+
+Anagram public groups use ordinary relays. They are public, with client-side moderation; blocking cannot stop someone reading or publishing through another client.
+
+- Room: creator-signed `kind:34550`, stable `d`, `name`, `description`, optional `image`, 1–8 `relay` tags and `["anagram-room", "1"]`.
+- Policy: repeated `trusted` and `blocked` pubkey tags in the room definition. Owner is implicitly trusted; blocking wins. These are Anagram extensions, not NIP-51 follow sets or NIP-72 approval moderation. NIP-72 currently recommends NIP-29 instead; this client deliberately uses the public definition format on ordinary relays.
+- Messages: signed NIP-C7 `kind:9`, exactly one `a` tag containing `34550:<owner>:<d>`. Trusted attachments use NIP-92 `imeta` tags. Sharing uses NIP-19 `naddr`; relay hints do not change room identity.
+- Transfer: the new owner's fresh room signs a `predecessor` coordinate. The old owner signs a `successor` coordinate plus an optional relay hint. Both signatures and the reciprocal binding are required. Accepted transfers are pinned locally; cycles and chains exceeding eight rooms are rejected. The successor's policy controls rendering, including explicitly selected predecessor history. Old events retain their original addresses and signatures.
+
+Untrusted messages use escaped text with web links replaced by `[link removed]`, without rich parsing or remote media. This applies to cached messages too. Blocking and trust changes also affect cached messages. Trusted posts use the shared chat message renderer, including lazy images, video controls and the image viewer. Media URLs must pass the public HTTPS URL filter; browser media elements follow storage-host redirects just as in private chats. Untrusted posts never mount this renderer or remote avatars. Link previews keep their bounded, credential-free, redirect-rejecting fetch policy. Browser DNS/network policy still applies; no server-side media or preview proxy is added.
+
+Room subscriptions run while the room is open. Messages stay in account-scoped IndexedDB, with a 200-message display window and 2,000-event per-room disk cache; earlier history is paged from relays. Background public notifications and cross-device subscriptions are not implemented. Leaving removes the local subscription; opening the link joins again.
+
+Relay bars reuse the normal message details dialog and record actual receipts and publish acknowledgements locally; failed sends can retry the original signed event. Rendering stats adds no relay queries.
+
+Saved rooms and a bounded message window display immediately while hydration runs in the background. A signed policy from a relay that completed a real EOSE read can establish the room without waiting for an unavailable replica; older policies never replace a newer cached version. Live updates continue to apply newer owner-signed policy. Owner edits require completed reads from all declared relays. Offline clients can display previously verified policy but cannot post. A fresh client can still miss a handover or blocklist update if relays withhold it: signatures prove authorship, not global freshness. Concurrent owner edits use ordinary NIP-01 replacement ordering, with a refresh-before-save check.

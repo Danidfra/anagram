@@ -5,6 +5,7 @@
     collapseFormattedMessage,
     messageFormatUrls,
     withoutFormattedMediaUrls,
+    type FormattedMessagePart,
   } from '#src/utils/messageFormatting.ts';
   import FormattedMessage from './FormattedMessage.svelte';
   import { openExternalHttpUrl } from '#src/utils/externalLinks.ts';
@@ -28,6 +29,9 @@
   export let onredial: (mode: CallMode) => void = () => {};
   export let message: Message;
   export let bubbleLayout = false;
+  // Public rooms supply their owner-authorized media policy and sanitized formatting.
+  export let allowMedia = false;
+  export let formattedParts: FormattedMessagePart[] | undefined = undefined;
   export let oncontact: (pubkey: string) => void;
   export let onroom: (link: string) => void;
   const trusted = useTrustedMediaStore();
@@ -38,7 +42,7 @@
   let expanded = false,
     showMedia = false;
   $: history = readCallHistory(message.meta.call_history);
-  $: formatted = formatMessage(message.text, mentionProfiles);
+  $: formatted = formattedParts ?? formatMessage(message.text, mentionProfiles);
   $: formatUrls = messageFormatUrls(formatted);
   $: attachments = (message.meta.attachments ?? []).filter((attachment) => {
     try {
@@ -60,7 +64,7 @@
     )
     .slice(0, 2);
   $: mediaAllowed =
-    showMedia || message.sender === 'me' || $trust.includes(message.authorPublicKey);
+    allowMedia || showMedia || message.sender === 'me' || $trust.includes(message.authorPublicKey);
   async function open(url: string) {
     if (parseRoomLink(url)) {
       onroom(url);
