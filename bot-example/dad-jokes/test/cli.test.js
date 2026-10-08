@@ -1,0 +1,86 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { generateSecretKey } from 'nostr-tools';
+import { wrapEvent, unwrapEvent } from 'nostr-tools/nip59';
+import { now } from '../runtime.js';
+import { relay, until } from './relay.js';
+
+// Run the real executable with production defaults, substituting only local relays
+// and a hosted image URL so the check never publishes a test identity to the internet.
+test(
+  'CLI starts, publishes, answers a DM, stops on SIGTERM and restores its identity',
+  { timeout: 90000 },
+  async (t) => {
+    const local = await relay();
+    const cwd = fileURLToPath(new URL('../', import.meta.url));
+    mkdirSync(`${cwd}data`, { recursive: true });
+    const dir = mkdtempSync(`${cwd}data/cli-test-`);
+    let child;
+    t.after(async () => {
+      if (child?.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL');
+        await once(child, 'exit');
+      }
+      await local.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const start = async () => {
+      let output = '';
+      child = spawn(process.execPath, ['bot.js'], {
+        cwd,
+        env: {
+          ...process.env,
+          DATA_DIR: dir,
+          RELAYS: local.url,
+          PICTURE_URL: 'https://example.org/dad.png',
+          PUBLIC_GROUPS: '',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+      child.stderr.on('data', () => {});
+      await until(() => output.includes('Profile and DM inbox published.'), 'CLI startup');
+      assert.ok(!output.includes('nsec1'), 'private key must never be logged');
+      return output.match(/npub1[023456789acdefghjklmnpqrstuvwxyz]+/)[0];
+    };
+    const stop = async () => {
+      const exited = once(child, 'exit');
+      child.kill('SIGTERM');
+      const [code, signal] = await exited;
+      assert.equal(code, 0);
+      assert.equal(signal, null);
+    };
+    const identity = await start();
+    const profile = [...local.events.values()].find((e) => e.kind === 0);
+    const sender = generateSecretKey();
+    local.emit(
+      wrapEvent(
+        { kind: 14, content: 'Hello daemon', created_at: now(), tags: [['p', profile.pubkey]] },
+        sender,
+        profile.pubkey,
+      ),
+    );
+    await until(
+      () =>
+        [...local.events.values()].some((e) => {
+          if (e.kind !== 1059) return false;
+          try {
+            const reply = unwrapEvent(e, sender);
+            return reply.pubkey === profile.pubkey && reply.content.length > 0;
+          } catch {
+            return false;
+          }
+        }),
+      'CLI DM response',
+    );
+    await stop();
+    assert.equal(await start(), identity);
+    await stop();
+  },
+);

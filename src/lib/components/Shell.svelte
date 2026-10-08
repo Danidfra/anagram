@@ -1372,8 +1372,9 @@
         >
           {#if $state.selected.type === 'user' && $state.selected.publicKey === nostr.getLoggedInPublicKeyHex() && !$state.thread.pagination?.hasOlder && !loadingOlder}
             <blockquote class="self-chat-quote">
-              “I often have long conversations with myself, and I am so clever that sometimes I
-              don't understand a single word of what I am saying”
+              <i>“I often have long conversations with myself, and I am so clever that sometimes I
+              don't understand a single word of what I am saying”</i>
+              <br><br><small>DMs to yourself are end-to-end encrypted with no metadata exposed, just like DMs to others.</small>
             </blockquote>
           {/if}
           {#each $state.thread.items as message, index (message.id)}
