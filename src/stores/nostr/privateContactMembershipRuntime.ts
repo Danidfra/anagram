@@ -77,6 +77,7 @@ export function createPrivateContactMembershipRuntime({
     }
 
     const updatedContact = await contactsService.updateContact(existingContact.id, {
+      metaBase: existingContact.meta,
       ...(shouldUpdateType ? { type: options.type } : {}),
       ...(shouldUpdateMeta ? { meta: nextMeta } : {}),
     });

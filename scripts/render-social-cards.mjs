@@ -10,7 +10,7 @@ const cards = [
   {
     name: 'anagram',
     title: 'A Nostr<br>Alternative Gram',
-    detail: 'Your conversations. Your connections.',
+    detail: 'Nostr and Iroh powered private chats, groups chats and calls',
     action: 'join us!',
     icon: 'chat',
   },
@@ -48,7 +48,7 @@ try {
       *{box-sizing:border-box}body{margin:0;width:1200px;height:630px;overflow:hidden;font-family:Manrope,sans-serif;color:#f4f8ff;background:radial-gradient(ellipse at 93% 80%,#194775 0,transparent 52%),#101c2b}
       main{position:relative;padding:52px 66px;height:100%;isolation:isolate}
       header{display:flex;align-items:center;gap:16px;font-size:30px;font-weight:800;letter-spacing:-1px}header img{width:58px;height:58px;object-fit:contain}
-      .copy{position:absolute;left:66px;top:179px;z-index:2}h1{font-size:72px;line-height:1.12;letter-spacing:-3px;font-weight:800;margin:0 0 24px}p{font-size:25px;color:#b3c9dd;margin:0}
+      .copy{position:absolute;left:66px;top:179px;z-index:2}h1{font-size:72px;line-height:1.12;letter-spacing:-3px;font-weight:800;margin:0 0 24px}p{max-width:560px;font-size:25px;color:#b3c9dd;margin:0}
       footer{position:absolute;bottom:52px;left:66px;right:66px;display:flex;align-items:center;justify-content:space-between}.action{background:#77c9ff;color:#101c2b;border-radius:30px;padding:13px 26px;font-weight:800;font-size:23px}.domain{font-size:20px;color:#b3c9dd}
       .art{position:absolute;right:63px;top:178px;width:265px;height:265px;display:grid;place-items:center;background:linear-gradient(145deg,#23466c,#152f4d);border:1px solid #4b7b9d;border-radius:68px;transform:rotate(-7deg);box-shadow:0 25px 80px #060d1880}
       .art svg{width:180px;height:180px;fill:none;stroke:#85d7ff;stroke-width:9;stroke-linejoin:round;stroke-linecap:round}

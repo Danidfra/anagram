@@ -317,6 +317,7 @@ export function createGroupEpochStateRuntime({
 
       if (shouldUpdateType || shouldUpdateName || shouldUpdateMeta) {
         await contactsService.updateContact(existingContact.id, {
+          metaBase: existingContact.meta,
           type: 'group',
           ...(shouldUpdateName ? { name: fallbackName } : {}),
           ...(shouldUpdateMeta ? { meta: nextContactMeta } : {}),

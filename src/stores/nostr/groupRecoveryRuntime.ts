@@ -360,6 +360,7 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     const contact = await contactsService.getContactByPublicKey(secret.group_pubkey);
     if (contact)
       await contactsService.updateContact(contact.id, {
+        metaBase: contact.meta,
         relays: record.state.relays.map((url) => ({ url, read: true, write: true })),
         meta: {
           ...contact.meta,

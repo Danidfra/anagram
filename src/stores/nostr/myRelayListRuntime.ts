@@ -227,6 +227,7 @@ export function createMyRelayListRuntime({
       return;
 
     await contactsService.updateContact(existingContact.id, {
+      metaBase: existingContact.meta,
       meta: { ...existingContact.meta, general_relay_entries: normalizedRelayEntries },
       relays: mergeRelayEntriesWithDirectMessageReceiveRelayEntriesValue(
         normalizedRelayEntries,
@@ -378,6 +379,7 @@ export function createMyRelayListRuntime({
           const general = contact.meta.general_relay_entries ?? contact.relays;
           const dm = relayEntriesFromDirectMessageReceiveRelayEventValue(wrappedEvent);
           await contactsService.updateContact(contact.id, {
+            metaBase: contact.meta,
             meta: {
               ...contact.meta,
               general_relay_entries: general,

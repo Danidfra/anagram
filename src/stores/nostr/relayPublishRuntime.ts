@@ -572,6 +572,9 @@ export function createRelayPublishRuntime({
     metadata: PublishUserMetadataInput,
     seedRelayUrls: string[] = []
   ): Promise<void> {
+    const assertAccount = () => {
+      if (getLoggedInPublicKeyHex() !== loggedInPubkeyHex) throw new Error('Account changed.');
+    };
     const normalizedGroupPublicKey = inputSanitizerService.normalizeHexKey(groupPublicKey);
     const loggedInPubkeyHex = getLoggedInPublicKeyHex();
     if (!loggedInPubkeyHex) {
@@ -584,6 +587,7 @@ export function createRelayPublishRuntime({
 
     await contactsService.init();
     const groupContact = await contactsService.getContactByPublicKey(normalizedGroupPublicKey);
+    assertAccount();
     if (!groupContact || groupContact.type !== 'group') {
       throw new Error('Group contact not found.');
     }
@@ -594,6 +598,18 @@ export function createRelayPublishRuntime({
     if (!normalizedOwnerPublicKey || normalizedOwnerPublicKey !== loggedInPubkeyHex) {
       throw new Error('Only the owner can publish this group profile.');
     }
+
+    if (metadata.pinned !== undefined && metadata.pinned !== '' &&
+        (typeof metadata.pinned !== 'string' || !/^[a-f0-9]{64}$/.test(metadata.pinned)))
+      throw new Error('Invalid pinned message ID.');
+    // Ordinary profile edits retain the existing pin; an explicit empty ID clears it.
+    metadata = {
+      ...(groupContact.meta.pinned ? {
+        pinned: groupContact.meta.pinned,
+        pinned_created_at: groupContact.meta.pinned_created_at,
+      } : {}),
+      ...metadata,
+    };
 
     const encryptedGroupPrivateKey = groupContact.meta.group_private_key_encrypted?.trim() ?? '';
     if (!encryptedGroupPrivateKey) {
@@ -616,6 +632,7 @@ export function createRelayPublishRuntime({
 
     await ensureRelayConnections(relayUrls);
 
+    assertAccount();
     const groupSigner = new NostrPrivateKeySigner(decryptedSecret.group_privkey, ndk);
     const signerUser = await groupSigner.user();
     if (inputSanitizerService.normalizeHexKey(signerUser.pubkey) !== normalizedGroupPublicKey) {
@@ -635,7 +652,9 @@ export function createRelayPublishRuntime({
       created_at: profileCreatedAt,
       content: JSON.stringify(metadata),
     } as NostrEvent);
+    assertAccount();
     await metadataEvent.sign(groupSigner);
+    assertAccount();
 
     const publishResult = await publishEventWithRelayStatuses(metadataEvent, relayUrls, 'self');
     if (

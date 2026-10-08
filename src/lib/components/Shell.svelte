@@ -3,9 +3,12 @@
   import GroupProfileFields from './GroupProfileFields.svelte';
   import MessageInfo from './MessageInfo.svelte';
   import ThreadHeader from './ThreadHeader.svelte';
+  import PinnedMessage from './PinnedMessage.svelte';
+  import type { PrivateGroupPin } from '#src/stores/nostr/privateGroupPins.ts';
   import ThreadSearch from './ThreadSearch.svelte';
   import ComposerContext from './ComposerContext.svelte';
   import MessageReply from './MessageReply.svelte';
+  import { buildMessageReplyPreviewContent } from '#src/utils/messageAttachments.ts';
   import ForwardMessagePicker from './ForwardMessagePicker.svelte';
   import ThreadTimeline from './ThreadTimeline.svelte';
   import MessageRow from './MessageRow.svelte';
@@ -225,9 +228,72 @@
     contextTrigger?.focus({ preventScroll: true });
     contextTrigger = null;
   }
+  let groupPin: PrivateGroupPin | null = null;
+  let pinBusy = false;
+  let pinRevision = 0;
+  let pinRepairKey = '';
+  $: pinGroup = $state.selected?.type === 'group' ? $state.selected.publicKey : '';
+  $: void refreshGroupPin(pinGroup, $state.contactVersion, $state.thread.items);
+  $: canPin = Boolean(groupPin?.group === pinGroup && groupPin?.canPin);
+  async function refreshGroupPin(group: string, _version: number, _items: Message[]) {
+    const revision = ++pinRevision;
+    if (groupPin?.group !== group) groupPin = null;
+    if (!group) return;
+    const result = await nostr.privateGroupPins.read(group).catch(() => null);
+    if (revision !== pinRevision || group !== pinGroup) return;
+    groupPin = result;
+    const repairKey = `${nostr.getLoggedInPublicKeyHex()}:${group}:${result?.eventId}`;
+    if (result?.eventId && !result.available && pinRepairKey !== repairKey) {
+      pinRepairKey = repairKey;
+      void nostr
+        .repairMissingMessageDependency(group, result.eventId, {
+          reason: 'reply-open',
+          immediate: true,
+          referenceCreatedAt: result.createdAt,
+        })
+        .then(() => {
+          if (group === pinGroup)
+            void refreshGroupPin(group, $state.contactVersion, $state.thread.items);
+        })
+        .catch(() => {});
+    }
+  }
+  async function setGroupPin(eventId: string | null) {
+    if (!pinGroup || pinBusy) return;
+    const group = pinGroup;
+    pinBusy = true;
+    try {
+      await act(() => nostr.privateGroupPins.set(group, eventId));
+      await refreshGroupPin(pinGroup, $state.contactVersion, $state.thread.items);
+    } finally {
+      pinBusy = false;
+    }
+  }
+  async function openPinnedMessage() {
+    const pin = groupPin;
+    if (!pin?.eventId || pin.group !== $state.selected?.publicKey) return;
+    nearBottom = false;
+    await act(async () => {
+      let target = await messages.ensureMessageLoadedByEventId(pin.group, pin.eventId);
+      if (!target) {
+        await nostr.repairMissingMessageDependency(pin.group, pin.eventId, {
+          reason: 'reply-open',
+          immediate: true,
+          force: true,
+          referenceCreatedAt: pin.createdAt,
+        });
+        target = await messages.ensureMessageLoadedByEventId(pin.group, pin.eventId);
+      }
+      if (pin.group !== $state.selected?.publicKey) return;
+      if (!target) throw new Error('Pinned message is not available in your group history.');
+      await jump(target.id);
+    });
+  }
   async function messageAction(action: string, message: Message) {
     contextMessage = '';
-    if (action === 'reply') {
+    if (action === 'pin' || action === 'unpin') {
+      await setGroupPin(action === 'unpin' ? null : message.eventId);
+    } else if (action === 'reply') {
       setReply(message);
       await tick();
       composerInput?.focus();
@@ -390,7 +456,7 @@
         .catch(fail);
   }
   function scrollToBottom(node: HTMLDivElement | undefined) {
-    if (node) {
+    if (node && nearBottom && !loadingOlder) {
       node.scrollTop = node.scrollHeight;
       void markVisibleReactions();
     }
@@ -422,7 +488,7 @@
     nearBottom = true;
     await messages.loadMessages(id);
     await tick();
-    scrollToBottom(scrollArea);
+    if (currentId === id) scrollToBottom(scrollArea);
   }
   async function open(chat: Chat) {
     if (chat.meta.deleted_locally === true) {
@@ -616,7 +682,7 @@
   function setReply(message: Message) {
     reply = {
       messageId: message.id,
-      text: message.text,
+      ...buildMessageReplyPreviewContent(message.text, message.meta),
       sender: message.sender,
       authorName: messageAuthor(
         message,
@@ -1261,6 +1327,14 @@
             >
           {/snippet}
         </ThreadHeader>
+        {#if groupPin?.group === pinGroup && groupPin?.eventId}
+          <PinnedMessage
+            text={groupPin.text}
+            onopen={() => void openPinnedMessage()}
+            onunpin={canPin ? () => void setGroupPin(null) : undefined}
+            busy={pinBusy}
+          />
+        {/if}
         {#if searching}
           {#key $state.selected.id}
             <ThreadSearch
@@ -1280,7 +1354,7 @@
           hasOlder={Boolean($state.thread.pagination?.hasOlder)}
           hasNewer={Boolean($state.thread.pagination?.hasNewer)}
           loading={loadingOlder}
-          {nearBottom}
+          bind:nearBottom
           onolder={() => void act(older)}
           onnewer={() => void act(() => messages.loadNewerMessages($state.selected!.id))}
           onlatest={() =>
@@ -1292,13 +1366,16 @@
             })}
           onscroll={() => {
             contextMessage = '';
-            if (!loadingOlder)
-              nearBottom =
-                scrollArea.scrollHeight - scrollArea.scrollTop - scrollArea.clientHeight < 100;
             scrollTop = scrollArea.scrollTop;
             void markVisibleReactions();
           }}
         >
+          {#if $state.selected.type === 'user' && $state.selected.publicKey === nostr.getLoggedInPublicKeyHex() && !$state.thread.pagination?.hasOlder && !loadingOlder}
+            <blockquote class="self-chat-quote">
+              “I often have long conversations with myself, and I am so clever that sometimes I
+              don't understand a single word of what I am saying”
+            </blockquote>
+          {/if}
           {#each $state.thread.items as message, index (message.id)}
             {@const author = messageAuthor(
               message,
@@ -1635,6 +1712,24 @@
       message={actionMessage}
       x={contextPosition.x}
       y={contextPosition.y}
+      allowedActions={[
+        'reply',
+        'copy',
+        'forward',
+        'edit',
+        'info',
+        'delete',
+        ...(canPin && !pinBusy && actionMessage.eventId && !actionMessage.meta.deleted
+          ? [
+              groupPin?.eventId &&
+              (groupPin.eventId === actionMessage.eventId ||
+                (typeof actionMessage.meta.edited === 'object' &&
+                  actionMessage.meta.edited.previousEventIds.includes(groupPin.eventId)))
+                ? 'unpin'
+                : 'pin',
+            ]
+          : []),
+      ]}
       onaction={messageAction}
       onclose={closeMessageActions}
       onreact={(emoji, message) => {

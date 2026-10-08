@@ -23,6 +23,8 @@
     ['forward', 'Forward', 'forward'],
     ['edit', 'Edit', 'edit'],
     ['info', 'Nostr info', 'info'],
+    ['pin', 'Pin message', 'pin'],
+    ['unpin', 'Unpin message', 'pin'],
     ['delete', 'Delete', 'delete'],
   ];
   $: if (menu && x !== undefined && y !== undefined) position();

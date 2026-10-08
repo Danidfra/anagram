@@ -18,6 +18,7 @@ export interface PublicRoom extends RoomAddress {
   picture: string;
   trusted: string[];
   blocked: string[];
+  pinned?: string;
   successor?: RoomAddress;
   predecessor?: RoomAddress;
 }
@@ -105,6 +106,8 @@ export function parsePublicRoom(event: NostrEvent, expected?: string): PublicRoo
     throw new Error('Invalid group profile.');
   const relays = [...new Set(event.tags.filter((t) => t[0] === 'relay').map((t) => t[1]))];
   if (!relays.length || relays.length > 8) throw new Error('A public group needs 1–8 relays.');
+  const pinned = single('pinned')?.[1];
+  if (pinned !== undefined && !HEX.test(pinned)) throw new Error('Invalid pinned message.');
   const blocked = keys('blocked');
   if (blocked.includes(address.owner)) throw new Error('The group owner cannot be blocked.');
   return {
@@ -114,6 +117,7 @@ export function parsePublicRoom(event: NostrEvent, expected?: string): PublicRoo
     about,
     relays,
     picture: previewUrl(single('image')?.[1] || '') || '',
+    pinned,
     trusted: keys('trusted'),
     blocked,
     successor: pointer('successor'),
@@ -154,6 +158,7 @@ export function roomTags(input: {
   relays: string[];
   trusted: string[];
   blocked: string[];
+  pinned?: string;
   slug: string;
   predecessor?: RoomAddress;
   successor?: RoomAddress;
@@ -163,6 +168,7 @@ export function roomTags(input: {
     ['anagram-room', '1'],
     ['name', input.name.trim()],
     ['description', input.about.trim()],
+    ...(input.pinned ? [['pinned', input.pinned]] : []),
     ...(input.picture ? [['image', input.picture]] : []),
     ...input.relays.map((r) => ['relay', r]),
     ...input.trusted.map((k) => ['trusted', k]),

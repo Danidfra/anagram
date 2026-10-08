@@ -541,6 +541,14 @@ export function buildUpdatedContactMetaValue(
     meta.group = profile.group;
   }
 
+  if (profile) {
+    const pin = inputSanitizerService.normalizeContactMetadata(profile);
+    if (pin.pinned) meta.pinned = pin.pinned;
+    else delete meta.pinned;
+    if (pin.pinned_created_at) meta.pinned_created_at = pin.pinned_created_at;
+    else delete meta.pinned_created_at;
+  }
+
   const birthday = inputSanitizerService.normalizeContactBirthday(profile?.birthday);
   if (birthday) meta.birthday = birthday;
 

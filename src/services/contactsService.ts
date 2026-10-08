@@ -580,7 +580,21 @@ class ContactsService {
     }
 
     if (input.meta !== undefined) {
-      const nextMeta = inputSanitizerService.normalizeContactMetadata(input.meta);
+      let nextMeta = inputSanitizerService.normalizeContactMetadata(input.meta);
+      if (input.metaBase !== undefined) {
+        // The caller may have awaited a relay/profile lookup since reading its
+        // snapshot. Merge only its changes inside this readwrite transaction so
+        // concurrent ownership, cursor and preference updates are not erased.
+        const base = inputSanitizerService.normalizeContactMetadata(input.metaBase);
+        const merged: Record<string, unknown> = { ...nextRecord.meta };
+        for (const key of new Set([...Object.keys(base), ...Object.keys(nextMeta)])) {
+          const field = key as keyof ContactMetadata;
+          if (JSON.stringify(base[field]) === JSON.stringify(nextMeta[field])) continue;
+          if (Object.hasOwn(nextMeta, key)) merged[key] = nextMeta[field];
+          else delete merged[key];
+        }
+        nextMeta = inputSanitizerService.normalizeContactMetadata(merged);
+      }
       if (!contactMetaEquals(nextRecord.meta, nextMeta)) {
         nextRecord.meta = nextMeta;
         didUpdateRecord = true;

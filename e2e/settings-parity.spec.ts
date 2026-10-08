@@ -450,3 +450,36 @@ test('accent swatches persist and restore the exact original light and dark pale
   expect((await palette())['--q-primary']).toBe('#4fa9e6');
   await expect(page.locator('body')).not.toHaveAttribute('data-accent');
 });
+
+test('profile copies the current locally stored private key as nsec without revealing it', async ({ page }) => {
+  const account = await login(page);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/settings/profile');
+  const copy = page.getByRole('button', { name: 'Copy private key', exact: true });
+  await copy.click();
+  await expect(page.getByRole('status')).toHaveText('Private key copied.');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(nip19.nsecEncode(account.key));
+  const body = await page.locator('body').textContent();
+  expect(body).not.toContain(nip19.nsecEncode(account.key));
+  expect(body).not.toContain(Buffer.from(account.key).toString('hex'));
+
+  // Read storage on each click: don't export a stale in-memory or another account's key.
+  const other = Buffer.from(generateSecretKey()).toString('hex');
+  await page.evaluate(async (key) => {
+    localStorage.setItem('nsec', key);
+    await navigator.clipboard.writeText('unchanged');
+  }, other);
+  await copy.click();
+  await expect(page.getByRole('alert')).toHaveText('The stored private key does not match this account.');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('unchanged');
+  await page.evaluate(() => localStorage.removeItem('nsec'));
+  await copy.click();
+  await expect(page.getByRole('alert')).toHaveText('No private key is stored locally for this account.');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('unchanged');
+  await page.evaluate((key) => {
+    localStorage.setItem('nsec', key);
+    navigator.clipboard.writeText = async () => { throw new Error('Clipboard denied'); };
+  }, Buffer.from(account.key).toString('hex'));
+  await copy.click();
+  await expect(page.getByRole('alert')).toHaveText('Could not copy the private key.');
+});

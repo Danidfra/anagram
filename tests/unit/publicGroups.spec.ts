@@ -150,3 +150,19 @@ it('round-trips preview links and existing public links without changing the roo
   expect(decodeRoomLink(`https://anagram.chat/public/${token}`)).toEqual(room);
   expect(() => decodeRoomLink('https://anagram.chat/join/chat.html#https://example.org')).toThrow();
 });
+
+it('accepts one pinned message reference and rejects malformed or duplicate pins', () => {
+  const id = 'c'.repeat(64);
+  const pinned = parsePublicRoom(definition([['pinned', id]]));
+  expect(pinned.pinned).toBe(id);
+  expect(roomTags(pinned)).toContainEqual(['pinned', id]);
+  expect(() => parsePublicRoom(definition([['pinned', 'bad-id']]))).toThrow('pinned');
+  expect(() =>
+    parsePublicRoom(
+      definition([
+        ['pinned', id],
+        ['pinned', id],
+      ]),
+    ),
+  ).toThrow('pinned');
+});

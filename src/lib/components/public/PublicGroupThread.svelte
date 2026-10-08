@@ -2,12 +2,14 @@
   import MessageActions from '../MessageActions.svelte';
   import ComposerContext from '../ComposerContext.svelte';
   import MessageReply from '../MessageReply.svelte';
+  import { buildMessageReplyPreviewContent } from '#src/utils/messageAttachments.ts';
   import { getPublicProfile } from '#src/lib/state/publicProfiles.ts';
   import MessageInfo from '../MessageInfo.svelte';
   import ModalFrame from '../ModalFrame.svelte';
   import type { Message, MessageReplyPreview } from '#src/types/chat.ts';
   import { messagePresentation, messageMenuPosition } from '#src/utils/messagePresentation.ts';
   import ThreadHeader from '../ThreadHeader.svelte';
+  import PinnedMessage from '../PinnedMessage.svelte';
   import ThreadSearch from '../ThreadSearch.svelte';
   import ThreadTimeline from '../ThreadTimeline.svelte';
   import MessageRow from '../MessageRow.svelte';
@@ -60,6 +62,44 @@
       if (jumpRevision === request) jumping = false;
     }
   }
+  let pinned: Message | null = null;
+  let pinKey = '';
+  let pinRevision = 0;
+  let pinBusy = false;
+  $: canPin = Boolean(room && room.owner === own && writable);
+  $: void refreshPin(room?.event.id ?? '', $state.history, $state.messages);
+  async function refreshPin(key: string, history: string, _messages: unknown[]) {
+    const revision = ++pinRevision;
+    const changed = key !== pinKey;
+    if (changed || history) pinned = null;
+    pinKey = key;
+    if (!room?.pinned || history) {
+      pinned = null;
+      return;
+    }
+    const value = await runtime.pinnedMessage(changed).catch(() => null);
+    if (revision === pinRevision) pinned = value;
+    else if (changed && key === pinKey && !history && room?.event.id === key)
+      void refreshPin(key, history, []);
+  }
+  async function setPin(id: string | null) {
+    if (pinBusy) return;
+    pinBusy = true;
+    error = '';
+    try {
+      await runtime.pinMessage(id);
+    } catch (cause) {
+      error = (cause as Error).message;
+    } finally {
+      pinBusy = false;
+    }
+  }
+  function openPin() {
+    if (room?.pinned)
+      void jump(room.pinned, new AbortController().signal).catch(
+        (cause) => (error = cause.message),
+      );
+  }
   let reply: MessageReplyPreview | null = null;
   let editing: Message | null = null;
   let beforeEdit = '';
@@ -106,6 +146,8 @@
   }
   async function messageAction(action: string, message: Message) {
     closeActions();
+    if (action === 'pin' || action === 'unpin')
+      await setPin(action === 'unpin' ? null : message.id);
     if (action === 'info') inspectedId = message.id;
     if (action === 'forward') onforward(message);
     if (action === 'reply') {
@@ -113,7 +155,7 @@
       reply = {
         messageId: message.id,
         eventId: message.id,
-        text: message.text.slice(0, 300),
+        ...buildMessageReplyPreviewContent(message.text, message.meta),
         sender: message.sender,
         authorName:
           message.sender === 'me'
@@ -218,7 +260,8 @@
     scrollToEnd();
   }
   function scrollToEnd() {
-    if (log && !actionMessage) log.scrollTop = log.scrollHeight;
+    if (log && nearBottom && !paging && !jumping && !actionMessage)
+      log.scrollTop = log.scrollHeight;
   }
   $: if (visible.length && nearBottom && !paging && !jumping) void tick().then(scrollToEnd);
   async function pageHistory(older = true) {
@@ -319,6 +362,18 @@
       >
     {/snippet}
   </ThreadHeader>
+  {#if room.pinned && !$state.history}
+    <PinnedMessage
+      text={pinned
+        ? pinned.meta.deleted
+          ? 'Message deleted'
+          : buildMessageReplyPreviewContent(pinned.text, pinned.meta).text
+        : 'Message unavailable · Click to load'}
+      onopen={openPin}
+      onunpin={canPin ? () => void setPin(null) : undefined}
+      busy={pinBusy}
+    />
+  {/if}
   {#if $state.ancestors.length}<label class="history"
       >Ownership transferred · History <select
         value={$state.history}
@@ -348,7 +403,7 @@
     hasOlder={$state.more}
     hasNewer={$state.hasNewer}
     loading={paging || $state.loading}
-    {nearBottom}
+    bind:nearBottom
     onolder={() => void pageHistory()}
     onnewer={() => void pageHistory(false)}
     onlatest={() => void latest()}
@@ -356,7 +411,6 @@
       if (log.scrollTop !== lastScrollTop) actionMessage = undefined;
       lastScrollTop = log.scrollTop;
       if (paging || jumping) return;
-      nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
       if (nearBottom && $state.hasNewer) void pageHistory(false);
     }}
   >
@@ -532,7 +586,15 @@
     x={contextPosition.x}
     y={contextPosition.y}
     allowedActions={writable
-      ? ['reply', 'copy', 'forward', 'edit', 'info', 'delete']
+      ? [
+          'reply',
+          'copy',
+          'forward',
+          'edit',
+          'info',
+          'delete',
+          ...(canPin && !pinBusy ? [room?.pinned === actionMessage.id ? 'unpin' : 'pin'] : []),
+        ]
       : ['copy', 'forward', 'info']}
     allowReactions={writable}
     onreact={(emoji, message) => void react(emoji, message)}

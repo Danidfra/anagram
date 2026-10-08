@@ -105,9 +105,11 @@ test('link cards display GitHub and Open Graph metadata, respect media trust, an
       }),
     );
     await sendMessage(alice.page, 'Escaped metadata https://preview.example.org/escaped');
-    const escaped = threadMessage(alice.page, 'Escaped metadata').getByTestId(
-      'message-link-preview',
-    );
+    const escapedMessage = threadMessage(alice.page, 'Escaped metadata');
+    // Layout/viewport changes can leave the thread scrolled above this message.
+    // Link previews intentionally fetch only when their container enters view.
+    await escapedMessage.locator('.preview-container').scrollIntoViewIfNeeded();
+    const escaped = escapedMessage.getByTestId('message-link-preview');
     await expect(escaped).toContainText('<img src=x onerror=alert(1)>');
     await expect(escaped.locator('img, script')).toHaveCount(0);
     expect(blockedRequests).toEqual([]);

@@ -6,6 +6,8 @@
   import { goto } from '$app/navigation';
   import { translate } from '#src/i18n.ts';
   import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { NostrPrivateKeySigner, nip19 } from '#src/lib/nostr/client.ts';
+  import { AUTH_METHOD_STORAGE_KEY, PRIVATE_KEY_STORAGE_KEY } from '#src/stores/nostr/constants.ts';
   import { useRelayStore } from '#src/stores/relayStore.ts';
   import { contactsService } from '#src/services/contactsService.ts';
   import { createEmptyContactProfileForm } from '#src/types/contactProfile.ts';
@@ -31,6 +33,8 @@
     hex = true,
     qr = '';
   let shareDialog: HTMLDialogElement;
+  let localKeyAvailable = false,
+    copyingPrivateKey = false;
   const fields = [
     ['name', 'common.name'],
     ['about', 'common.about'],
@@ -111,8 +115,35 @@
       error = 'Could not copy the public key.';
     }
   }
+  async function copyPrivateKey() {
+    if (copyingPrivateKey) return;
+    copyingPrivateKey = true;
+    error = '';
+    notice = '';
+    try {
+      const stored = localStorage.getItem(PRIVATE_KEY_STORAGE_KEY)?.trim();
+      if (!stored || localStorage.getItem(AUTH_METHOD_STORAGE_KEY) !== 'nsec') {
+        error = 'No private key is stored locally for this account.';
+        return;
+      }
+      const signer = new NostrPrivateKeySigner(stored);
+      if (signer.pubkey !== pubkey || signer.pubkey !== nostr.getLoggedInPublicKeyHex()) {
+        error = 'The stored private key does not match this account.';
+        return;
+      }
+      await navigator.clipboard.writeText(nip19.nsecEncode(signer.secretKey));
+      notice = 'Private key copied.';
+    } catch {
+      error = 'Could not copy the private key.';
+    } finally {
+      copyingPrivateKey = false;
+    }
+  }
   onMount(() => {
     mounted = true;
+    localKeyAvailable =
+      localStorage.getItem(AUTH_METHOD_STORAGE_KEY) === 'nsec' &&
+      Object.hasOwn(localStorage, PRIVATE_KEY_STORAGE_KEY);
   });
 </script>
 
@@ -141,6 +172,13 @@
       ><Icon name="content_copy" /></button
     >
   </div>
+  {#if localKeyAvailable}
+    <div class="settings-actions">
+      <button class="outline" disabled={copyingPrivateKey} onclick={copyPrivateKey}
+        >Copy private key</button
+      >
+    </div>
+  {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}{#if notice}<p role="status">
       {notice}
     </p>{/if}

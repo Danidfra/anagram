@@ -274,6 +274,7 @@ export function createContactSubscriptionsRuntime({
       );
       if (JSON.stringify(members) === JSON.stringify(group.meta.group_members)) continue;
       await contactsService.updateContact(group.id, {
+        metaBase: group.meta,
         meta: { ...group.meta, group_members: members },
       });
       bumpContactListVersion();
@@ -362,6 +363,7 @@ export function createContactSubscriptionsRuntime({
     }
 
     const updatedContact = await contactsService.updateContact(existingContact.id, {
+      metaBase: existingContact.meta,
       name: nextName,
       ...(nextMeta.group === true ? { type: 'group' as const } : {}),
       meta: persistedMeta,
@@ -457,6 +459,7 @@ export function createContactSubscriptionsRuntime({
       });
       if (!contactMetadataEqual(existingContact.meta, persistedMeta)) {
         const updatedContact = await contactsService.updateContact(existingContact.id, {
+          metaBase: existingContact.meta,
           meta: persistedMeta,
         });
         if (!updatedContact) {
@@ -480,6 +483,7 @@ export function createContactSubscriptionsRuntime({
     }
 
     const updatedContact = await contactsService.updateContact(existingContact.id, {
+      metaBase: existingContact.meta,
       meta: persistedMeta,
       relays: nextRelayEntries,
     });

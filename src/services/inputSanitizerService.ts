@@ -316,6 +316,12 @@ class InputSanitizerService {
       if (Array.isArray(value[key]))
         meta[key] = this.normalizeRelayListMetadataEntries(value[key] as ContactRelay[]);
     }
+    const pinned = this.normalizeHexKey(typeof value.pinned === 'string' ? value.pinned : '');
+    if (pinned) {
+      meta.pinned = pinned;
+      if (Number.isSafeInteger(value.pinned_created_at) && Number(value.pinned_created_at) > 0)
+        meta.pinned_created_at = Number(value.pinned_created_at);
+    }
     const name = this.readOptionalString(value.name);
     const about = this.readOptionalString(value.about);
     const picture = this.readOptionalString(value.picture);

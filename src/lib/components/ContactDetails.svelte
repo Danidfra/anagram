@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ProtocolSpecButton from './ProtocolSpecButton.svelte';
   import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onMount } from 'svelte';
   import { translate } from '#src/i18n.ts';
@@ -166,6 +167,9 @@
   </header>
   <div class="detail-body">
     <div class="actions">
+      {#if !loading}<ProtocolSpecButton
+          kind={contact?.type === 'group' ? 'private' : 'direct'}
+        />{/if}
       <button
         class="outline"
         data-testid="contact-profile-refresh-button"
@@ -286,7 +290,11 @@
     {/if}
   </div>
 </div>
-<dialog bind:this={shareDialog} use:dismissOnBackdrop={() => shareDialog.close()} aria-label={$translate('contacts.shareContact')}>
+<dialog
+  bind:this={shareDialog}
+  use:dismissOnBackdrop={() => shareDialog.close()}
+  aria-label={$translate('contacts.shareContact')}
+>
   <button
     class="icon-button share-close"
     aria-label="Close share dialog"
@@ -339,6 +347,7 @@
   }
   .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
     justify-content: flex-end;
     margin-bottom: 18px;

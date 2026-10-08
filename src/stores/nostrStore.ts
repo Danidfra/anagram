@@ -1,3 +1,4 @@
+import { createPrivateGroupPins } from '#src/stores/nostr/privateGroupPins.ts';
 import { searchRelayPublicGroups } from '#src/stores/nostr/publicGroupSearchRuntime.ts';
 import type { PublicRoom } from '#src/stores/nostr/publicGroups.ts';
 import { createPublicGroupRuntime } from '#src/stores/nostr/publicGroupRuntime.ts';
@@ -2408,6 +2409,11 @@ export const useNostrStore = defineStore('nostrStore', () => {
       setPubkeyMuted(pubkey, true, seedRelayUrls),
     publishGroupRelayList,
     publishGroupMetadata,
+    privateGroupPins: createPrivateGroupPins({
+      account: getLoggedInPublicKeyHex,
+      publish: publishGroupMetadata,
+      refresh: (group) => refreshContactByPublicKey(group),
+    }),
     publishGroupMemberChanges,
     publishUserMetadata,
     publishMyRelayList,

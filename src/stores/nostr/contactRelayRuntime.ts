@@ -291,6 +291,7 @@ export function createContactRelayRuntime({
       });
       if (!contactMetadataEqual(existingContact.meta, nextMeta)) {
         const updatedContact = await contactsService.updateContact(existingContact.id, {
+          metaBase: existingContact.meta,
           meta: nextMeta,
         });
         if (!updatedContact) {
@@ -311,6 +312,7 @@ export function createContactRelayRuntime({
     }
 
     const updatedContact = await contactsService.updateContact(existingContact.id, {
+      metaBase: existingContact.meta,
       meta: nextMeta,
       relays: nextRelayEntries,
     });

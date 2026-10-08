@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ProtocolSpecButton from '../ProtocolSpecButton.svelte';
   import GroupProfileFields from '../GroupProfileFields.svelte';
   import DetailTabs from '../DetailTabs.svelte';
   import RelayEditor from '../RelayEditor.svelte';
@@ -153,6 +154,7 @@
       </div>
     </div>
     <div class="profile-actions">
+      <ProtocolSpecButton kind="public" />
       <button
         class="outline"
         disabled={busy}
@@ -317,6 +319,9 @@
     justify-content: flex-end;
     gap: 8px;
     margin: 16px 0;
+  }
+  .profile-actions {
+    flex-wrap: wrap;
   }
   .leave-group {
     border-top: 1px solid var(--nc-border);

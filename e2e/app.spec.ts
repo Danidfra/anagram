@@ -2,14 +2,7 @@ import { confirmGroupBackup } from './parity/helpers';
 import { finishOnboarding } from './auth-helpers';
 import WebSocket from 'ws';
 import { test, expect, type Page } from '@playwright/test';
-import {
-  generateSecretKey,
-  getPublicKey,
-  nip19,
-  nip59,
-  nip44,
-  finalizeEvent,
-} from 'nostr-tools';
+import { generateSecretKey, getPublicKey, nip19, nip59, nip44, finalizeEvent } from 'nostr-tools';
 const relay = 'ws://127.0.0.1:7777/';
 async function login(page: Page, key = generateSecretKey()) {
   await page.addInitScript((relay) => {
@@ -162,9 +155,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await a.getByTestId('message-send-button').click();
   await b.getByRole('button', { name: 'Chat options' }).click();
   await b.getByRole('button', { name: /Message requests/ }).click();
-  await expect(
-    b.getByTestId('chat-item').filter({ hasText: 'Private test group' }),
-  ).toBeVisible();
+  await expect(b.getByTestId('chat-item').filter({ hasText: 'Private test group' })).toBeVisible();
   await b.getByTestId('chat-item').filter({ hasText: 'Private test group' }).click();
   await b.getByRole('button', { name: 'Accept', exact: true }).click();
   await expect(
@@ -262,9 +253,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await b.getByRole('button', { name: 'Close dialog', exact: true }).click();
 
   await a.getByRole('button', { name: 'Contact profile', exact: true }).click();
-  await a
-    .getByLabel('Description', { exact: true })
-    .fill('A private group with rotating keys');
+  await a.getByLabel('Description', { exact: true }).fill('A private group with rotating keys');
   await a.getByRole('button', { name: 'Save group profile', exact: true }).click();
   await expect(a.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
   await a.getByRole('tab', { name: 'Relays', exact: true }).click();
@@ -290,9 +279,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await login(restored, bob.key);
   await restored.getByTestId('chat-item').filter({ hasText: 'Private test group' }).click();
   await expect(
-    restored
-      .getByTestId('message-bubble')
-      .filter({ hasText: 'Edited encrypted group message' }),
+    restored.getByTestId('message-bubble').filter({ hasText: 'Edited encrypted group message' }),
   ).toBeVisible();
   await expect(
     restored.getByTestId('message-bubble').filter({ hasText: 'Reply from group member' }),
@@ -317,16 +304,13 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await expect(a.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
   await a.getByRole('tab', { name: 'Epochs', exact: true }).click();
   await expect(a.getByTestId('group-details').locator('.epoch')).toHaveCount(3);
-  const currentEpoch = await a
-    .getByLabel('Epoch public key', { exact: true })
-    .first()
-    .inputValue();
+  const currentEpoch = await a.getByLabel('Epoch public key', { exact: true }).first().inputValue();
   await b.getByRole('button', { name: 'Contact profile', exact: true }).click();
   await b.getByRole('tab', { name: 'Epochs', exact: true }).click();
   await expect(b.getByTestId('group-details').locator('.epoch')).toHaveCount(2);
-  expect(
-    await b.getByLabel('Epoch public key', { exact: true }).first().inputValue(),
-  ).not.toEqual(currentEpoch);
+  expect(await b.getByLabel('Epoch public key', { exact: true }).first().inputValue()).not.toEqual(
+    currentEpoch,
+  );
   await b.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await a.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await a.getByTestId('message-composer-input').fill('Only remaining members');
@@ -358,9 +342,30 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
     ownerPage.getByTestId('message-bubble').filter({ hasText: 'Only remaining members' }),
   ).toBeVisible();
   await ownerPage.getByRole('button', { name: 'Contact profile', exact: true }).click();
-  await expect(
-    ownerPage.getByRole('button', { name: 'Save group profile', exact: true }),
-  ).toBeVisible();
+  try {
+    await expect(
+      ownerPage.getByRole('button', { name: 'Save group profile', exact: true }),
+    ).toBeVisible();
+  } catch (error) {
+    await test.info().attach('restored-owner-state', {
+      contentType: 'application/json',
+      body: JSON.stringify(
+        await ownerPage.evaluate(async () => {
+          const { contactsService } = await import('/src/services/contactsService.ts');
+          const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+          const group = location.pathname.split('/')[2];
+          const contact = await contactsService.getContactByPublicKey(group);
+          return {
+            hasContact: Boolean(contact),
+            isOwner: contact?.meta.owner_public_key === useNostrStore().getLoggedInPublicKeyHex(),
+            hasEncryptedMaster: Boolean(contact?.meta.group_private_key_encrypted),
+            memberCount: contact?.meta.group_members?.length,
+          };
+        }),
+      ),
+    });
+    throw error;
+  }
   await ownerPage.getByRole('tab', { name: 'Epochs', exact: true }).click();
   await expect(ownerPage.getByTestId('group-details').locator('.epoch')).toHaveCount(3);
   await ownerRestore.close();
@@ -431,17 +436,17 @@ test('a 20,000-message account opens a bounded cached window', async ({ page }) 
       await new Promise(requestAnimationFrame);
       const viewport = node.getBoundingClientRect();
       return [...node.querySelectorAll<HTMLElement>('.message-row')]
-        .filter(row => {
+        .filter((row) => {
           const box = row.getBoundingClientRect();
           return box.bottom > viewport.top + 40 && box.top < viewport.bottom;
         })
-        .map(row => ({
+        .map((row) => ({
           painted: row.checkVisibility({ contentVisibilityAuto: true }),
           text: row.querySelector('.message-content')?.textContent?.trim(),
         }));
     }, fraction);
     expect(visible.length).toBeGreaterThan(0);
-    expect(visible.every(row => row.painted && row.text?.includes('Cached message'))).toBe(true);
+    expect(visible.every((row) => row.painted && row.text?.includes('Cached message'))).toBe(true);
   }
   const more = page.getByTestId('thread-load-older');
   await expect(more).toHaveText('More');
@@ -971,12 +976,19 @@ test('concurrent DM hydration stays in the authenticated sender thread while swi
             .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-chat-public-key'))),
         )
         .toEqual(Array(48).fill(pubkey));
-      await expect(
-        page
-          .getByTestId('message-bubble')
-          .filter({ hasText: 'incoming' })
-          .locator('.message-author strong'),
-      ).toHaveText(Array(24).fill(number === 0 ? 'Barry fixture' : 'Monika fixture'));
+      // Bubble layout shows a name once per consecutive author group. Events
+      // sharing a timestamp can sort into different groups on each run.
+      await expect
+        .poll(async () => [
+          ...new Set(
+            await page
+              .getByTestId('message-bubble')
+              .filter({ hasText: 'incoming' })
+              .getByTestId('thread-author-name-link')
+              .allTextContents(),
+          ),
+        ])
+        .toEqual([number === 0 ? 'Barry fixture' : 'Monika fixture']);
       await expect(
         page.getByTestId('message-bubble').filter({ hasText: number === 0 ? 'MONIKA' : 'BARRY' }),
       ).toHaveCount(0);

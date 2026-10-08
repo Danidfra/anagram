@@ -381,6 +381,17 @@ p {
   color: var(--nc-text-secondary);
   margin-bottom: 8px;
   text-align: left;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.reply-preview-content {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .reactions {
   display: flex;
@@ -432,6 +443,18 @@ p {
   justify-content: space-between;
   padding: 10px 20px;
   background: var(--nc-search-bg);
+  min-width: 0;
+  gap: 12px;
+  align-items: center;
+}
+.composer-context-content {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-context > button {
+  flex-shrink: 0;
 }
 .empty-list,
 .empty-thread {
@@ -634,6 +657,17 @@ p {
   border-radius: 12px;
   box-shadow: var(--nc-shadow-md);
   margin-top: 8px;
+}
+.self-chat-quote {
+  max-width: 640px;
+  margin: 16px auto 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--q-primary);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--q-primary);
+  text-align: center;
+  line-height: 1.6;
 }
 .thread-more {
   position: absolute;
@@ -1218,7 +1252,9 @@ body.body--dark .bubble-layout {
   align-items: end;
   margin-bottom: 9px;
 }
-.bubble-layout .message-row.sender-continues { margin-bottom: 3px; }
+.bubble-layout .message-row.sender-continues {
+  margin-bottom: 3px;
+}
 .bubble-layout .bubble-avatar {
   grid-column: 1;
   grid-row: 1;
@@ -1241,8 +1277,12 @@ body.body--dark .bubble-layout {
   border-radius: 18px 18px 18px 6px;
   background: var(--nc-received);
 }
-.bubble-layout .message-row.own .message-content { background: var(--nc-sent); }
-.bubble-layout .sender-continuation .message-content { border-top-left-radius: 6px; }
+.bubble-layout .message-row.own .message-content {
+  background: var(--nc-sent);
+}
+.bubble-layout .sender-continuation .message-content {
+  border-top-left-radius: 6px;
+}
 .bubble-author-name {
   display: block;
   max-width: 100%;
@@ -1263,7 +1303,9 @@ body.body--dark .bubble-layout {
   margin: 2px 0 0 12px;
   line-height: 20px;
 }
-.bubble-time-only { display: contents; }
+.bubble-time-only {
+  display: contents;
+}
 .bubble-footer {
   display: flex;
   align-items: flex-end;
@@ -1271,12 +1313,18 @@ body.body--dark .bubble-layout {
   gap: 12px;
   margin-top: 4px;
 }
-.bubble-footer .message-time { float: none; order: 2; margin: 0 0 0 auto; }
+.bubble-footer .message-time {
+  float: none;
+  order: 2;
+  margin: 0 0 0 auto;
+}
 @media (max-width: 767px) {
   .bubble-layout:not(.group-thread) .message-row.own {
     grid-template-columns: minmax(0, 1fr) 38px;
   }
-  .bubble-layout:not(.group-thread) .own .bubble-avatar { grid-column: 2; }
+  .bubble-layout:not(.group-thread) .own .bubble-avatar {
+    grid-column: 2;
+  }
   .bubble-layout:not(.group-thread) .own .message-content {
     grid-column: 1;
     justify-self: end;

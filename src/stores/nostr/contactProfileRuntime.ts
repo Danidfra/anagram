@@ -276,6 +276,7 @@ export function createContactProfileRuntime({
 
     if (existingContact) {
       const updatedContact = await contactsService.updateContact(existingContact.id, {
+        metaBase: existingContact.meta,
         name: nextName,
         meta: nextMeta,
         relays: effectiveNextRelays,

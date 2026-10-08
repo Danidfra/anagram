@@ -272,6 +272,7 @@ export function createMuteListRuntime({
       }
 
       await contactsService.updateContact(contact.id, {
+        metaBase: contact.meta,
         meta: nextContactMeta,
       });
       didChangeContacts = true;

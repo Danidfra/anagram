@@ -20,6 +20,13 @@ This is an overview of the protocols Anagram uses, not a claim of full support f
 | 78  | Encrypted account preferences, group secrets and recovery records.                                                         |
 | B7  | Blossom uploads with signed upload authorization. The server choice stays private; Anagram does not publish a server list. |
 
+## Chat protocol specs
+
+- [Direct messages](../docs/direct-messages.md)
+- [Private groups](../docs/private-groups.md)
+- [Public groups](../docs/public-groups.md)
+- [Nostr + Iroh calls](iroh-calls.md)
+
 ## Private groups: NIP-171 draft
 
 Anagram uses the local [NIP-171 draft](nip171.md), built on NIP-17 and NIP-59. A stable group identity signs invitations (`kind:1014`), and members exchange messages through a shared epoch key. Each member's message carries a signed invitation proof that receivers verify.
@@ -35,6 +42,8 @@ Public groups use NIP-72 metadata (`kind:34550`), NIP-C7 messages/replies (`kind
 See [Public groups](../docs/public-groups.md) for the format and limitations.
 
 ## Other Anagram extensions
+
+- **Group pins:** one owner-controlled message reference in the signed group profile, as described in the chat specs above. Private profiles include only the rumor ID and timestamp hint, never message text.
 
 - **Message edits:** NIP-17 delete-and-replace messages include an `e` tag marked `edit` to link the replacement to the original.
 - **Calls:** Iroh call signalling uses encrypted `kind:21117` messages; call-history messages use an `anagram-call` tag. These are application extensions, not assigned Nostr standards. See [Iroh call protocol](iroh-calls.md).

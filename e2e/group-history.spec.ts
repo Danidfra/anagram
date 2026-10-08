@@ -14,8 +14,8 @@ import {
 } from 'nostr-tools';
 import { finishOnboarding } from './auth-helpers';
 
-// Match original Anagram: signed 1014 rumor signature in the seal's
-// invitation_proof tag; group messages are addressed to the epoch, not identity.
+// Invitations carry their group signature in the seal. Member messages carry
+// the NIP-171 epoch ticket proof in the unsigned rumor, with empty seal tags.
 function wrap(rumor: UnsignedEvent, sender: Uint8Array, recipient: string, proof?: string): Event {
   const seal = finalizeEvent(
     {
@@ -44,7 +44,7 @@ function wrap(rumor: UnsignedEvent, sender: Uint8Array, recipient: string, proof
   );
 }
 
-test('original-format groups recover all epochs and both authors across discovered and fallback relays', async ({
+test('ticketed groups recover all epochs and both authors across discovered and fallback relays', async ({
   page,
 }) => {
   const servers = Array.from(
@@ -71,7 +71,7 @@ test('original-format groups recover all epochs and both authors across discover
   for (let groupIndex = 0; groupIndex < 2; groupIndex++) {
     const identity = generateSecretKey(),
       publicKey = getPublicKey(identity);
-    const name = `Original restored group ${groupIndex}`;
+    const name = `Restored group ${groupIndex}`;
     const messages: Array<{ text: string; author: string }> = [];
     groups.push({ publicKey, name, messages });
     // Only the third configured relay knows the group's identity and custom inbox.
@@ -138,12 +138,35 @@ test('original-format groups recover all epochs and both authors across discover
       );
       const { sig, ...rumor } = ticket;
       events[0].push(wrap(rumor, identity, own, sig));
+      const peerTicket = finalizeEvent(
+        {
+          kind: 1014,
+          created_at: ticket.created_at,
+          tags: [
+            ['p', getPublicKey(peer)],
+            ['epoch', String(epoch)],
+          ],
+          content: ticket.content,
+        },
+        identity,
+      );
       for (let index = 0; index < 8; index++) {
         const sender = index % 2 ? peer : key;
         const text = `${name} epoch ${epoch} message ${index}`;
         messages.push({ text, author: getPublicKey(sender) });
         const message = nip59.createRumor(
-          { kind: 14, created_at: at + index * 60, tags: [['p', epochPubkey]], content: text },
+          {
+            kind: 14,
+            created_at: at + index * 60,
+            tags: [
+              ['p', epochPubkey],
+              ['h', publicKey],
+              ['epoch', String(epoch)],
+              ['invited_at', String(ticket.created_at)],
+              ['invitation_proof', sender === key ? ticket.sig : peerTicket.sig],
+            ],
+            content: text,
+          },
           sender,
         );
         // Latest routing must not exclude archives on a configured fallback relay.
@@ -290,10 +313,9 @@ test('original-format groups recover all epochs and both authors across discover
         await expect(bubble).toBeVisible({ timeout: 30000 });
         await expect(bubble).toHaveAttribute('data-chat-public-key', group.publicKey);
         await expect(bubble).toHaveAttribute('data-author-public-key', message.author);
-        await expect(bubble.locator('.message-author img')).toHaveAttribute(
-          'src',
-          `https://profiles.test/${message.author}.png`,
-        );
+        await expect(
+          bubble.getByTestId('thread-author-profile-link').locator('img'),
+        ).toHaveAttribute('src', `https://profiles.test/${message.author}.png`);
       }
       await expect(
         page

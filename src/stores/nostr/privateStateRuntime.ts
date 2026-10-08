@@ -1191,6 +1191,7 @@ export function createPrivateStateRuntime({
       }
 
       const updatedContact = await contactsService.updateContact(groupContact.id, {
+        metaBase: groupContact.meta,
         meta: buildNextMeta(groupContact),
       });
       if (updatedContact) {
@@ -1909,6 +1910,7 @@ export function createPrivateStateRuntime({
 
     if (didChangeLastSeenIncomingActivityAt) {
       await contactsService.updateContact(contact.id, {
+        metaBase: contact.meta,
         meta: nextContactMeta,
       });
       didChange = true;

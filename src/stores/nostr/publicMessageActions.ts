@@ -1,3 +1,4 @@
+import { buildMessageReplyPreviewContent } from '#src/utils/messageAttachments.ts';
 import { readMessageEditTargetEventId, buildEditedMessageMeta } from '#src/utils/messageEdits.ts';
 import type { NostrEvent } from '#src/lib/nostr/client.ts';
 import type { PublicGroupMessage } from '#src/services/publicGroupData.ts';
@@ -203,7 +204,7 @@ export function publicMessageState(root: PublicGroupMessage, room: PublicRoom, o
       text: visible
         ? preview.meta.deleted
           ? 'Message deleted'
-          : preview.text.slice(0, 300)
+          : buildMessageReplyPreviewContent(preview.text, preview.meta).text
         : 'Message unavailable',
       authorPublicKey: visible ? preview.authorPublicKey : '',
       authorName: visible

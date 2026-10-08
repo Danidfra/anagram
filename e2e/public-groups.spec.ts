@@ -760,7 +760,10 @@ test('public chat shares layouts, sender grouping, date dividers, emoji input an
   await first.hover();
   await first.getByRole('button', { name: 'Message actions', exact: true }).click();
   const menu = page.getByRole('menu', { name: 'Message actions' });
-  await expect(menu.getByRole('menuitem')).toHaveCount(4);
+  await expect(menu.getByRole('menuitem')).toHaveCount(5);
+  await expect(menu.getByRole('menuitem', { name: 'Pin message', exact: true })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Edit', exact: true })).toHaveCount(0);
+  await expect(menu.getByRole('menuitem', { name: 'Delete', exact: true })).toHaveCount(0);
   await expect(menu.getByRole('menuitem', { name: 'Reply', exact: true })).toBeVisible();
   await expect(menu.getByRole('button', { name: 'React', exact: true })).toBeVisible();
   await menu.getByRole('menuitem', { name: 'Nostr info', exact: true }).click();

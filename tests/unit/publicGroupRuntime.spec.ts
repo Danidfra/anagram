@@ -527,11 +527,16 @@ it('re-enables older paging when live traffic overflows a previously empty room'
       ),
     );
   }
-  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(200));
+  // The queue persists and hydrates batches of 64. A full display window alone
+  // does not prove the 201st event (which enables older paging) has been handled.
+  await vi.waitFor(() => expect(get(runtime.state).messages.at(-1)?.content).toBe('Live 200'), {
+    timeout: 5_000,
+  });
+  expect(get(runtime.state).messages).toHaveLength(200);
   expect(get(runtime.state).more).toBe(true);
   await runtime.older();
   expect(get(runtime.state).messages[0].content).toBe('Live 0');
-});
+}, 10_000);
 
 it('cancels publication if a block arrives while the signer is approving the message', async () => {
   const owner = generateSecretKey(),
@@ -1083,4 +1088,46 @@ it('pages edited replacements whose originals were already removed by relays', a
   expect(
     get(runtime.state).messages.map((event) => publicMessageState(event, group).text),
   ).toContain('Older replacement');
+});
+
+it('pins only as owner, keeps the pin across profile edits, and loads an old pin without changing the message window', async () => {
+  const key = generateSecretKey(),
+    definition = room(key, 'pins');
+  const address = `34550:${getPublicKey(key)}:pins`;
+  const notes = Array.from({ length: 80 }, (_, i) =>
+    finalizeEvent(
+      { kind: 9, created_at: 100 + i, tags: [['a', address]], content: `Pinned history ${i}` },
+      key,
+    ),
+  );
+  const f = setup([definition, ...notes], key);
+  await f.runtime.open(encodeRoomLink(parsePublicRoom(definition)));
+  await vi.waitFor(() =>
+    expect(get(f.runtime.state).messages.some((message) => message.id === notes[79].id)).toBe(true),
+  );
+  await f.runtime.pinMessage(notes[79].id);
+  expect(get(f.runtime.state).room?.pinned).toBe(notes[79].id);
+  await f.runtime.update({ about: 'Updated description' }, get(f.runtime.state).room!.event.id!);
+  expect(get(f.runtime.state).room?.pinned).toBe(notes[79].id);
+  // Simulate a signed remote profile pin to a message outside the bounded window.
+  const latest = room(
+    key,
+    'pins',
+    [['pinned', notes[0].id]],
+    get(f.runtime.state).room!.event.created_at + 1,
+  );
+  f.events.push(latest);
+  await f.runtime.open(encodeRoomLink(parsePublicRoom(latest)));
+  await vi.waitFor(() => expect(get(f.runtime.state).messages.length).toBeGreaterThan(0));
+  const window = get(f.runtime.state).messages.map((m) => m.id);
+  expect(window).not.toContain(notes[0].id);
+  expect((await f.runtime.pinnedMessage())?.text).toBe('Pinned history 0');
+  expect(get(f.runtime.state).messages.map((m) => m.id)).toEqual(window);
+  await f.runtime.pinMessage(null);
+  expect(get(f.runtime.state).room?.pinned).toBeUndefined();
+  const member = setup(f.events);
+  await member.runtime.open(encodeRoomLink(parsePublicRoom(latest)));
+  await expect(member.runtime.pinMessage(notes[0].id)).rejects.toThrow(
+    'Only the current group owner',
+  );
 });

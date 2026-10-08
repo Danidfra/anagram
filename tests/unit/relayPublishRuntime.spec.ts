@@ -64,17 +64,21 @@ describe('relayPublishRuntime', () => {
         owner_public_key: 'a'.repeat(64),
         group_private_key_encrypted: 'encrypted',
         profile_event_created_at: restored,
+        pinned: 'c'.repeat(64),
+        pinned_created_at: 100,
       },
       relays: [{ url: 'wss://group.example/', read: true, write: true }],
       sendMessagesToAppRelays: false,
     });
     const published: number[] = [];
+    const profiles: Record<string, unknown>[] = [];
     vi.spyOn(NostrRelaySet, 'fromRelayUrls').mockReturnValue({
       relays: new Set([
         {
           status: NostrRelayStatus.CONNECTED,
           url: 'wss://group.example/',
-          publish: async (event: { created_at: number }) => {
+          publish: async (event: { created_at: number; content: string }) => {
+            profiles.push(JSON.parse(event.content));
             published.push(event.created_at);
             return true;
           },
@@ -94,6 +98,9 @@ describe('relayPublishRuntime', () => {
     await runtime.publishGroupMetadata(signer.pubkey, { name: 'First' });
     await runtime.publishGroupMetadata(signer.pubkey, { name: 'Second' });
     expect(published).toEqual([restored + 1, restored + 2]);
+    expect(profiles[1]).toMatchObject({ pinned: 'c'.repeat(64), pinned_created_at: 100 });
+    await runtime.publishGroupMetadata(signer.pubkey, { name: 'Third', pinned: '', pinned_created_at: 0 });
+    expect(profiles[2].pinned).toBe('');
   });
 
   it('waits for every connected relay to settle before finalizing publish statuses', async () => {

@@ -805,6 +805,7 @@ describe('privateStateRuntime', () => {
       }),
     );
     expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
+      metaBase: groupContact.meta,
       meta: expect.objectContaining({
         owner_public_key: 'f'.repeat(64),
         group_members: [
@@ -911,6 +912,7 @@ describe('privateStateRuntime', () => {
     expect(result.didChange).toBe(true);
     expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledTimes(2);
     expect(serviceMocks.contactsService.updateContact).toHaveBeenLastCalledWith(7, {
+      metaBase: groupContact.meta,
       meta: expect.objectContaining({
         owner_public_key: 'f'.repeat(64),
         group_members: [
@@ -1143,6 +1145,7 @@ describe('privateStateRuntime', () => {
     expect(result.refreshedProfileCount).toBe(1);
     expect(deps.fetchContactPreviewByPublicKey).toHaveBeenCalledTimes(2);
     expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
+      metaBase: groupContact.meta,
       meta: expect.objectContaining({
         group_members: [
           expect.objectContaining({
@@ -1226,6 +1229,7 @@ describe('privateStateRuntime', () => {
 
     expect(deps.refreshContactRelayList).not.toHaveBeenCalled();
     expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
+      metaBase: groupContact.meta,
       meta: expect.objectContaining({
         owner_public_key: 'f'.repeat(64),
         group_private_key_encrypted: 'encrypted-group-secret-event',
@@ -1318,6 +1322,10 @@ describe('privateStateRuntime', () => {
     ).resolves.toBe(true);
 
     expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
+      metaBase: {
+        last_seen_incoming_activity_at: '2026-01-01T00:00:00.000Z',
+        last_seen_incoming_activity_event_id: 'older-event',
+      },
       meta: {
         last_seen_incoming_activity_at: cursorAt,
         last_seen_incoming_activity_event_id: 'cursor-event',
@@ -1420,6 +1428,10 @@ describe('privateStateRuntime', () => {
     ).resolves.toBe(true);
 
     expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
+      metaBase: {
+        last_seen_incoming_activity_at: '2026-01-01T00:00:00.000Z',
+        last_seen_incoming_activity_event_id: 'older-event',
+      },
       meta: {
         last_seen_incoming_activity_at: '2026-01-03T00:00:00.000Z',
         last_seen_incoming_activity_event_id: 'cursor-event',

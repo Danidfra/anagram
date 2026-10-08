@@ -1020,6 +1020,47 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     }
     return context.active() ? results : [];
   }
+  async function readMessage(
+    id: string,
+    context: NonNullable<ReturnType<typeof searchContext>>,
+    fetchMissing = true,
+  ) {
+    if (!context.active() || !/^[a-f0-9]{64}$/.test(id)) return null;
+    let target = await context.db.message(context.address, id);
+    if (!target && fetchMissing && context.active()) {
+      const room =
+        get(state).ancestors.find((room) => room.address === context.address) ?? get(state).room!;
+      const result = await query(
+        [{ kinds: [9], ids: [id], limit: 1 }],
+        await relayUrls(room.relays),
+        8,
+      );
+      if (!context.active()) return null;
+      const saved = await cacheEvents(
+        context.address,
+        result.events.map((event) => receivedMessage(event)),
+        context.db,
+      );
+      target = saved.find((event) => event.id === id);
+    }
+    return context.active() && target && context.textFor(target) !== null ? target : null;
+  }
+  async function pinnedMessage(fetchMissing = true): Promise<Message | null> {
+    const room = get(state).room;
+    const context = searchContext();
+    if (!room?.pinned || get(state).history || !context) return null;
+    const target = await readMessage(room.pinned, context, fetchMissing);
+    if (!target) return null;
+    const [hydrated] = await hydrate(context.address, [target], context.db);
+    return context.active() ? publicMessageState(hydrated, room, account) : null;
+  }
+  async function pinMessage(id: string | null) {
+    const room = get(state).room;
+    if (!room || get(state).history || room.owner !== account)
+      throw new Error('Only the current group owner can pin messages.');
+    if (id) await targetMessage(id);
+    await update({ pinned: id ?? '' }, room.event.id!);
+  }
   async function jumpToMessage(id: string, signal?: AbortSignal) {
     const context = searchContext(signal);
     if (!context || !context.active()) return null;
@@ -1027,23 +1068,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     const active = () => context.active() && revision === windowRevision;
     state.update((s) => ({ ...s, loading: true }));
     try {
-      let target = await context.db.message(context.address, id);
-      if (!target && active() && /^[a-f0-9]{64}$/.test(id)) {
-        const room =
-          get(state).ancestors.find((room) => room.address === context.address) ?? get(state).room!;
-        const result = await query(
-          [{ kinds: [9], ids: [id], limit: 1 }],
-          await relayUrls(room.relays),
-          8,
-        );
-        if (!active()) return null;
-        const saved = await cacheEvents(
-          context.address,
-          result.events.map((event) => receivedMessage(event)),
-          context.db,
-        );
-        target = saved.find((event) => event.id === id);
-      }
+      const target = await readMessage(id, context);
       if (!active() || !target || context.textFor(target) === null) return null;
       const cursor = { created_at: target.created_at, id: target.id! };
       const [before, after] = await Promise.all([
@@ -1210,7 +1235,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     input: Partial<
       Pick<
         PublicRoom,
-        'name' | 'about' | 'picture' | 'trusted' | 'blocked' | 'successor' | 'relays'
+        'name' | 'about' | 'picture' | 'trusted' | 'blocked' | 'successor' | 'relays' | 'pinned'
       >
     >,
     expectedId: string,
@@ -1258,6 +1283,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         !next.name.trim() ||
         next.name.length > 100 ||
         next.about.length > 2000 ||
+        (next.pinned && !/^[a-f0-9]{64}$/.test(next.pinned)) ||
         next.blocked.includes(owner) ||
         [...next.trusted, ...next.blocked].some((k) => !/^[a-f0-9]{64}$/.test(k)) ||
         next.trusted.length > 1024 ||
@@ -1616,6 +1642,8 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     react,
     searchMessages,
     jumpToMessage,
+    pinnedMessage,
+    pinMessage,
     older,
     newer,
     history,

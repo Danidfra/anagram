@@ -158,11 +158,11 @@ describe('mute list runtime', () => {
     );
     expect(contactsServiceMock.updateContact).toHaveBeenCalledWith(
       Number.parseInt(PUBKEY_B[0] ?? '0', 16),
-      { meta: { muted: true } }
+      { metaBase: {}, meta: { muted: true } }
     );
     expect(contactsServiceMock.updateContact).toHaveBeenCalledWith(
       Number.parseInt(PUBKEY_C[0] ?? '0', 16),
-      { meta: { name: 'Carol' } }
+      { metaBase: { name: 'Carol', muted: true }, meta: { name: 'Carol' } }
     );
     expect(contactsServiceMock.createContact).toHaveBeenCalledWith({
       public_key: PUBKEY_D,
