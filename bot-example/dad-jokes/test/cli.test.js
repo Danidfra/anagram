@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateSecretKey } from 'nostr-tools';
+import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
 import { wrapEvent, unwrapEvent } from 'nostr-tools/nip59';
 import { now } from '../runtime.js';
 import { relay, until } from './relay.js';
@@ -19,6 +19,11 @@ test(
     const cwd = fileURLToPath(new URL('../', import.meta.url));
     mkdirSync(`${cwd}data`, { recursive: true });
     const dir = mkdtempSync(`${cwd}data/cli-test-`);
+    const key = generateSecretKey();
+    const config = `${dir}/bot.env`;
+    writeFileSync(config, `NSEC=${nip19.nsecEncode(key)}\nNAME="Custom Joke Bot"\n`, {
+      mode: 0o600,
+    });
     let child;
     t.after(async () => {
       if (child?.exitCode === null && child.signalCode === null) {
@@ -30,10 +35,13 @@ test(
     });
     const start = async () => {
       let output = '';
-      child = spawn(process.execPath, ['bot.js'], {
+      const env = { ...process.env };
+      delete env.NSEC;
+      delete env.NAME;
+      child = spawn(process.execPath, [`--env-file=${config}`, 'bot.js'], {
         cwd,
         env: {
-          ...process.env,
+          ...env,
           DATA_DIR: dir,
           RELAYS: local.url,
           PICTURE_URL: 'https://example.org/dad.png',
@@ -46,7 +54,9 @@ test(
       child.stdout.on('data', (data) => {
         output += data.toString();
       });
-      child.stderr.on('data', () => {});
+      child.stderr.on('data', (data) => {
+        output += data.toString();
+      });
       await until(() => output.includes('Profile and DM inbox published.'), 'CLI startup');
       assert.ok(!output.includes('nsec1'), 'private key must never be logged');
       return output.match(/npub1[023456789acdefghjklmnpqrstuvwxyz]+/)[0];
@@ -60,6 +70,9 @@ test(
     };
     const identity = await start();
     const profile = [...local.events.values()].find((e) => e.kind === 0);
+    assert.equal(identity, nip19.npubEncode(getPublicKey(key)));
+    assert.equal(JSON.parse(profile.content).name, 'Custom Joke Bot');
+    assert.equal(JSON.parse(profile.content).display_name, 'Custom Joke Bot');
     assert.equal(JSON.parse(profile.content).nip05, 'dad@example.org');
     const sender = generateSecretKey();
     local.emit(
@@ -118,6 +131,7 @@ test(
       );
     }
     await stop();
+    writeFileSync(config, 'NAME="Custom Joke Bot"\n');
     assert.equal(await start(), identity);
     await stop();
   },

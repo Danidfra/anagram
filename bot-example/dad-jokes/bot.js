@@ -3,7 +3,18 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { getPublicKey, nip19 } from 'nostr-tools';
-import { bytes, Network, newer, now, sign, State, unwrap, valid, single } from './runtime.js';
+import {
+  bytes,
+  ConfigurationError,
+  Network,
+  newer,
+  now,
+  sign,
+  State,
+  unwrap,
+  valid,
+  single,
+} from './runtime.js';
 import { directMessage } from './direct-messages.js';
 import { acceptTicket, privateMessage, readTicket } from './private-groups.js';
 import { acceptRoom, joinPublic, parseRoom, publicMessage } from './public-groups.js';
@@ -26,11 +37,13 @@ export class DadBot {
     net,
     jokes,
     cooldown = 5,
+    name = 'Dad Jokes',
     log = console.log,
     onFatal = (error) => {
       throw error;
     },
   }) {
+    this.name = name.trim() || 'Dad Jokes';
     this.store = store;
     this.state = store.data;
     this.key = store.key;
@@ -217,7 +230,7 @@ export class DadBot {
   }
   async start() {
     this.started = true;
-    this.log(`Dad Jokes: ${nip19.npubEncode(this.pubkey)}`);
+    this.log(`${this.name}: ${nip19.npubEncode(this.pubkey)}`);
     this.setWatch(
       'inbox',
       this.relays,
@@ -331,8 +344,8 @@ export async function publishProfile(bot, { pictureURL = DEFAULT_PICTURE_URL, ni
       0,
       [],
       JSON.stringify({
-        name: 'Dad Jokes',
-        display_name: 'Dad Jokes',
+        name: bot.name,
+        display_name: bot.name,
         bot: true,
         ...(nip05.trim() ? { nip05: nip05.trim() } : {}),
         about: 'DM me for a dad joke, or mention me in an Anagram group.',
@@ -346,7 +359,9 @@ export async function publishProfile(bot, { pictureURL = DEFAULT_PICTURE_URL, ni
 
 export async function main() {
   process.umask(0o077);
-  const store = new State(process.env.DATA_DIR || resolve(HERE, 'data'));
+  const store = new State(process.env.DATA_DIR || resolve(HERE, 'data'), {
+    nsec: process.env.NSEC,
+  });
   let bot;
   try {
     const net = new Network(
@@ -371,7 +386,7 @@ export async function main() {
       process.exitCode = 1;
       void shutdown();
     };
-    bot = new DadBot({ store, net, jokes, cooldown, onFatal: fatal });
+    bot = new DadBot({ store, net, jokes, cooldown, name: process.env.NAME, onFatal: fatal });
     let profileTimer,
       publishing = false,
       closing = false;
@@ -424,9 +439,11 @@ export async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  main().catch(() => {
+  main().catch((error) => {
     console.error(
-      'Cannot start Dad Jokes. Check configuration and state.json; existing keys are never replaced.',
+      error instanceof ConfigurationError
+        ? error.message
+        : 'Cannot start Dad Jokes. Check configuration and state.json; existing keys are never replaced.',
     );
     process.exitCode = 1;
   });

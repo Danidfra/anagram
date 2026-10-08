@@ -116,6 +116,36 @@ test('identity survives restarts, secret permissions, exclusive lock and invalid
   assert.equal(readFileSync(store.file, 'utf8'), '{broken');
 });
 
+test('configured identity is validated, persisted and never mixed with another account', (t) => {
+  const dir = mkdtempSync(`${parent}configured-`);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const key = generateSecretKey();
+  const nsec = nip19.nsecEncode(key);
+  for (const invalid of [
+    'nsec1invalid',
+    nip19.npubEncode(getPublicKey(key)),
+    nip19.nsecEncode(new Uint8Array(32)),
+  ])
+    assert.throws(() => new State(dir, { nsec: invalid }), /NSEC must be a valid nsec/);
+  const store = new State(dir, { nsec: ` ${nsec} ` });
+  assert.equal(getPublicKey(store.key), getPublicKey(key));
+  store.data.seen.example = now();
+  store.save();
+  store.close();
+  const original = readFileSync(store.file, 'utf8');
+  assert.throws(
+    () => new State(dir, { nsec: nip19.nsecEncode(generateSecretKey()) }),
+    /NSEC differs from the saved identity/,
+  );
+  assert.equal(readFileSync(store.file, 'utf8'), original);
+  for (const configured of [nsec, '', '  ']) {
+    const restored = new State(dir, { nsec: configured });
+    assert.equal(getPublicKey(restored.key), getPublicKey(key));
+    assert.ok(restored.data.seen.example);
+    restored.close();
+  }
+});
+
 test('NIP-59 interoperates with nostr-tools and rejects forged sender bindings and bad signatures', (t) => {
   const { bot } = setup(t);
   const user = generateSecretKey();

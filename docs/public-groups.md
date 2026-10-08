@@ -20,7 +20,7 @@ The owner can add one `["pinned", "<kind:9 event ID>"]` tag to the signed room d
 
 ## Relays and ownership
 
-- Reads and writes use preferred room relays plus app relays. One publish acknowledgement is enough; signatures prove authorship, not that a relay returned the latest policy.
+- Reads and writes use preferred room relays plus app relays. One responding relay is enough for reads, and one publish acknowledgement is enough for writes. Clients retain the newest verified room definition when a relay returns older or empty metadata; signatures prove authorship, not that a relay returned the latest policy.
 - Transfers require the old owner's signed `successor` and the new owner's reciprocal `predecessor`. Historical messages keep their original addresses and authors.
 
 Trust, blocking and transfer tags are tags used by anagram specifically. NIP-72 approval moderation and NIP-29 are not used. Anyone can read public events; client-side blocking cannot prevent publication through other clients.

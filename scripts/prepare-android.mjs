@@ -11,6 +11,12 @@ export function prepareAndroid(root = new URL('../', import.meta.url)) {
       .replace(/compileSdk = \d+/, 'compileSdk = 36')
       .replace(/targetSdk = \d+/, 'targetSdk = 36')
       .replace(/optimization\s*\{\s*enable = true\s*\}/, 'isMinifyEnabled = true')
+      // AGP 8 needs the default Android rules explicitly. Without them R8
+      // removes enum values() used reflectively by Jackson during Tauri startup.
+      .replace(
+        /proguardFiles\(\s*(?=\*fileTree)/,
+        'proguardFiles(\n                getDefaultProguardFile("proguard-android-optimize.txt"),\n                ',
+      )
       .replace(
         /(dependencies \{\n)(?!    implementation\("com.squareup.okhttp3:okhttp:4.12.0"\))/,
         '$1    implementation("com.squareup.okhttp3:okhttp:4.12.0")\n',

@@ -2,10 +2,10 @@
 
 Push a version tag to run [release.yml](../.github/workflows/release.yml). Versions are derived from the tag; no manual version-file edits are required.
 
-| Tag | Result |
-| --- | --- |
-| `v0.9.1` | Published release |
-| `v0.9.1-beta.1` | Published prerelease |
+| Tag                           | Result                             |
+| ----------------------------- | ---------------------------------- |
+| `v0.9.1`                      | Published release                  |
+| `v0.9.1-beta.1`               | Published prerelease               |
 | `v0.9.1-rc1` or `v0.9.1-rc.1` | Draft prerelease, including reruns |
 
 The release waits for all builds and checks, then attaches Windows `.exe`, Intel/Apple Silicon `.dmg`, Linux `.AppImage`, Android `.apk`, `anagram-web.zip`, and `SHA256SUMS.txt`. Failed builds leave workflow artifacts. No automatic desktop updater is configured.
@@ -14,11 +14,11 @@ The release waits for all builds and checks, then attaches Windows `.exe`, Intel
 
 Configure repository **Actions secrets**. Never commit signing keys or certificates.
 
-| Platform | Secrets |
-| --- | --- |
-| Android | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` |
-| iPhone | `APPLE_TEAM_ID`, `IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION` |
-| macOS | `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`; optionally `APPLE_SIGNING_IDENTITY` |
+| Platform | Secrets                                                                                                                               |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Android  | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`                                   |
+| iPhone   | `APPLE_TEAM_ID`, `IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`                                                |
+| macOS    | `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`; optionally `APPLE_SIGNING_IDENTITY` |
 
 **Android:** encode the existing keystore as base64 and keep the same key for updates. Tagged releases require signing. Manual builds without secrets produce an unsigned APK. Signatures and 16 KB alignment are checked before upload.
 
@@ -36,4 +36,12 @@ Run **Release** from the Actions tab to validate all active platforms without pu
 
 Run **Android APK** for an Android-only build. Native projects are generated from committed sources. Mobile versions omit RC suffixes, retain the full tag in asset names, and use the workflow run number as the build number. Reruns reuse that number.
 
-Windows/macOS/iOS installers and real-device behavior require checks on their respective platforms. Local web tests do not validate them.
+## Packaged-app validation
+
+Release publication waits for these checks on the actual packages:
+
+- **Linux / Windows:** extract the AppImage or install the NSIS executable; log in through the native WebView, read a profile, send and receive encrypted DMs, reconnect after a relay disconnect, and restore login/history after restarting. A local relay validates signed events; an unavailable extra relay must not block first login. A separate read-only check requires real EOSE from one default public WSS relay in the packaged WebView.
+- **Android:** install the release APK on a fresh Android 15 emulator, require rendered login controls, log in with a disposable key, connect to at least one default WSS relay, and verify login/connectivity after restarting. This is read-only on public relays; no test profile or messages are published. A total public-relay outage can fail the Android and desktop WSS checks.
+- **macOS:** verify and mount each architecture's DMG, copy the app, verify its signature, and require a surviving process and rendered Login/Create Account controls, recognized from the native window screenshot. This does not validate relay traffic on macOS.
+
+Failed checks block publication. Logs, screenshots and result files are retained as `smoke-*` / `android-startup-diagnostics` workflow artifacts. Tests use disposable accounts and never require a developer's saved keys. iOS remains paused; physical-device, call and notification behavior still need platform testing. Local web tests alone do not validate installers.

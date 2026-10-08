@@ -121,9 +121,22 @@ export function mentions(content, pubkey) {
   return false;
 }
 
+export class ConfigurationError extends Error {}
+
 // One process owns an atomic, permission-restricted state file. Never silently replace a bad key.
 export class State {
-  constructor(directory) {
+  constructor(directory, { nsec = '' } = {}) {
+    let configuredKey;
+    if (nsec.trim()) {
+      try {
+        const decoded = nip19.decode(nsec.trim());
+        if (decoded.type !== 'nsec') throw new Error();
+        configuredKey = decoded.data;
+        getPublicKey(configuredKey);
+      } catch {
+        throw new ConfigurationError('NSEC must be a valid nsec private key.');
+      }
+    }
     this.directory = resolve(directory);
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     chmodSync(this.directory, 0o700);
@@ -159,9 +172,13 @@ export class State {
         if (decoded.type !== 'nsec') throw new Error('Invalid saved nsec.');
         this.key = decoded.data;
         getPublicKey(this.key); // Validate the scalar too.
+        if (configuredKey && nip19.nsecEncode(configuredKey) !== nip19.nsecEncode(this.key))
+          throw new ConfigurationError(
+            'NSEC differs from the saved identity. Use its original NSEC or a different DATA_DIR for the new account.',
+          );
         chmodSync(this.file, 0o600);
       } else {
-        this.key = generateSecretKey();
+        this.key = configuredKey ?? generateSecretKey();
         this.data = {
           version: 1,
           nsec: nip19.nsecEncode(this.key),

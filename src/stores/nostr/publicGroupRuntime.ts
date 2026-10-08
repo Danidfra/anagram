@@ -199,14 +199,14 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     });
     return [...new Set(normalized)];
   }
-  // Public reads need a real completed response containing the signed room, not
-  // availability of every replica, including when an owner edits the room.
+  // Public reads use real completed responses from available replicas. A
+  // timeout is never EOSE evidence or proof of complete history coverage.
   function query(
     filters: NostrFilter[],
     urls: string[],
     max = 400,
     accept?: (events: ClientEvent[]) => boolean,
-    allowPartial = false,
+    allowPartial = true,
   ): Promise<{ events: ClientEvent[]; complete: boolean }> {
     return new Promise((resolve, reject) => {
       const completed = new Map<string, ClientEvent>();
@@ -218,6 +218,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         new Error(
           `Public group relay checks did not complete: ${[...failedRelays, ...pendingRelays].join(', ')}. Check your connection or relay settings, then retry.`,
         );
+      let partialTimer: ReturnType<typeof setTimeout> | undefined;
       let settled = false,
         remaining = urls.length,
         failed = false,
@@ -226,6 +227,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearTimeout(partialTimer);
         queries.delete(cancel);
         subscriptions.forEach((sub) => sub.stop());
         error
@@ -253,9 +255,14 @@ export function createPublicGroupRuntime(deps: Dependencies) {
           } else failed = true;
           if (completed.size > max) {
             finish(new Error('Too many public group events. Narrow the history request.'));
-          } else if (accept?.([...completed.values()])) finish();
+          } else if (ok && accept?.([...completed.values()])) finish();
           else if (!remaining) {
             finish(failed && !(allowPartial && completedRelays) ? relayReadError() : undefined);
+          } else if (allowPartial && completedRelays && partialTimer === undefined) {
+            // Collect nearby replies, but a silent replica must not hold up a
+            // short page or missing-message lookup for the full network timeout.
+            // Partial results never claim complete history coverage.
+            partialTimer = setTimeout(() => finish(), 500);
           }
         };
         subscriptions.push(
@@ -296,14 +303,16 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       urls,
       32,
       (events) =>
+        Boolean(cachedPolicy) ||
         events.some((event) => {
           try {
-            const candidate = parsePublicRoom(event.rawEvent(), address.address);
-            return !cachedPolicy || !newerRoom(cachedPolicy, candidate);
+            parsePublicRoom(event.rawEvent(), address.address);
+            return true;
           } catch {
             return false;
           }
         }),
+      false, // Without a cached definition, wait for a relay holding the signed room.
     );
     const rooms = events.flatMap((e) => {
       try {
@@ -312,17 +321,15 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         return [];
       }
     });
-    if (!rooms.length)
-      throw new Error('Public group not found or its signed definition is invalid.');
-    const result = rooms.reduce((a, b) => (newerRoom(a, b) ? a : b));
     assertSession(owner);
     const saved = await db.get(address.address);
-    if (saved) {
-      const cached = parsePublicRoom(saved.room.event, address.address);
-      if (newerRoom(cached, result))
-        throw new Error('Relays returned an older group policy. Showing the last verified policy.');
-    }
-    return result;
+    assertSession(owner);
+    // Relays are replicas: an empty or older response does not revoke the
+    // newest signed definition already saved on this device.
+    if (saved) rooms.push(parsePublicRoom(saved.room.event, address.address));
+    if (!rooms.length)
+      throw new Error('Public group not found or its signed definition is invalid.');
+    return rooms.reduce((a, b) => (newerRoom(a, b) ? a : b));
   }
   async function saveRoom(room: PublicRoom, joined = true, successor?: string, owner = account) {
     assertSession(owner);
@@ -1048,6 +1055,10 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         [{ kinds: [9], ids: [id], limit: 1 }],
         await relayUrls(room.relays),
         8,
+        (events) =>
+          events.some(
+            (event) => event.id === id && validRoomMessage(event.rawEvent(), context.address),
+          ),
       );
       if (!context.active()) return null;
       const saved = await cacheEvents(

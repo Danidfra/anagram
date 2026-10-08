@@ -66,13 +66,14 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             bundles: dmg
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             bundles: dmg
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bundles: appimage
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -86,7 +87,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev xdg-utils webkit2gtk-driver xvfb dbus-x11 gnome-keyring
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
@@ -118,6 +119,38 @@ jobs:
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: desktop-[platform]-[arch]-[bundle]
+      - name: Install native test driver
+        if: runner.os != 'macOS'
+        run: cargo install tauri-driver --version 2.1.0 --locked
+      - name: Test packaged Linux app
+        if: runner.os == 'Linux'
+        env:
+          ANAGRAM_DISPOSABLE_TEST: '1'
+        run: |
+          mapfile -t packages < <(find src-tauri/target -name '*.AppImage' -type f)
+          [[ ${#packages[@]} -eq 1 ]]
+          xvfb-run -a -s "-screen 0 1920x1440x24" dbus-run-session -- bash scripts/release-smoke/linux.sh "${packages[0]}"
+      - name: Test installed Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem src-tauri/target -Recurse -Filter '*-setup.exe')
+          if ($packages.Count -ne 1) { throw 'Expected one NSIS installer' }
+          ./scripts/release-smoke/windows.ps1 -Installer $packages[0].FullName
+      - name: Test installed macOS app
+        if: runner.os == 'macOS'
+        run: |
+          packages=($(find src-tauri/target -name '*.dmg' -type f))
+          [[ ${#packages[@]} -eq 1 ]]
+          bash scripts/release-smoke/macos.sh "${packages[0]}"
+      - name: Upload packaged-app diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.target }}
+          path: desktop-smoke-results/
+          if-no-files-found: ignore
+          retention-days: 14
   android:
     needs: verify
     uses: ./.github/workflows/android.yml

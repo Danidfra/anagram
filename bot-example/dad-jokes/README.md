@@ -16,6 +16,8 @@ On first start it saves a new identity, prints its **npub**, publishes a **Dad J
 
 For configuration, copy `.env.example` to `.env` and uncomment the settings you need. `RELAYS` should overlap the Anagram users' app relays. The default relay list matches Anagram; room and inbox relay hints are also used.
 
+Set `NSEC=nsec1...` to use your own private key and `NAME="Your Bot Name"` to change the profile name. Without `NSEC`, the bot reuses its saved identity or generates one on first start. Without `NAME`, it uses **Dad Jokes**. A configured key must match the saved identity; use a different `DATA_DIR` to switch accounts without mixing group state. Keep `.env` private (`chmod 600 .env`). Restart to apply changes.
+
 Set `NIP05=dad@your-domain.example` in `.env` to include that identifier in the bot profile. The domain must serve `/.well-known/nostr.json` mapping `dad` to the bot’s hex public key; setting the variable alone does not verify the identifier. Restart the bot to publish profile changes.
 
 ## Talk to it

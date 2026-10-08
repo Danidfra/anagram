@@ -1364,3 +1364,87 @@ for (const width of [1280, 390]) {
     await expect(suggestions).toHaveCount(0);
   });
 }
+
+test('public chat stays usable with a stalled replica and empty cached-policy lookups', async ({
+  page,
+}) => {
+  const secondary = 'wss://stalled-public.example.org/';
+  let emptyMetadata = false;
+  let emptyLookups = 0;
+  await page.routeWebSocket(secondary, (socket) => socket.onMessage(() => {}));
+  await page.routeWebSocket(relay, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((raw) => {
+      const frame = JSON.parse(String(raw));
+      if (emptyMetadata && frame[0] === 'REQ') {
+        const filters = frame
+          .slice(2)
+          .filter((filter: { kinds?: number[] }) => !filter.kinds?.includes(34550));
+        if (filters.length !== frame.length - 2) emptyLookups++;
+        if (!filters.length) socket.send(JSON.stringify(['EOSE', frame[1]]));
+        else server.send(JSON.stringify(['REQ', frame[1], ...filters]));
+      } else server.send(raw);
+    });
+  });
+  const owner = await login(page);
+  const slug = `available-${owner.pubkey.slice(0, 12)}`;
+  const address = `34550:${owner.pubkey}:${slug}`;
+  const now = Math.floor(Date.now() / 1000);
+  const messages = Array.from({ length: 55 }, (_, n) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: now - 100 + n,
+        tags: [['a', address]],
+        content: `Available message ${n}`,
+      },
+      owner.key,
+    ),
+  );
+  for (const message of messages) await publish(message);
+  await publish(
+    finalizeEvent(
+      {
+        kind: 34550,
+        created_at: now,
+        content: '',
+        tags: [
+          ['d', slug],
+          ['name', 'Available public chat'],
+          ['anagram-room', '1'],
+          ['relay', relay],
+          ['relay', secondary],
+          ['pinned', messages[0].id],
+        ],
+      },
+      owner.key,
+    ),
+  );
+  const link = nip19.naddrEncode({
+    kind: 34550,
+    pubkey: owner.pubkey,
+    identifier: slug,
+    relays: [relay],
+  });
+  await navigateInApp(page, `/public/${link}`);
+  await expect(page.getByTestId('pinned-message')).toContainText('Available message 0', {
+    timeout: 5000,
+  });
+  await page.getByRole('button', { name: 'Go to pinned message' }).click();
+  await expect(
+    page.getByTestId('public-message').filter({ hasText: 'Available message 0' }),
+  ).toBeVisible();
+
+  emptyMetadata = true;
+  await page.reload();
+  const input = page.getByLabel('Public message', { exact: true });
+  await expect(input).toBeEnabled({ timeout: 5000 });
+  expect(emptyLookups).toBeGreaterThan(0);
+  await input.fill('The healthy app relay is enough');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(input).toHaveValue('', { timeout: 5000 });
+  await expect(
+    page.getByTestId('public-message').filter({ hasText: 'The healthy app relay is enough' }),
+  ).toBeVisible();
+  await expect(page.getByText(/Public group relay checks did not complete/)).toHaveCount(0);
+});

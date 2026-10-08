@@ -7,7 +7,15 @@ import { prepareAndroid } from '../../scripts/prepare-android.mjs';
 it('regenerates Android notification sources, permissions and tests without duplicate declarations', () => {
   const dir = mkdtempSync(join(tmpdir(), 'anagram-android-scaffold-'));
   const fixtures = {
-    'app/build.gradle.kts': 'compileSdk = 37\ntargetSdk = 37\ndependencies {\n}\n',
+    'app/build.gradle.kts': `compileSdk = 37
+      targetSdk = 37
+      optimization { enable = true }
+      proguardFiles(
+        *fileTree(".") { include("**/*.pro") }.files.toTypedArray()
+      )
+      dependencies {
+      }
+      `,
     'build.gradle.kts': 'com.android.tools.build:gradle:8.13.2',
     'buildSrc/build.gradle.kts': 'com.android.tools.build:gradle:8.13.2',
     'gradle/wrapper/gradle-wrapper.properties': 'gradle-8.14.3-bin.zip',
@@ -40,6 +48,8 @@ it('regenerates Android notification sources, permissions and tests without dupl
     expect(manifest).toContain('android:name=".RelayNotificationService" android:exported="false"');
     expect(manifest).toContain('android:allowBackup="false"');
     expect(gradle).toContain('com.squareup.okhttp3:okhttp:4.12.0');
+    expect(gradle).toContain('isMinifyEnabled = true');
+    expect(gradle).toContain('getDefaultProguardFile("proguard-android-optimize.txt")');
     expect(readFileSync(join(gen, 'app/secure-keys.pro'), 'utf8')).toContain(
       'AndroidRelayNotificationsPlugin',
     );

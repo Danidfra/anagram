@@ -312,7 +312,7 @@ it('owner edits succeed through a healthy relay without waiting for stalled repl
   ]);
 });
 
-it('never downgrades cached moderation when a replica replays an old room', async () => {
+it('keeps newer cached moderation usable when a replica replays an old room', async () => {
   const key = generateSecretKey();
   const blocked = getPublicKey(generateSecretKey());
   const current = room(key, 'policy', [['blocked', blocked]], 20);
@@ -322,8 +322,9 @@ it('never downgrades cached moderation when a replica replays an old room', asyn
   events.splice(0, events.length, room(key, 'policy', [], 10));
   await runtime.open(link);
   expect(get(runtime.state).room?.blocked).toEqual([blocked]);
-  expect(get(runtime.state).stale).toBe(true);
-  expect(get(runtime.state).error).toMatch(/older/);
+  expect(get(runtime.state).stale).toBe(false);
+  expect(get(runtime.state).error).toBe('');
+  await runtime.send('Still using the current signed policy');
 });
 
 it('pages history through a healthy replica without a stalled replica blocking a full page', async () => {
@@ -492,13 +493,22 @@ it('keeps the verified successor and saved messages visible when reopening an ol
   const target = `34550:${getPublicKey(next)}:offline-target`;
   const from = room(old, 'offline-source', [['successor', target]]);
   const destination = room(next, 'offline-target', [['predecessor', source]]);
-  const { runtime, events } = setup([from, destination], next);
+  let online = true;
+  const { runtime, events, listeners } = setup([from, destination], next, () => online);
   const link = encodeRoomLink(parsePublicRoom(from));
   await runtime.open(link);
   await runtime.send('Saved in the successor');
   runtime.stop();
   events.length = 0;
-  await runtime.open(link);
+  online = false;
+  const reopening = runtime.open(link);
+  const lookups = () =>
+    [...listeners].filter((entry) =>
+      entry.filters.every((filter) => filter.kinds?.includes(34550)),
+    );
+  await vi.waitFor(() => expect(lookups()).toHaveLength(1));
+  lookups().forEach((entry) => entry.options.onClose?.());
+  await reopening;
   expect(get(runtime.state).room?.address).toBe(target);
   expect(get(runtime.state).ancestors.map((r) => r.address)).toEqual([source]);
   expect(get(runtime.state).messages.map((e) => e.content)).toContain('Saved in the successor');
@@ -1259,4 +1269,70 @@ it('still reports genuine local storage failures when saving live public message
     expect(get(runtime.state).error).toBe('Could not save public messages. Refresh to retry.'),
   );
   expect(get(runtime.state).messages).toHaveLength(0);
+});
+
+it('keeps a cached public group writable when one relay answers empty and another stalls', async () => {
+  const key = generateSecretKey();
+  const definition = room(key, 'cached-empty-replica', [['relay', 'wss://stalled.example.org/']]);
+  const { runtime, events } = setup([definition], key, (url) => !url.includes('stalled'));
+  const link = encodeRoomLink(parsePublicRoom(definition));
+  await runtime.open(link);
+  events.length = 0;
+  await runtime.open(link);
+  expect(get(runtime.state).room?.event.id).toBe(definition.id);
+  expect(get(runtime.state).stale).toBe(false);
+  expect(get(runtime.state).error).toBe('');
+  await runtime.send('One responding replica is enough');
+});
+
+it('loads a pin and jumps to its message through one completed replica', async () => {
+  const key = generateSecretKey();
+  const address = `34550:${getPublicKey(key)}:pin-replicas`;
+  const messages = Array.from({ length: 55 }, (_, n) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 100 + n,
+        content: `Pin replica message ${n}`,
+        tags: [['a', address]],
+      },
+      key,
+    ),
+  );
+  const definition = room(key, 'pin-replicas', [
+    ['relay', 'wss://stalled.example.org/'],
+    ['pinned', messages[0].id],
+  ]);
+  const { runtime } = setup([definition, ...messages], key, (url) => !url.includes('stalled'));
+  await runtime.open(encodeRoomLink(parsePublicRoom(definition)));
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(50));
+  expect(get(runtime.state).messages.some((event) => event.id === messages[0].id)).toBe(false);
+  expect((await runtime.pinnedMessage())?.text).toBe('Pin replica message 0');
+  expect((await runtime.jumpToMessage(messages[1].id))?.id).toBe(messages[1].id);
+  expect(get(runtime.state).error).toBe('');
+});
+
+it('returns a short history page without waiting for a stalled replica or claiming full coverage', async () => {
+  const key = generateSecretKey();
+  const definition = room(key, 'short-history', [['relay', 'wss://stalled.example.org/']]);
+  const address = parsePublicRoom(definition).address;
+  const messages = Array.from({ length: 55 }, (_, n) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 100 + n,
+        content: `Short page message ${n}`,
+        tags: [['a', address]],
+      },
+      key,
+    ),
+  );
+  const { runtime } = setup([definition, ...messages], key, (url) => !url.includes('stalled'));
+  await runtime.open(encodeRoomLink(parsePublicRoom(definition)));
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(50));
+  await runtime.older();
+  expect(get(runtime.state).messages).toHaveLength(55);
+  expect(get(runtime.state).messages[0].content).toBe('Short page message 0');
+  expect(get(runtime.state).more).toBe(true);
+  expect(get(runtime.state).error).toBe('');
 });

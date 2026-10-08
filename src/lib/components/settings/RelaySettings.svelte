@@ -196,6 +196,11 @@
             <div class="relay-badges">
               <span class="relay-avatar"><Icon name="satellite_alt" /></span><span
                 class="connection-dot"
+                role="img"
+                aria-label={$state.version >= 0 &&
+                nostr.getRelayConnectionState(relay.url) === 'connected'
+                  ? $translate('common.connected')
+                  : 'Disconnected'}
                 class:connected={$state.version >= 0 &&
                   nostr.getRelayConnectionState(relay.url) === 'connected'}
               ></span>
