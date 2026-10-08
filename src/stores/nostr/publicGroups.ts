@@ -31,8 +31,10 @@ export function decodeRoomLink(value: string): RoomAddress {
   let input = value.trim();
   if (/^https?:\/\//.test(input)) {
     const url = new URL(input);
-    if (!url.pathname.startsWith('/public/')) throw new Error('Not a public group link.');
-    input = decodeURIComponent(url.pathname.slice(8));
+    if (/^\/join\/chat(?:\.html)?\/?$/.test(url.pathname) && url.hash.startsWith('#/public/'))
+      input = decodeURIComponent(url.hash.slice(9));
+    else if (url.pathname.startsWith('/public/')) input = decodeURIComponent(url.pathname.slice(8));
+    else throw new Error('Not a public group link.');
   }
   input = input.replace(/^nostr:/, '');
   if (input.length > 5000) throw new Error('Public group link is too long.');
@@ -60,7 +62,7 @@ export function publicGroupShareLink(room: RoomAddress): string {
     !location.hostname.endsWith('tauri.localhost')
       ? location.origin
       : 'https://anagram.chat';
-  return `${base}/public/${encodeRoomLink(room)}`;
+  return `${base}/join/chat.html#/public/${encodeRoomLink(room)}`;
 }
 export function verifiedPublicEvent(event: NostrEvent): boolean {
   return (
@@ -124,6 +126,11 @@ export function roomPolicy(room: PublicRoom, pubkey: string): 'blocked' | 'trust
   return room.trusted.includes(pubkey) ? 'trusted' : 'plain';
 }
 export function validRoomMessage(event: NostrEvent, address: string): boolean {
+  const {
+    activity: _,
+    replyEvent: __,
+    ...signed
+  } = event as NostrEvent & { activity?: unknown; replyEvent?: unknown };
   const refs = event.tags.filter((t) => t[0] === 'a');
   return (
     event.kind === 9 &&
@@ -131,7 +138,7 @@ export function validRoomMessage(event: NostrEvent, address: string): boolean {
     event.content.length <= 8000 &&
     refs.length === 1 &&
     refs[0][1] === address &&
-    verifiedPublicEvent(event)
+    verifiedPublicEvent(signed)
   );
 }
 export function newerRoom(a: PublicRoom, b: PublicRoom): boolean {

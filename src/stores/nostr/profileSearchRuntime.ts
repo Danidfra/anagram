@@ -142,7 +142,9 @@ export function searchRelayProfiles(
       const filter: NostrFilter = publicKey
         ? { kinds: [0], authors: [publicKey], limit: 1 }
         : { kinds: [0], search: value, limit: 20 };
-      let pending = targets.length;
+      // Ordinary metadata reads must survive rejection of the optional NIP-50 filter.
+      const filters: NostrFilter[] = publicKey ? [filter] : [filter, { kinds: [0], limit: 100 }];
+      let pending = targets.length * filters.length;
       const receive = (event: ClientEvent) => {
         if (
           stopped ||
@@ -193,30 +195,34 @@ export function searchRelayProfiles(
         });
         emit();
       };
-      for (const relay of targets) {
-        let done = false;
-        const complete = () => {
-          if (done) return;
-          done = true;
-          if (--pending === 0) finish(results.size || receivedEose ? 'complete' : 'unavailable');
-        };
-        try {
-          subscriptions.push(
-            client.subscribe(filter, {
+      for (const relay of targets)
+        for (const requestedFilter of filters) {
+          let done = false,
+            received = 0;
+          const complete = () => {
+            if (done) return;
+            done = true;
+            if (--pending === 0) finish(results.size || receivedEose ? 'complete' : 'unavailable');
+          };
+          try {
+            const sub = client.subscribe(requestedFilter, {
               relayUrls: [relay],
               closeOnEose: true,
-              onEvent: receive,
+              onEvent: (event) => {
+                if (!done && received++ < 256) receive(event);
+              },
               onEose: () => {
                 receivedEose = true;
                 complete();
               },
               onClose: complete,
-            }),
-          );
-        } catch {
-          complete();
+            });
+            if (stopped) sub.stop();
+            else subscriptions.push(sub);
+          } catch {
+            complete();
+          }
         }
-      }
     })().catch(() => finish('unavailable'));
   });
 }

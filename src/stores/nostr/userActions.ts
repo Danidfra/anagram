@@ -30,6 +30,7 @@ import type {
 import type { MessageRelayStatus } from '#src/types/chat.ts';
 
 interface UserActionsDeps {
+  prepareOutgoingPrivateMessage: (rumor: ClientEvent, recipient: string, retry?: boolean) => Promise<void>;
   appendRelayStatusesToGroupMemberTicketEvent: (
     groupPublicKey: string,
     memberPublicKey: string,
@@ -140,6 +141,7 @@ interface RetryDirectMessageRelayOptions {
 
 export function createUserActions({
   appendRelayStatusesToGroupMemberTicketEvent,
+  prepareOutgoingPrivateMessage,
   appendRelayStatusesToMessageEvent,
   buildFailedOutboundRelayStatuses,
   buildPendingOutboundRelayStatuses,
@@ -475,6 +477,8 @@ export function createUserActions({
         throw new Error('Stored direct message event is missing a recipient.');
       }
 
+      await prepareOutgoingPrivateMessage(rumorEvent, recipientPubkey, true);
+
       logMessageRelayDiagnostics('retry-start', {
         messageId: normalizedMessageId,
         eventId: message.event_id,
@@ -507,6 +511,7 @@ export function createUserActions({
             }),
           ),
         );
+        await prepareOutgoingPrivateMessage(rumorEvent, recipientPubkey, true);
         const publishResult = await publishEventWithRelayStatuses(
           giftWrapEvent as { kind: number },
           [normalizedRelayUrl],

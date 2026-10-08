@@ -1,21 +1,35 @@
 <script lang="ts">
+  import MessageActions from '../MessageActions.svelte';
+  import ComposerContext from '../ComposerContext.svelte';
+  import MessageReply from '../MessageReply.svelte';
+  import { getPublicProfile } from '#src/lib/state/publicProfiles.ts';
+  import MessageInfo from '../MessageInfo.svelte';
+  import ModalFrame from '../ModalFrame.svelte';
+  import type { Message, MessageReplyPreview } from '#src/types/chat.ts';
+  import { messagePresentation, messageMenuPosition } from '#src/utils/messagePresentation.ts';
+  import ThreadHeader from '../ThreadHeader.svelte';
+  import ThreadSearch from '../ThreadSearch.svelte';
+  import ThreadTimeline from '../ThreadTimeline.svelte';
+  import MessageRow from '../MessageRow.svelte';
+  import MessageComposer from '../MessageComposer.svelte';
+  import DateDivider from '../DateDivider.svelte';
+  import MediaUploadConfirmation from '../MediaUploadConfirmation.svelte';
+  import { chatDate } from '#src/utils/chatDate.ts';
+  import { locale, translate } from '#src/i18n.ts';
+  export let messageLayout: string = 'bubbles';
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { useNostrStore } from '#src/stores/nostrStore.ts';
   import { roomPolicy, publicGroupShareLink } from '#src/stores/nostr/publicGroups.ts';
   import ProfileName from '../ProfileName.svelte';
-  import MessageRelayStatus from '../MessageRelayStatus.svelte';
-  import { publicMessageForDisplay } from '#src/utils/publicMessage.ts';
+  import { publicMessageState } from '#src/stores/nostr/publicMessageActions.ts';
   import { uploadBlossomMedia } from '#src/services/blossomUploadService.ts';
-  import { threadHistoryPull } from '#src/lib/actions/threadHistoryPull.ts';
-  import { autosizeTextarea } from '#src/lib/actions/autosizeTextarea.ts';
   import PublicGroupDialog from './PublicGroupDialog.svelte';
   import PublicMessage from './PublicMessage.svelte';
-  import PublicAvatar from './PublicAvatar.svelte';
-  import Avatar from '../Avatar.svelte';
   import Icon from '../Icon.svelte';
   export let link: string;
   export let onauthor: (publicKey: string) => void;
+  export let onforward: (message: Message) => void;
   const nostr = useNostrStore(),
     runtime = nostr.publicGroups,
     state = runtime.state;
@@ -26,10 +40,137 @@
     notice = '',
     nearBottom = true;
   let paging = false;
+  let searching = false;
+  let highlightedMessage = '';
+  let jumping = false;
+  let jumpRevision = 0;
+  async function jump(id: string, signal: AbortSignal) {
+    const request = ++jumpRevision;
+    jumping = true;
+    nearBottom = false;
+    try {
+      const target = await runtime.jumpToMessage(id, signal);
+      if (signal.aborted) return;
+      if (!target) throw new Error('Message is no longer available.');
+      await tick();
+      if (signal.aborted) return;
+      highlightedMessage = target.id!;
+      document.getElementById(`message-${target.id}`)?.scrollIntoView({ block: 'center' });
+    } finally {
+      if (jumpRevision === request) jumping = false;
+    }
+  }
+  let reply: MessageReplyPreview | null = null;
+  let editing: Message | null = null;
+  let beforeEdit = '';
+  let composerInput: HTMLTextAreaElement;
+  $: writable = Boolean(
+    room && !$state.history && !$state.stale && roomPolicy(room, own) !== 'blocked',
+  );
+  function cancelContext() {
+    if (editing) {
+      draft = beforeEdit;
+      editing = null;
+    } else reply = null;
+  }
+  async function react(emoji: string, message: Message, remove = false) {
+    closeActions();
+    error = '';
+    try {
+      await runtime.react(message.id, emoji, remove);
+    } catch (cause) {
+      error = (cause as Error).message;
+    }
+  }
+  let actionMessage: Message | undefined;
+  let inspectedId = '';
+  let contextPosition = { x: 0, y: 0 };
+  let contextTrigger: HTMLElement | null = null;
+  $: inspectedMessage = displayed.find((message) => message.id === inspectedId);
+  $: if (actionMessage && !displayed.some((message) => message.id === actionMessage?.id))
+    actionMessage = undefined;
+  function showActions(message: Message, event: MouseEvent) {
+    if (message.meta.deleted) return;
+    event.preventDefault();
+    contextTrigger =
+      event.target instanceof Element
+        ? event.target.closest<HTMLElement>('.message-menu-trigger')
+        : null;
+    contextPosition = messageMenuPosition(event);
+    actionMessage = message;
+  }
+  function closeActions() {
+    actionMessage = undefined;
+    contextTrigger?.focus({ preventScroll: true });
+    contextTrigger = null;
+  }
+  async function messageAction(action: string, message: Message) {
+    closeActions();
+    if (action === 'info') inspectedId = message.id;
+    if (action === 'forward') onforward(message);
+    if (action === 'reply') {
+      if (editing) cancelContext();
+      reply = {
+        messageId: message.id,
+        eventId: message.id,
+        text: message.text.slice(0, 300),
+        sender: message.sender,
+        authorName:
+          message.sender === 'me'
+            ? 'You'
+            : getPublicProfile(message.authorPublicKey)?.name ||
+              message.authorPublicKey.slice(0, 12),
+        authorPublicKey: message.authorPublicKey,
+        sentAt: message.sentAt,
+      };
+      await tick();
+      composerInput?.focus();
+    }
+    if (action === 'edit') {
+      if (!editing) beforeEdit = draft;
+      editing = message;
+      draft = message.text;
+      await tick();
+      composerInput?.focus();
+    }
+    if (action === 'delete') {
+      try {
+        await runtime.deleteMessage(message.id);
+      } catch (cause) {
+        error = (cause as Error).message;
+      }
+    }
+    if (action === 'copy') {
+      try {
+        await navigator.clipboard.writeText(message.text);
+        notice = 'Message copied';
+      } catch {
+        error = 'Could not copy message.';
+      }
+    }
+  }
   let log: HTMLDivElement;
+  let lastScrollTop = 0;
   let fileInput: HTMLInputElement;
   let uploadController: AbortController | undefined;
   let pendingFile: File | undefined;
+  let mediaNotice = false;
+  let creatorName = '';
+  async function explainMediaTrust() {
+    if (!room) return;
+    mediaNotice = true;
+    creatorName = '';
+    const owner = room.owner,
+      account = own;
+    try {
+      const relays = [...new Set([...room.relays, ...(await runtime.defaultRelays())])];
+      const profile = await nostr.fetchUserProfileFromRelays(owner, relays);
+      if (mediaNotice && room?.owner === owner && nostr.getLoggedInPublicKeyHex() === account)
+        creatorName = profile?.name ?? '';
+    } catch {
+      // The cached profile or shortened public key remains clickable offline.
+    }
+  }
   async function upload() {
     if (
       !pendingFile ||
@@ -51,7 +192,8 @@
         signUploadAuthHeader: nostr.signBlossomUploadAuthHeader,
       });
       if (uploadController.signal.aborted || room?.address !== target) return;
-      await runtime.send(result.attachment.url, result.attachment);
+      await runtime.send(result.attachment.url, result.attachment, reply?.messageId);
+      reply = null;
       pendingFile = undefined;
       nearBottom = true;
     } catch (cause) {
@@ -64,12 +206,23 @@
   $: room = $state.room;
   $: own = nostr.getLoggedInPublicKeyHex() || '';
   $: visible = room ? $state.messages.filter((e) => roomPolicy(room!, e.pubkey) !== 'blocked') : [];
-  function scrollToEnd() {
-    if (log) log.scrollTop = log.scrollHeight;
+  $: displayed = visible.map((event) => publicMessageState(event, room!, own));
+  function date(value: string) {
+    return chatDate(value, $locale);
   }
-  $: if (visible.length && nearBottom && !paging) void tick().then(scrollToEnd);
+  async function latest() {
+    if ($state.history) await runtime.history($state.history);
+    else await runtime.open(link);
+    nearBottom = true;
+    await tick();
+    scrollToEnd();
+  }
+  function scrollToEnd() {
+    if (log && !actionMessage) log.scrollTop = log.scrollHeight;
+  }
+  $: if (visible.length && nearBottom && !paging && !jumping) void tick().then(scrollToEnd);
   async function pageHistory(older = true) {
-    if (paging || $state.loading) return;
+    if (paging || jumping || $state.loading) return;
     if (older ? !$state.more : !$state.hasNewer) return;
     paging = true;
     nearBottom = false;
@@ -78,9 +231,11 @@
       (row) => row.getBoundingClientRect().bottom > log.getBoundingClientRect().top,
     );
     const offset = anchor?.getBoundingClientRect().top;
+    const revision = jumpRevision;
     try {
       await (older ? runtime.older() : runtime.newer());
       await tick();
+      if (revision !== jumpRevision) return;
       const retained =
         anchor && log.querySelector<HTMLElement>(`[data-event-id="${anchor.dataset.eventId}"]`);
       if (retained && offset !== undefined)
@@ -93,11 +248,18 @@
     if (sending) return;
     sending = true;
     error = '';
+    const text = draft;
     try {
-      if (nostr.containsSessionSecret(draft))
+      if (nostr.containsSessionSecret(text))
         throw new Error('This message contains your session secret.');
-      await runtime.send(draft);
-      draft = '';
+      if (editing) {
+        await runtime.editMessage(editing.id, text);
+        cancelContext();
+      } else {
+        await runtime.send(text, undefined, reply?.messageId);
+        if (draft === text) draft = '';
+        reply = null;
+      }
       nearBottom = true;
     } catch (e) {
       error = (e as Error).message;
@@ -125,188 +287,222 @@
       window.removeEventListener('online', reconnect);
       document.removeEventListener('visibilitychange', reconnect);
       uploadController?.abort();
+      mediaNotice = false;
       runtime.stopView();
     };
   });
 </script>
 
 {#if room}
-  <header class="thread-header">
-    <button
-      class="icon-button mobile-back"
-      aria-label="Back to chats"
-      onclick={() => goto('/chats')}><Icon name="back" /></button
-    >
-    <button class="identity" onclick={() => (details = true)} aria-label="Public group settings"
-      ><PublicAvatar name={room.name} picture={room.picture} /><span
-        ><strong>{room.name}</strong><small>Public group</small></span
-      ></button
-    >
-    <button class="icon-button" aria-label="Copy public group link" onclick={share}
-      ><Icon name="content_copy" /></button
-    >
-    <button class="icon-button" aria-label="Refresh public group" onclick={() => runtime.open(link)}
-      ><Icon name="refresh" /></button
-    >
-  </header>
+  <ThreadHeader
+    name={room.name}
+    picture={room.picture}
+    publicGroup
+    subtitle="Public group"
+    label="Public group settings"
+    onopen={() => (details = true)}
+    onback={() => goto('/chats')}
+  >
+    {#snippet actions()}
+      <button
+        class="icon-button"
+        aria-label="Search conversation"
+        onclick={() => (searching = !searching)}><Icon name="search" /></button
+      >
+      <button class="icon-button" aria-label="Copy public group link" onclick={share}
+        ><Icon name="content_copy" /></button
+      >
+      <button
+        class="icon-button"
+        aria-label="Refresh public group"
+        onclick={() => runtime.open(link)}><Icon name="refresh" /></button
+      >
+    {/snippet}
+  </ThreadHeader>
   {#if $state.ancestors.length}<label class="history"
       >Ownership transferred · History <select
         value={$state.history}
         disabled={$state.loading || sending}
-        onchange={(e) => runtime.history(e.currentTarget.value)}
+        onchange={(event) => runtime.history(event.currentTarget.value)}
         ><option value="">Current group</option>{#each $state.ancestors as previous}<option
             value={previous.address}>{previous.name} · {previous.owner.slice(0, 8)}</option
           >{/each}</select
       ></label
     >{/if}
-  <div
-    class="public-log"
-    use:threadHistoryPull={{
-      chatId: room.address + $state.history,
-      canLoad: () => $state.more && !paging,
-      loading: () => paging,
-      load: () => void pageHistory(),
-    }}
-    bind:this={log}
-    role="log"
-    aria-label="Public group messages"
+  {#if searching}
+    {#key room.event.id + $state.history}
+      <ThreadSearch
+        onsearch={runtime.searchMessages}
+        onselect={jump}
+        onclear={() => (highlightedMessage = '')}
+        onclose={() => (searching = false)}
+        hint="Search downloaded messages · Up to 100 results. Load earlier messages to search more history."
+      />
+    {/key}
+  {/if}
+  <ThreadTimeline
+    bind:element={log}
+    chatId={room.address + $state.history}
+    label="Public group messages"
+    firstDay={displayed[0] ? date(displayed[0].sentAt) : ''}
+    hasOlder={$state.more}
+    hasNewer={$state.hasNewer}
+    loading={paging || $state.loading}
+    {nearBottom}
+    onolder={() => void pageHistory()}
+    onnewer={() => void pageHistory(false)}
+    onlatest={() => void latest()}
     onscroll={() => {
-      if (paging) return;
-      nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+      if (log.scrollTop !== lastScrollTop) actionMessage = undefined;
+      lastScrollTop = log.scrollTop;
+      if (paging || jumping) return;
+      nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
       if (nearBottom && $state.hasNewer) void pageHistory(false);
     }}
   >
-    {#if paging}<div class="history-loading" role="status">Loading messages…</div>{/if}
-    {#each visible as event (event.id)}
-      <article
-        class:own={event.pubkey === own}
-        data-testid="public-message"
-        data-event-id={event.id}
+    {#each displayed as message, index (message.id)}
+      {@const event = visible[index]}
+      {@const trusted = roomPolicy(room, event.pubkey) === 'trusted'}
+      {@const author = {
+        name:
+          message.sender === 'me'
+            ? $translate('common.you')
+            : event.pubkey === room.owner
+              ? 'Owner'
+              : event.pubkey.slice(0, 12),
+      }}
+      {@const presentation = messagePresentation(
+        message,
+        displayed[index - 1],
+        displayed[index + 1],
+        $locale,
+      )}
+      {#if presentation.startsDay}<DateDivider label={presentation.dayLabel} />{/if}
+      <MessageRow
+        {message}
+        {author}
+        highlighted={highlightedMessage === message.id}
+        allowAvatar={trusted || message.sender === 'me'}
+        bubbleLayout={messageLayout === 'bubbles'}
+        continuesSender={presentation.continuesSender}
+        senderContinues={presentation.senderContinues}
+        dayLabel={presentation.dayLabel}
+        contextOpen={actionMessage?.id === message.id}
+        onactions={(event) =>
+          actionMessage?.id === message.id ? closeActions() : showActions(message, event)}
+        {onauthor}
+        publicGroup
+        onreaction={(emoji, remove) => runtime.react(message.id, emoji, remove)}
+        reactionsReadonly={!writable}
+        contactName={room.name}
+        contactRelayUrls={($state.ancestors.find((r) => r.address === $state.history) ?? room)
+          .relays}
+        onretry={(url) => runtime.retryMessage(message.eventId ?? message.id, url)}
       >
-        <button
-          class="author-avatar"
-          data-testid="thread-author-profile-link"
-          aria-label="Open direct message"
-          onclick={() => onauthor(event.pubkey)}
-          ><Avatar
-            publicKey={event.pubkey === own || roomPolicy(room, event.pubkey) === 'trusted'
-              ? event.pubkey
-              : ''}
-            name={event.pubkey.slice(0, 8)}
-            size={32}
-          /></button
-        >
-        <div class="message">
-          <button
-            class="bubble-author-name"
-            data-testid="thread-author-name-link"
-            style:color={`var(--bubble-author-${(Number.parseInt(event.pubkey.slice(0, 8), 16) || 0) % 6})`}
-            onclick={() => onauthor(event.pubkey)}
-            >{#if event.pubkey === own}You{:else}<ProfileName
-                publicKey={event.pubkey}
-                fallback={event.pubkey === room.owner ? 'Owner' : event.pubkey.slice(0, 12)}
-              />{/if}</button
-          ><PublicMessage
-            {event}
-            trusted={roomPolicy(room, event.pubkey) === 'trusted'}
-            oncontact={onauthor}
-          /><time datetime={new Date(event.created_at * 1000).toISOString()}
-            >{new Date(event.created_at * 1000).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}<MessageRelayStatus
-              message={publicMessageForDisplay(event, own)}
-              contactName={room.name}
-              contactRelayUrls={($state.ancestors.find((r) => r.address === $state.history) ?? room)
-                .relays}
-              publicGroup
-              onretry={(url) => runtime.retryMessage(event.id!, url)}
-            /></time
-          >
-        </div>
-      </article>
-    {:else}<p class="empty">
-        {$state.refreshing || $state.loading
-          ? 'Loading public messages…'
-          : $state.stale
-            ? 'Saved messages will appear here while reconnecting.'
-            : 'No messages to show. Say hello.'}
-      </p>{/each}
-  </div>
+        {#snippet authorLabel()}{#if message.sender === 'me'}{$translate(
+              'common.you',
+            )}{:else}<ProfileName publicKey={event.pubkey} fallback={author.name} />{/if}{/snippet}
+        {#if message.meta.reply && !message.meta.deleted}<MessageReply
+            reply={message.meta.reply}
+            onclick={() => {
+              void jump(message.meta.reply!.messageId, new AbortController().signal).catch(
+                (cause) => (error = cause.message),
+              );
+            }}
+          />{/if}
+        <PublicMessage
+          event={message.nostrEvent!.event}
+          displayMessage={message}
+          {trusted}
+          bubbleLayout={messageLayout === 'bubbles'}
+          oncontact={onauthor}
+        />
+      </MessageRow>
+    {:else}<div class="empty-thread">
+        <Icon name="group" />
+        <p>
+          {$state.refreshing || $state.loading
+            ? 'Loading public messages…'
+            : $state.stale
+              ? 'Saved messages will appear here while reconnecting.'
+              : 'No messages to show. Say hello.'}
+        </p>
+      </div>{/each}
+  </ThreadTimeline>
   {#if $state.refreshing}<p class="status" role="status">
       Syncing public group…
     </p>{:else if $state.stale}<p class="status">Offline · Showing saved messages.</p>{/if}
   {#if notice}<p class="status" role="status">{notice}</p>{/if}
   {#if error || $state.error}<p class="status error" role="alert">{error || $state.error}</p>{/if}
-  {#if pendingFile}<div class="status">
-      <p>Upload {pendingFile.name}? This file and its link will be public.</p>
-      <button class="outline" disabled={sending} onclick={() => (pendingFile = undefined)}
-        >Cancel</button
-      ><button class="primary" disabled={sending} onclick={upload}
-        >{sending ? 'Uploading…' : 'Upload and send'}</button
-      >
-    </div>{/if}
-  <form
-    class="public-composer"
-    onsubmit={(e) => {
-      e.preventDefault();
-      void send();
-    }}
-  >
-    <small
-      >{$state.history
-        ? 'Earlier group history is read-only.'
-        : roomPolicy(room, own) === 'blocked'
-          ? 'You are blocked in this group.'
-          : 'Public: anyone can read these messages.'}</small
+  {#if mediaNotice}<ModalFrame title="Media sharing" onclose={() => (mediaNotice = false)}>
+      <p>
+        Only trusted users can post media. Ask the group creator
+        <a
+          href="/chats/{room.owner}"
+          style:color="var(--q-primary)"
+          onclick={(event) => {
+            event.preventDefault();
+            mediaNotice = false;
+            onauthor(room.owner);
+          }}
+          ><ProfileName
+            publicKey={room.owner}
+            givenName={creatorName}
+            fallback={room.owner.slice(0, 12)}
+          /></a
+        > to be added to the trusted member list.
+      </p>
+    </ModalFrame>{/if}
+  {#if pendingFile}<ModalFrame
+      title={$translate('message.photoOrVideo')}
+      label="upload"
+      busy={sending}
+      onclose={() => (pendingFile = undefined)}
     >
-    <div>
-      {#if roomPolicy(room, own) === 'trusted' && !$state.history}<input
-          hidden
-          type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,image/avif,video/mp4,video/webm"
-          bind:this={fileInput}
-          onchange={(e) => (pendingFile = e.currentTarget.files?.[0])}
-        /><button
-          type="button"
-          class="icon-button"
-          aria-label="Attach public media"
-          disabled={sending || $state.stale}
-          onclick={() => fileInput.click()}><Icon name="attach" /></button
-        >{/if}
-      <textarea
-        use:autosizeTextarea={draft}
-        bind:value={draft}
-        aria-label="Public message"
-        placeholder="Write a public message"
-        rows="1"
-        maxlength="8000"
-        disabled={$state.stale || !!$state.history || roomPolicy(room, own) === 'blocked'}
-        onkeydown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-            e.preventDefault();
-            void send();
-          }
-        }}></textarea><button
-        class="primary"
-        disabled={sending ||
-          !draft.trim() ||
-          $state.stale ||
-          !!$state.history ||
-          roomPolicy(room, own) === 'blocked'}>Send</button
-      >
-    </div>
-  </form>
-{:else}
-  <div class="unavailable">
+      <MediaUploadConfirmation
+        fileName={pendingFile.name}
+        serverUrl={nostr.getBlossomServerUrl()}
+        busy={sending}
+        publicUpload
+        oncancel={() => (pendingFile = undefined)}
+        onconfirm={() => void upload()}
+      />
+      {#if error}<p role="alert" class="error">{error}</p>{/if}
+    </ModalFrame>{/if}
+  <p class="status">
+    {$state.history
+      ? 'Earlier group history is read-only.'
+      : roomPolicy(room, own) === 'blocked'
+        ? 'You are blocked in this group.'
+        : 'Public: anyone can read these messages.'}
+  </p>
+  <ComposerContext {reply} editing={Boolean(editing)} oncancel={cancelContext} />
+  <MessageComposer
+    bind:input={composerInput}
+    attachDisabled={Boolean(editing)}
+    bind:draft
+    bind:fileInput
+    busy={sending}
+    disabled={$state.stale || Boolean($state.history) || roomPolicy(room, own) === 'blocked'}
+    allowAttachments={roomPolicy(room, own) === 'trusted' && !$state.history}
+    onattachUnavailable={$state.history ? undefined : () => void explainMediaTrust()}
+    allowFiles={false}
+    accept="image/png,image/jpeg,image/gif,image/webp,image/avif,video/mp4,video/webm"
+    label="Public message"
+    placeholder="Write a public message"
+    attachLabel="Attach public media"
+    maxlength={8000}
+    onsend={() => void send()}
+    onfile={(file) => (pendingFile = file)}
+  />
+{:else}<div class="welcome-empty">
     <button class="outline" onclick={() => goto('/chats')}>Back to chats</button>
     <p>
       {$state.refreshing ? 'Loading public group…' : $state.error || 'Public group unavailable.'}
     </p>
     {#if !$state.refreshing}<button class="primary" onclick={() => runtime.open(link)}>Retry</button
       >{/if}
-  </div>
-{/if}
+  </div>{/if}
 {#if details && room}<PublicGroupDialog
     {room}
     onclose={() => (details = false)}
@@ -314,91 +510,48 @@
     onleave={() => goto('/chats')}
   />{/if}
 
+<svelte:window
+  onclick={(event) => {
+    if (
+      !event
+        .composedPath()
+        .some(
+          (target) =>
+            target instanceof Element &&
+            target.matches('.message-context-menu, .message-menu-trigger'),
+        )
+    )
+      actionMessage = undefined;
+  }}
+  onkeydown={(event) => {
+    if (event.key === 'Escape') closeActions();
+  }}
+/>
+{#if actionMessage}<MessageActions
+    message={actionMessage}
+    x={contextPosition.x}
+    y={contextPosition.y}
+    allowedActions={writable
+      ? ['reply', 'copy', 'forward', 'edit', 'info', 'delete']
+      : ['copy', 'forward', 'info']}
+    allowReactions={writable}
+    onreact={(emoji, message) => void react(emoji, message)}
+    onaction={messageAction}
+    onclose={closeActions}
+  />{/if}
+{#if inspectedMessage}<ModalFrame
+    title={$translate('common.nostrInfo')}
+    label="info"
+    onclose={() => (inspectedId = '')}
+  >
+    <MessageInfo
+      message={inspectedMessage}
+      onretry={(status) =>
+        runtime.retryMessage(inspectedMessage!.eventId ?? inspectedMessage!.id, status.relay_url)}
+    />
+  </ModalFrame>{/if}
+
 <style>
-  .identity {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    text-align: left;
-    flex: 1;
-    min-width: 0;
-  }
-  .identity span {
-    min-width: 0;
-  }
-  .identity strong {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .identity small,
-  small,
-  time {
-    color: var(--nc-text-secondary);
-  }
-  .public-log {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    overflow-anchor: none;
-    padding: 18px;
-  }
-  .history-loading {
-    position: sticky;
-    top: 0;
-    text-align: center;
-    color: var(--nc-text-secondary);
-    font-size: 12px;
-  }
-  article {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-    margin: 10px 0;
-  }
-  .message {
-    max-width: min(720px, 85%);
-    padding: 10px 14px;
-    border-radius: 16px;
-    background: var(--nc-received);
-    min-width: 0;
-  }
-  .own .message {
-    background: var(--nc-sent);
-  }
-  .author-avatar {
-    display: flex;
-    padding: 0;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  time {
-    display: block;
-    text-align: right;
-    font-size: 11px;
-    margin-top: 4px;
-  }
-  .empty {
-    text-align: center;
-    color: var(--nc-text-secondary);
-  }
-  .public-composer {
-    padding: 10px 16px;
-    background: var(--nc-panel-sidebar-bg);
-    border-top: 1px solid var(--nc-border);
-  }
-  .public-composer div {
-    display: flex;
-    gap: 8px;
-    margin-top: 6px;
-  }
-  .public-composer textarea {
-    flex: 1;
-    min-width: 0;
-    max-height: 150px;
-    resize: none;
-  }
   .status,
   .history {
     padding: 8px 16px;
@@ -408,33 +561,5 @@
   .history select {
     max-width: 60%;
     padding: 5px;
-  }
-  .unavailable {
-    margin: auto;
-    padding: 24px;
-    text-align: center;
-  }
-  .mobile-back {
-    display: none;
-  }
-  @media (max-width: 767px) {
-    .mobile-back {
-      display: inline-flex;
-    }
-    .thread-header {
-      padding: 6px;
-    }
-    .public-log {
-      padding: 10px;
-    }
-    .message {
-      max-width: calc(100% - 42px);
-    }
-    .public-composer {
-      padding: 8px;
-    }
-    .thread-header .icon-button {
-      width: 32px;
-    }
   }
 </style>

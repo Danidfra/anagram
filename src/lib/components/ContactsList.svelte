@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnOutside } from '#src/lib/actions/dismissOnOutside.ts';
   import { translate } from '#src/i18n.ts';
   import type { ContactRecord } from '#src/types/contact.ts';
   import {
@@ -18,6 +19,7 @@
   const nostr = useNostrStore();
   let expanded = { active: true, muted: false, blocked: false };
   let menu = '';
+  let menuTrigger: HTMLButtonElement;
   $: options = {
     loggedInPubkey: nostr.getLoggedInPublicKeyHex(),
     resolveNpub: (key: string) => nostr.encodeNpub(key),
@@ -94,16 +96,16 @@
             class="icon-button contact-menu"
             aria-label={$translate('contacts.contactActions')}
             aria-expanded={menu === contact.public_key}
-            onclick={() => (menu = menu === contact.public_key ? '' : contact.public_key)}
-            ><Icon name="more" /></button
+            onclick={(event) => {
+              menuTrigger = event.currentTarget;
+              menu = menu === contact.public_key ? '' : contact.public_key;
+            }}><Icon name="more" /></button
           >
           {#if menu === contact.public_key}<div
+              use:dismissOnOutside={{ dismiss: () => (menu = ''), trigger: menuTrigger }}
               class="contact-actions"
               role="menu"
               tabindex="-1"
-              onkeydown={(event) => {
-                if (event.key === 'Escape') menu = '';
-              }}
             >
               {#if !contact.meta.blocked}
                 <button role="menuitem" onclick={() => action(contact, 'chat')}
@@ -151,6 +153,8 @@
   }
   .contact-row.active {
     background: var(--nc-active);
+  }
+  .contact-row.active > .chat-item {
     color: var(--nc-active-text);
   }
   .chat-item {
@@ -168,6 +172,9 @@
     white-space: nowrap;
     color: var(--nc-text-secondary);
   }
+  .contact-row.active .chat-copy small {
+    color: var(--nc-active-subtext);
+  }
   .contact-menu {
     position: absolute;
     right: 3px;
@@ -184,6 +191,7 @@
     border-radius: 10px;
     box-shadow: var(--nc-shadow-md);
     background: var(--nc-menu-bg);
+    color: var(--nc-text);
   }
   .contact-actions button {
     display: block;

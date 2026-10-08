@@ -87,6 +87,8 @@
   --nc-glass-blur-soft: 0px;
   --nc-glass-blur-overlay: 0px;
   --nc-glass-blur-strong: 0px;
+  --nc-danger: #b42332;
+  --nc-success: #15803d;
   --nc-text: #1f2d3d;
   --nc-text-secondary: #8f99a5;
   --nc-muted: #9aa5b1;
@@ -104,6 +106,7 @@
 }
 
 body.body--dark {
+  color-scheme: dark;
   --q-primary: #64b5f6;
   --nc-bg: #0d141b;
   --nc-panel-sidebar-bg: #17212b;
@@ -132,6 +135,8 @@ body.body--dark {
   --nc-reaction-accent-border: rgba(100, 181, 246, 0.34);
   --nc-reaction-accent-text: #d8eeff;
   --nc-reaction-accent-icon-bg: #64b5f6;
+  --nc-danger: #ff8992;
+  --nc-success: #4ade80;
   --nc-text: #edf3f9;
   --nc-text-secondary: #a6b8ca;
   --nc-muted: #8799ac;
@@ -153,6 +158,7 @@ body[data-accent] {
   --q-primary: var(--theme-accent-light);
   --nc-sent: color-mix(in srgb, var(--q-primary) 14%, white);
   --nc-active: var(--theme-accent-light);
+  --nc-active-group-icon: color-mix(in srgb, var(--q-primary) 80%, white);
   --nc-chip-hover-bg: color-mix(in srgb, var(--q-primary) 12%, transparent);
   --nc-reaction-accent-bg: color-mix(in srgb, var(--q-primary) 12%, transparent);
   --nc-reaction-accent-bg-hover: color-mix(in srgb, var(--q-primary) 18%, transparent);
@@ -222,6 +228,7 @@ body.body--dark .q-btn.q-btn--outline.q-btn--round:not(.text-negative):not(.text
 }
 
 body {
+  color-scheme: light;
   font-family: var(--nc-title-font);
   color: var(--nc-text);
   letter-spacing: 0;

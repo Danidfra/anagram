@@ -104,3 +104,18 @@ it('does not send private keys to relays or NIP-05 endpoints, and supports publi
   f.controller.abort();
   await done;
 });
+
+it('finds matching profiles through a bounded ordinary read when search is rejected', async () => {
+  const f = fixture();
+  const done = searchRelayProfiles(f.client, 'alice', ['wss://one.test'], f.options);
+  expect(f.requests[1].filter).toEqual({ kinds: [0], limit: 100 });
+  f.requests[0].options.onClose(); // CLOSED: unrecognised filter item: search
+  f.requests[1].options.onEvent(event(f.client, other, 10, 'Unrelated'));
+  f.requests[1].options.onEvent(event(f.client));
+  f.requests[1].options.onEose();
+  expect(await done).toBe('complete');
+  expect(f.options.onResults).toHaveBeenLastCalledWith([
+    expect.objectContaining({ name: 'Alice' }),
+  ]);
+  expect(f.requests.every(({ stop }) => stop.mock.calls.length === 1)).toBe(true);
+});

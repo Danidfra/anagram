@@ -682,8 +682,14 @@ public final class RelayNotificationService extends Service {
                 return null;
             }
 
+            for (NotificationConversation knownGroup : groupConversations.values()) {
+                if (senderPubkey.equals(knownGroup.recipientPubkey) || knownGroup.knownEpochPubkeys.contains(senderPubkey)) return null;
+            }
             NotificationConversation groupConversation = groupConversations.get(recipientPubkey);
             if (groupConversation != null) {
+                JSONArray sealTags = seal.optJSONArray("tags");
+                if (sealTags == null || sealTags.length() != 0 ||
+                    !isAuthorizedGroupMessage(rumor, groupConversation, recipientPrivateKey)) return null;
                 return isNotificationConversationEligible(groupConversation)
                     ? notificationTargetForEligibleConversation(groupConversation, messageCreatedAt)
                     : null;
@@ -703,6 +709,70 @@ public final class RelayNotificationService extends Service {
             logDebug("gift-wrap-details-rejected reason=" + exceptionSummary(exception));
             return null;
         }
+    }
+
+    @Nullable
+    private static String singleGroupTag(JSONArray tags, String name) {
+        String value = null;
+        for (int i = 0; i < tags.length(); i++) {
+            JSONArray tag = tags.optJSONArray(i);
+            if (tag != null && name.equals(tag.optString(0))) {
+                if (value != null || tag.length() != 2 || !(tag.opt(1) instanceof String)) return null;
+                value = tag.optString(1);
+            }
+        }
+        return value;
+    }
+
+    private static long groupInteger(@Nullable String value) {
+        if (value == null || !value.matches("0|[1-9][0-9]*")) return -1L;
+        try {
+            long number = Long.parseLong(value);
+            return number <= 9007199254740991L ? number : -1L;
+        } catch (NumberFormatException exception) { return -1L; }
+    }
+
+    static boolean isAuthorizedGroupMessage(JSONObject rumor, NotificationConversation group, String epochPrivateKey)
+        throws JSONException {
+        JSONArray tags = rumor.optJSONArray("tags");
+        String sender = rumor.optString("pubkey", "");
+        if (tags == null || group.epochNumber < 0 || group.recipientPubkey == null ||
+            !rumor.optString("sig", "").isEmpty() || !HEX_64.matcher(sender).matches() ||
+            sender.equals(group.recipientPubkey) || group.knownEpochPubkeys.contains(sender) ||
+            !group.recipientPubkey.equals(singleGroupTag(tags, "p")) ||
+            !group.chatPubkey.equals(singleGroupTag(tags, "h")) ||
+            groupInteger(singleGroupTag(tags, "epoch")) != group.epochNumber) return false;
+        if (sender.equals(group.chatPubkey)) {
+            String content = rumor.optString("content", "");
+            if (rumor.optInt("kind", -1) != 14 || !("+".equals(content) || "-".equals(content))) return false;
+            int members = 0;
+            for (int i = 0; i < tags.length(); i++) {
+                JSONArray tag = tags.optJSONArray(i);
+                if (tag == null) return false;
+                String name = tag.optString(0);
+                if ("invited_at".equals(name) || "invitation_proof".equals(name)) return false;
+                if ("member".equals(name)) {
+                    if (tag.length() != 2 || !HEX_64.matcher(tag.optString(1)).matches()) return false;
+                    members++;
+                }
+            }
+            return members > 0;
+        }
+        if (rumor.optInt("kind", -1) != 14) return false;
+        long invitedAt = groupInteger(singleGroupTag(tags, "invited_at"));
+        String proof = singleGroupTag(tags, "invitation_proof");
+        if (invitedAt < 0 || proof == null || !HEX_128.matcher(proof).matches()) return false;
+        return verifyGroupMembershipProof(group.chatPubkey, group.epochNumber, epochPrivateKey, sender, invitedAt, proof);
+    }
+
+    static boolean verifyGroupMembershipProof(String group, long epoch, String key, String sender, long invitedAt, String proof) {
+        if (!HEX_64.matcher(group).matches() || !HEX_64.matcher(key).matches() || !HEX_64.matcher(sender).matches() ||
+            !HEX_128.matcher(proof).matches() || epoch < 0 || epoch > 9007199254740991L ||
+            invitedAt < 0 || invitedAt > 9007199254740991L) return false;
+        // All string fields are validated hex and all numbers are safe unsigned integers.
+        String canonical = "[0,\"" + group + "\"," + invitedAt + ",1014,[[\"p\",\"" + sender +
+            "\"],[\"epoch\",\"" + epoch + "\"]],\"" + key + "\"]";
+        return SchnorrSignatureVerifier.verify(computeCanonicalEventId(canonical), group, proof);
     }
 
     private NotificationTarget notificationTargetForEligibleConversation(

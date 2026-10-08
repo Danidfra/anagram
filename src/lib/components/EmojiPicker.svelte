@@ -44,6 +44,7 @@
     width: min(360px, 90vw);
     padding: 10px;
     background: var(--nc-menu-bg);
+    color: var(--nc-text);
     border: 1px solid var(--nc-border);
     border-radius: 12px;
     box-shadow: var(--nc-shadow-md);

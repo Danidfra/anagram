@@ -2,7 +2,11 @@ import { test, expect, type Page } from '@playwright/test';
 import { generateSecretKey, getPublicKey, nip19, finalizeEvent } from 'nostr-tools';
 import { WebSocket } from 'ws';
 import { finishOnboarding } from './auth-helpers';
-import { navigateInApp } from './parity/helpers';
+import {
+  navigateInApp,
+  openDirectChatFromIdentifier,
+  updateStoredContactRelays,
+} from './parity/helpers';
 const relay = 'ws://127.0.0.1:7777/';
 async function login(page: Page) {
   const key = generateSecretKey();
@@ -63,7 +67,10 @@ test('create, share, edit and moderate public groups without rich hydration for 
   await page.getByRole('button', { name: 'Copy public group link' }).click();
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toContain(`/public/${room.naddr}`);
+    .toContain(`/join/chat.html#/public/${room.naddr}`);
+  const sharedLink = await page.evaluate(() => navigator.clipboard.readText());
+  await page.goto(sharedLink);
+  await expect(page).toHaveURL(new RegExp(`/public/${room.naddr}$`));
   await expect(page.getByRole('button', { name: 'Attach public media' })).toBeVisible();
   const stranger = generateSecretKey(),
     pk = getPublicKey(stranger);
@@ -80,7 +87,7 @@ test('create, share, edit and moderate public groups without rich hydration for 
     });
   });
   await page.getByLabel('Public message', { exact: true }).fill('**Owner formatting**');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(
     page.locator('[data-testid="public-message"] strong').filter({ hasText: 'Owner formatting' }),
   ).toBeVisible();
@@ -142,7 +149,7 @@ test('create, share, edit and moderate public groups without rich hydration for 
   async function add(list: 'Trusted' | 'Blocked') {
     await page.getByRole('button', { name: 'Public group settings' }).click();
     const d = page.getByRole('dialog', { name: 'Public group settings' });
-    await d.getByRole('button', { name: list, exact: true }).click();
+    await d.getByRole('tab', { name: list, exact: true }).click();
     await d.getByRole('button', { name: `Add ${list.toLowerCase()} users` }).click();
     const picker = page.getByRole('dialog', { name: `Add ${list.toLowerCase()} users` });
     await picker.getByLabel('Search people').fill(pk);
@@ -212,9 +219,9 @@ test('owners hand over through signed successor and predecessor, with historical
     await login(alice);
     const first = await create(alice, 'Original room');
     await alice.getByLabel('Public message', { exact: true }).fill('Before the handover');
-    await alice.getByRole('button', { name: 'Send', exact: true }).click();
+    await alice.getByRole('button', { name: 'Send message', exact: true }).click();
     await expect(alice.getByTestId('public-message')).toContainText('Before the handover');
-    await login(bob);
+    const successorOwner = await login(bob);
     await bob.getByRole('button', { name: 'Chat options' }).click();
     await bob.getByRole('button', { name: 'New public group', exact: true }).click();
     const dialog = bob.getByRole('dialog', { name: 'New public group' });
@@ -228,7 +235,7 @@ test('owners hand over through signed successor and predecessor, with historical
     const successor = bob.url().split('/public/')[1];
     await alice.getByRole('button', { name: 'Public group settings' }).click();
     const settings = alice.getByRole('dialog', { name: 'Public group settings' });
-    await settings.getByRole('button', { name: 'Ownership', exact: true }).click();
+    await settings.getByRole('tab', { name: 'Ownership', exact: true }).click();
     await settings.getByLabel('Successor group link').fill(successor);
     await settings.getByRole('checkbox').check();
     await settings.getByRole('button', { name: 'Transfer ownership', exact: true }).click();
@@ -240,11 +247,18 @@ test('owners hand over through signed successor and predecessor, with historical
     await expect(alice.getByTestId('public-message')).toContainText('Before the handover');
     await expect(alice.getByLabel('Public message', { exact: true })).toBeDisabled();
     await alice.getByRole('combobox').selectOption('');
-    await expect(alice.getByRole('button', { name: 'Attach public media' })).toHaveCount(0);
+    await expect(alice.getByRole('button', { name: 'Attach public media' })).toBeEnabled();
+    await alice.getByRole('button', { name: 'Attach public media' }).click();
+    const mediaNotice = alice.getByRole('dialog', { name: 'Media sharing', exact: true });
+    await expect(mediaNotice.getByRole('link')).toHaveAttribute(
+      'href',
+      `/chats/${successorOwner.pubkey}`,
+    );
+    await mediaNotice.getByRole('button', { name: 'Close dialog', exact: true }).click();
     await alice
       .getByLabel('Public message', { exact: true })
       .fill('**Former owner is plain text**');
-    await alice.getByRole('button', { name: 'Send', exact: true }).click();
+    await alice.getByRole('button', { name: 'Send message', exact: true }).click();
     const message = alice
       .getByTestId('public-message')
       .filter({ hasText: 'Former owner is plain text' });
@@ -258,7 +272,7 @@ test('owners hand over through signed successor and predecessor, with historical
     );
     await alice.getByRole('button', { name: 'Public group settings' }).click();
     await expect(
-      alice.getByRole('dialog').getByRole('button', { name: 'Ownership', exact: true }),
+      alice.getByRole('dialog').getByRole('tab', { name: 'Ownership', exact: true }),
     ).toHaveCount(0);
   } finally {
     await a.close();
@@ -291,7 +305,7 @@ test('public history uses private-group scroll gestures and leaving lives in set
   await expect(log.getByTestId('public-message').last()).toContainText('History item 109');
   await expect(log.getByTestId('public-message').first()).toContainText('History item 60');
   await expect(log.getByTestId('public-message')).toHaveCount(50);
-  await expect(page.getByRole('button', { name: 'Load earlier messages' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Load earlier messages' })).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Leave public group', exact: true })).toHaveCount(
     0,
   );
@@ -317,6 +331,29 @@ test('public history uses private-group scroll gestures and leaving lives in set
   await settings.getByRole('button', { name: 'Leave group', exact: true }).click();
   await expect(page).toHaveURL(/\/chats$/);
   await expect(page.getByRole('button', { name: /History room Public group/ })).toHaveCount(0);
+});
+
+test('saved public groups appear on reload while session relay reads are stalled', async ({
+  page,
+}) => {
+  await login(page);
+  await create(page, 'Cached sidebar group');
+  await navigateInApp(page, '/chats');
+  const savedRoom = page.getByRole('button', { name: /Cached sidebar group Public group/ });
+  await expect(savedRoom).toBeVisible();
+
+  // Reload the chat list, not the public thread (which initializes its own cache).
+  // Keep account synchronization waiting for real relay responses.
+  let relayRequests = 0;
+  await page.routeWebSocket(relay, (socket) => {
+    socket.onMessage((message) => {
+      if (JSON.parse(String(message))[0] === 'REQ') relayRequests++;
+    });
+  });
+  await page.reload();
+  await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+  await expect(savedRoom).toBeVisible({ timeout: 1500 });
+  await expect.poll(() => relayRequests).toBeGreaterThan(0);
 });
 
 test('a stalled replica does not block opening, posting or cached re-entry', async ({ page }) => {
@@ -348,7 +385,7 @@ test('a stalled replica does not block opening, posting or cached re-entry', asy
   await navigateInApp(page, `/public/${naddr}`);
   await expect(page.getByLabel('Public message', { exact: true })).toBeEnabled({ timeout: 3000 });
   await page.getByLabel('Public message', { exact: true }).fill('Fast post');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByTestId('public-message')).toContainText('Fast post', { timeout: 3000 });
   await expect(page.getByLabel('Public message', { exact: true })).toHaveValue('', {
     timeout: 3000,
@@ -517,7 +554,7 @@ test('public relay failures can retry the same message through the shared dialog
   const input = page.getByLabel('Public message', { exact: true });
   await expect(input).toBeEnabled();
   await input.fill('Retry this exact event');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const message = page.getByTestId('public-message').filter({ hasText: 'Retry this exact event' });
   await expect(message.locator('.bubble__status-segment--red')).toBeVisible();
   const id = await message.getAttribute('data-event-id');
@@ -541,6 +578,12 @@ test('sender names and avatars reuse the private-chat DM action on desktop and m
 }) => {
   await login(page);
   const room = await create(page, 'Author links');
+  await page.evaluate(() => {
+    localStorage.setItem('ui-desktop-message-layout', 'bubbles');
+    window.dispatchEvent(
+      new CustomEvent('anagram:desktop-message-layout-changed', { detail: { layout: 'bubbles' } }),
+    );
+  });
   const sender = generateSecretKey(),
     publicKey = getPublicKey(sender);
   await publish(
@@ -570,4 +613,499 @@ test('sender names and avatars reuse the private-chat DM action on desktop and m
   await expect(
     page.locator(`[data-testid="chat-thread"][data-chat-public-key="${publicKey}"]`),
   ).toBeVisible();
+});
+
+test('keeps the next draft when a previous public post receives a delayed acknowledgement', async ({
+  page,
+}) => {
+  let pendingAck: (() => void) | undefined;
+  await page.routeWebSocket(relay, (socket) => {
+    const server = socket.connectToServer();
+    let pendingId = '';
+    socket.onMessage((raw) => {
+      const data = JSON.parse(String(raw));
+      if (data[0] === 'EVENT' && data[1].kind === 9 && data[1].content === 'First draft')
+        pendingId = data[1].id;
+      server.send(raw);
+    });
+    server.onMessage((raw) => {
+      const data = JSON.parse(String(raw));
+      if (data[0] === 'OK' && data[1] === pendingId) pendingAck = () => socket.send(raw);
+      else socket.send(raw);
+    });
+  });
+  await login(page);
+  await create(page, 'Pending composer');
+  const composer = page.getByLabel('Public message', { exact: true });
+  const send = page.getByRole('button', { name: 'Send message', exact: true });
+  await composer.fill('First draft');
+  await send.click();
+  await expect.poll(() => Boolean(pendingAck)).toBe(true);
+  await expect(send).toBeDisabled();
+  await composer.fill('Next draft');
+  pendingAck!();
+  await expect(send).toBeEnabled();
+  await expect(composer).toHaveValue('Next draft');
+  await send.click();
+  await expect(composer).toHaveValue('');
+  await expect(page.getByTestId('public-message').filter({ hasText: 'First draft' })).toHaveCount(
+    1,
+  );
+  await expect(page.getByTestId('public-message').filter({ hasText: 'Next draft' })).toHaveCount(1);
+});
+
+test('app relays carry public group creation, moderation and posts when preferred relays fail', async ({
+  page,
+}) => {
+  const deadRelay = 'wss://disconnected.example.org/';
+  const stalledRelay = 'wss://stalled.example.org/';
+  await page.routeWebSocket(deadRelay, (socket) => {
+    socket.onMessage(() => socket.close());
+  });
+  await page.routeWebSocket(stalledRelay, (socket) => {
+    socket.onMessage(() => {});
+  });
+  await login(page);
+  await page.getByRole('button', { name: 'Chat options' }).click();
+  await page.getByRole('button', { name: 'New public group', exact: true }).click();
+  const creating = page.getByRole('dialog', { name: 'New public group', exact: true });
+  await creating.getByLabel('Group name', { exact: true }).fill('App relay fallback');
+  await creating.getByText('Preferred relays', { exact: true }).click();
+  await expect(creating.locator('.group-relays')).toContainText(relay);
+  await creating.getByRole('button', { name: `Remove relay ${relay}`, exact: true }).click();
+  await creating.getByLabel('Relay URL', { exact: true }).fill(deadRelay);
+  await creating.getByRole('button', { name: 'Add relay', exact: true }).click();
+  await creating.getByRole('button', { name: 'Create public group', exact: true }).click();
+  await expect(creating).toBeHidden({ timeout: 3000 });
+  await page.getByRole('button', { name: 'Public group settings' }).click();
+  const settings = page.getByRole('dialog', { name: 'Public group settings', exact: true });
+  const member = getPublicKey(generateSecretKey());
+  await settings.getByRole('tab', { name: 'Trusted', exact: true }).click();
+  await settings.getByRole('button', { name: 'Add trusted users', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Add trusted users', exact: true });
+  await picker.getByLabel('Search people').fill(member);
+  await picker.getByTestId('profile-search-result').click();
+  await picker.getByRole('button', { name: 'Add (1)', exact: true }).click();
+  await expect(picker).toBeHidden({ timeout: 3000 });
+  await expect(settings).toBeHidden();
+  await page.getByRole('button', { name: 'Public group settings' }).click();
+  await settings.getByRole('tab', { name: 'Relays', exact: true }).click();
+  await expect(settings.locator('.group-relays li')).toHaveCount(1);
+  await expect(settings.locator('.group-relays')).toContainText(deadRelay);
+  await settings.getByRole('button', { name: `Remove relay ${deadRelay}`, exact: true }).click();
+  await settings.getByLabel('Relay URL', { exact: true }).fill(stalledRelay);
+  await settings.getByRole('button', { name: 'Add relay', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await settings.getByRole('button', { name: 'Save group relays', exact: true }).click();
+  await expect(settings).toBeHidden({ timeout: 3000 });
+  const composer = page.getByPlaceholder('Write a public message');
+  await composer.fill('App relay delivery');
+  await composer.press('Enter');
+  await expect(composer).toHaveValue('', { timeout: 3000 });
+  await page.reload();
+  await expect(
+    page.getByTestId('public-message').filter({ hasText: 'App relay delivery' }),
+  ).toHaveCount(1);
+  await page.getByRole('button', { name: 'Public group settings' }).click();
+  await settings.getByRole('tab', { name: 'Relays', exact: true }).click();
+  await expect(settings.locator('.group-relays li')).toHaveCount(1);
+  await expect(settings.locator('.group-relays')).toContainText(stalledRelay);
+  await settings.getByRole('tab', { name: 'Trusted', exact: true }).click();
+  await expect(settings.locator('.member')).toHaveCount(1);
+});
+
+test('public chat shares layouts, sender grouping, date dividers, emoji input and safe message actions', async ({
+  page,
+}, info) => {
+  await login(page);
+  const room = await create(page, 'Shared chat UI');
+  const author = generateSecretKey();
+  const now = Math.floor(Date.now() / 1000);
+  for (const [content, created_at] of [
+    ['Yesterday', now - 86400],
+    ['First today', now - 10],
+    ['Second today', now - 9],
+  ] as const)
+    await publish(
+      finalizeEvent({ kind: 9, created_at, content, tags: [['a', room.address]] }, author),
+    );
+  const first = page.getByTestId('public-message').filter({ hasText: 'First today' });
+  const last = page.getByTestId('public-message').filter({ hasText: 'Second today' });
+  const log = page.getByRole('log', { name: 'Public group messages' });
+  await expect(last).toBeVisible();
+  await expect(log.locator('.date-divider')).toHaveCount(2);
+  await expect(first.locator('.bubble-author-name')).toBeVisible();
+  await page.evaluate(() => {
+    localStorage.setItem('ui-desktop-message-layout', 'text');
+    window.dispatchEvent(
+      new CustomEvent('anagram:desktop-message-layout-changed', { detail: { layout: 'text' } }),
+    );
+  });
+  await expect(first.locator('.message-author')).toBeVisible();
+  await expect(first.locator('.bubble-author-name')).toHaveCount(0);
+  await page.evaluate(() => {
+    localStorage.setItem('ui-desktop-message-layout', 'bubbles');
+    window.dispatchEvent(
+      new CustomEvent('anagram:desktop-message-layout-changed', { detail: { layout: 'bubbles' } }),
+    );
+  });
+  await expect(first.locator('.bubble-author-name')).toBeVisible();
+  await expect(first.locator('.bubble-avatar')).toHaveCount(0);
+  await expect(last.locator('.bubble-author-name')).toHaveCount(0);
+  await expect(last.locator('.bubble-avatar')).toBeVisible();
+  await expect(last).toHaveClass(/sender-continuation/);
+  await expect(first.locator('.message-content')).toHaveCSS('border-top-left-radius', '18px');
+  await expect(last.locator('.message-content')).toHaveCSS('border-top-left-radius', '6px');
+  await first.hover();
+  await first.getByRole('button', { name: 'Message actions', exact: true }).click();
+  const menu = page.getByRole('menu', { name: 'Message actions' });
+  await expect(menu.getByRole('menuitem')).toHaveCount(4);
+  await expect(menu.getByRole('menuitem', { name: 'Reply', exact: true })).toBeVisible();
+  await expect(menu.getByRole('button', { name: 'React', exact: true })).toBeVisible();
+  await menu.getByRole('menuitem', { name: 'Nostr info', exact: true }).click();
+  const details = page.getByRole('dialog', { name: 'info', exact: true });
+  await expect(details).toContainText(getPublicKey(author));
+  await details.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await page.getByLabel('Public message', { exact: true }).fill(':thumbs');
+  await expect(page.getByRole('listbox', { name: 'Emoji suggestions' })).toBeVisible();
+  await page.getByLabel('Public message', { exact: true }).press('Enter');
+  await expect(page.getByLabel('Public message', { exact: true })).not.toHaveValue(':thumbs');
+  await expect(log.getByTestId('public-message')).toHaveCount(3);
+  await page.getByLabel('Public message', { exact: true }).fill('');
+  await page.getByTestId('message-composer-emoji').click();
+  await page.getByLabel('Search emoji').fill('thumbs up');
+  await page.locator('.emoji-grid button').first().click();
+  await expect(page.getByLabel('Public message', { exact: true })).not.toHaveValue('');
+  await page.getByTestId('message-send-button').click();
+  await expect(page.getByLabel('Public message', { exact: true })).toHaveValue('');
+  await expect(log.getByTestId('public-message')).toHaveCount(4);
+  await page.screenshot({ path: info.outputPath('public-shared-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const bounds = await first.boundingBox();
+  await first.dispatchEvent('pointerdown', {
+    pointerType: 'touch',
+    isPrimary: true,
+    clientX: bounds!.x + 60,
+    clientY: bounds!.y + 10,
+  });
+  await expect(menu).toBeVisible();
+  await first.dispatchEvent('pointerup', { pointerType: 'touch', isPrimary: true });
+  await expect(menu.getByRole('menuitem', { name: 'Copy message', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('public-shared-mobile.png') });
+});
+
+test('public chats render trusted group invitations with the shared Join chat button', async ({
+  page,
+}) => {
+  const owner = await login(page);
+  const room = await create(page, 'Invite card room');
+  const link = `http://127.0.0.1:5173/public/${room.naddr}`;
+  await page.getByTestId('message-composer-input').fill(`Welcome here: ${link}`);
+  await page.getByRole('button', { name: 'Send message' }).click();
+  const message = page.getByTestId('public-message').filter({ hasText: 'Welcome here:' });
+  await expect(message.getByRole('link', { name: 'Join chat', exact: true })).toHaveClass(
+    /room-link/,
+  );
+  await expect(message.locator('.link-preview')).toHaveCount(0);
+  const outsider = generateSecretKey();
+  await publish(
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['a', room.address]],
+        content: `Stranger invite: ${link}`,
+      },
+      outsider,
+    ),
+  );
+  const untrusted = page.getByTestId('public-message').filter({ hasText: 'Stranger invite:' });
+  await expect(untrusted).toContainText('[link removed]');
+  await expect(untrusted.getByRole('link')).toHaveCount(0);
+});
+
+test('public search reuses thread search and navigates cached messages on desktop and mobile', async ({
+  page,
+}, info) => {
+  const owner = await login(page);
+  const room = await create(page, 'Search lounge');
+  const base = Math.floor(Date.now() / 1000) - 300;
+  const events = Array.from({ length: 180 }, (_, i) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: base + i,
+        tags: [['a', room.address]],
+        content:
+          i === 10
+            ? 'Older public needle'
+            : i === 40
+              ? 'Newer public needle'
+              : `Public filler ${i}`,
+      },
+      owner.key,
+    ),
+  );
+  await page.evaluate(
+    async ({ account, address, events }) => {
+      const { PublicGroupData } = await import('/src/services/publicGroupData.ts');
+      const db = new PublicGroupData(account);
+      await db.putMany(address, events);
+      await db.close();
+    },
+    { account: owner.pubkey, address: room.address, events },
+  );
+  await page.reload();
+  await expect(
+    page.getByTestId('public-message').filter({ hasText: 'Public filler 179' }),
+  ).toBeVisible();
+  await expect(page.getByTestId('public-message').filter({ hasText: 'public needle' })).toHaveCount(
+    0,
+  );
+  await page.getByRole('button', { name: 'Search conversation', exact: true }).click();
+  const input = page.getByRole('textbox', { name: 'Search messages', exact: true });
+  const status = page.getByTestId('thread-search-status');
+  const focused = page.locator('.message-row.highlighted');
+  await expect(input).toBeFocused();
+  await input.fill('PUBLIC needle');
+  await expect(status).toHaveText('1 / 2');
+  await expect(focused).toContainText('Newer public needle');
+  await expect(focused).toBeInViewport();
+  expect(await page.getByTestId('public-message').count()).toBeLessThanOrEqual(51);
+  await page.getByRole('button', { name: 'Previous search result' }).click();
+  await expect(status).toHaveText('2 / 2');
+  await expect(focused).toContainText('Older public needle');
+  await page.getByRole('button', { name: 'Next search result' }).click();
+  await expect(status).toHaveText('1 / 2');
+  await expect(focused).toContainText('Newer public needle');
+  await page
+    .locator('.search-results')
+    .getByRole('button', { name: 'Older public needle', exact: true })
+    .click();
+  await expect(status).toHaveText('2 / 2');
+  await expect(focused).toContainText('Older public needle');
+  await input.press('Enter');
+  await expect(status).toHaveText('1 / 2');
+  await input.press('Shift+Enter');
+  await expect(status).toHaveText('2 / 2');
+  await input.fill('no match exists');
+  await expect(status).toHaveText('No results');
+  await expect(focused).toHaveCount(0);
+  await input.fill('public needle');
+  await expect(status).toHaveText('1 / 2');
+  await page.screenshot({ path: info.outputPath('public-search-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => document.body.classList.add('body--dark'));
+  await page.context().setOffline(true);
+  await input.fill('older public');
+  await expect(status).toHaveText('1 / 1');
+  await expect(focused).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('public-search-mobile.png') });
+  await input.press('Escape');
+  await expect(input).toHaveCount(0);
+  await expect(focused).toHaveCount(0);
+  await page.getByRole('button', { name: 'Search conversation', exact: true }).click();
+  await input.fill('public');
+  await page.getByRole('button', { name: 'Close search', exact: true }).click();
+  await expect(input).toHaveCount(0);
+  await expect(focused).toHaveCount(0);
+  await page.context().setOffline(false);
+});
+
+test('untrusted members keep the attachment button with a clickable creator explanation', async ({
+  page,
+}, info) => {
+  const member = await login(page);
+  const creator = generateSecretKey(),
+    owner = getPublicKey(creator);
+  const slug = `media-permission-${Date.now()}`;
+  const created_at = Math.floor(Date.now() / 1000);
+  const tags = [
+    ['d', slug],
+    ['anagram-room', '1'],
+    ['name', 'Media permissions'],
+    ['relay', relay],
+  ];
+  await publish(
+    finalizeEvent(
+      { kind: 0, created_at, tags: [], content: JSON.stringify({ name: 'Group creator' }) },
+      creator,
+    ),
+  );
+  await publish(finalizeEvent({ kind: 34550, created_at, tags, content: '' }, creator));
+  const link = `/public/${nip19.naddrEncode({ kind: 34550, pubkey: owner, identifier: slug, relays: [relay] })}`;
+  await navigateInApp(page, link);
+  const attach = page.getByRole('button', { name: 'Attach public media', exact: true });
+  const input = page.getByRole('textbox', { name: 'Public message', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Media sharing', exact: true });
+  await expect(attach).toBeEnabled();
+  await input.fill('Keep my draft');
+  let fileChoosers = 0;
+  page.on('filechooser', () => fileChoosers++);
+  for (const dark of [false, true]) {
+    await page.setViewportSize(dark ? { width: 390, height: 844 } : { width: 1280, height: 720 });
+    await page.evaluate((dark) => document.body.classList.toggle('body--dark', dark), dark);
+    await attach.click();
+    await expect(dialog).toContainText('Only trusted users can post media. Ask the group creator');
+    await expect(dialog.getByRole('link', { name: 'Group creator', exact: true })).toHaveAttribute(
+      'href',
+      `/chats/${owner}`,
+    );
+    await expect(dialog).toContainText('to be added to the trusted member list.');
+    await expect(page.locator('.composer input[type="file"]')).toHaveCount(0);
+    expect(fileChoosers).toBe(0);
+    await page.screenshot({
+      path: info.outputPath(`media-permission-${dark ? 'dark-mobile' : 'light-desktop'}.png`),
+    });
+    await dialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(input).toHaveValue('Keep my draft');
+  }
+  await attach.click();
+  await dialog.getByRole('link', { name: 'Group creator', exact: true }).click();
+  await expect(page).toHaveURL(/\/chats\/[^/]+$/);
+  await expect(
+    page.locator(`[data-testid="chat-thread"][data-chat-public-key="${owner}"]`),
+  ).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await publish(
+    finalizeEvent(
+      {
+        kind: 34550,
+        created_at: created_at + 1,
+        tags: [...tags, ['trusted', member.pubkey]],
+        content: '',
+      },
+      creator,
+    ),
+  );
+  await navigateInApp(page, link);
+  await expect(page.locator('.composer input[type="file"]')).toHaveCount(1);
+  const chooser = page.waitForEvent('filechooser');
+  await attach.click();
+  await (await chooser).setFiles([]);
+  await expect(dialog).toHaveCount(0);
+  expect(fileChoosers).toBe(1);
+});
+
+test('public message actions reuse private controls and synchronize replies, edits, forwarding, reactions and deletion', async ({
+  browser,
+}) => {
+  test.slow();
+  const a = await browser.newContext(),
+    b = await browser.newContext();
+  const alice = await a.newPage(),
+    bob = await b.newPage();
+  try {
+    const owner = await login(alice);
+    const destination = await create(alice, 'Forward destination');
+    const source = await create(alice, 'Message actions');
+    await login(bob);
+    await navigateInApp(bob, `/public/${source.naddr}`);
+    async function send(page: Page, text: string) {
+      await page.getByLabel('Public message', { exact: true }).fill(text);
+      await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    }
+    await send(alice, 'Action original');
+    const original = alice.getByTestId('public-message').filter({ hasText: 'Action original' });
+    await expect(original).toBeVisible();
+    const id = await original.getAttribute('data-event-id');
+    const ownMessage = alice.locator(`[id="message-${id}"]`);
+    const received = bob.locator(`[id="message-${id}"]`);
+    await expect(received).toBeVisible();
+    async function action(page: Page, row: ReturnType<Page['locator']>, name: string) {
+      await row.hover();
+      await row.getByRole('button', { name: 'Message actions', exact: true }).click();
+      await page.getByRole('menuitem', { name, exact: true }).click();
+    }
+    await action(bob, received, 'Reply');
+    await expect(bob.locator('.composer-context')).toContainText('Action original');
+    await send(bob, 'A public reply');
+    const reply = alice.getByTestId('public-message').filter({ hasText: 'A public reply' });
+    await expect(reply.locator('.reply-preview')).toContainText('Action original');
+    await reply.locator('.reply-preview').click();
+    await expect(ownMessage).toHaveClass(/highlighted/);
+
+    await alice.getByLabel('Public message', { exact: true }).fill('My unsent draft');
+    await action(alice, ownMessage, 'Edit');
+    await expect(alice.locator('.composer-context')).toContainText('Editing message');
+    await send(alice, 'Action edited once');
+    await expect(alice.getByLabel('Public message', { exact: true })).toHaveValue(
+      'My unsent draft',
+    );
+    await expect(ownMessage).toContainText('Action edited once');
+    await expect(received).toContainText('Action edited once');
+    await expect(ownMessage.getByTestId('message-edited-label')).toBeVisible();
+    await action(alice, ownMessage, 'Edit');
+    await send(alice, 'Action edited twice');
+    await expect(received).toContainText('Action edited twice');
+    await expect(reply.locator('.reply-preview')).toContainText('Action edited twice');
+
+    await received.hover();
+    await received.getByRole('button', { name: 'Message actions', exact: true }).click();
+    await expect(bob.getByRole('menuitem', { name: 'Edit', exact: true })).toHaveCount(0);
+    await expect(bob.getByRole('menuitem', { name: 'Delete', exact: true })).toHaveCount(0);
+    await bob.getByRole('button', { name: 'React', exact: true }).click();
+    await expect(
+      ownMessage.getByRole('button', { name: '👍 reaction', exact: true }),
+    ).toBeVisible();
+    await bob.reload();
+    await expect(received.getByRole('button', { name: '👍 reaction', exact: true })).toBeVisible();
+    await received.getByRole('button', { name: '👍 reaction', exact: true }).click();
+    await received.getByRole('button', { name: 'Remove reaction', exact: true }).click();
+    await expect(ownMessage.locator('.reactions')).toHaveCount(0);
+
+    await action(alice, ownMessage, 'Forward');
+    await alice
+      .getByRole('dialog', { name: 'forward', exact: true })
+      .getByTestId('forward-destination')
+      .filter({ hasText: 'Forward destination' })
+      .click();
+    await expect(alice.getByRole('dialog', { name: 'forward', exact: true })).toHaveCount(0);
+    await expect(alice).toHaveURL(new RegExp(`/public/${source.naddr}$`));
+    await navigateInApp(alice, `/public/${destination.naddr}`);
+    await expect(
+      alice.getByTestId('public-message').filter({ hasText: 'Action edited twice' }),
+    ).toBeVisible();
+    await navigateInApp(alice, `/public/${source.naddr}`);
+
+    // The same forward picker also sends public content to a normal private DM.
+    await received.getByTestId('thread-author-name-link').click();
+    await expect(bob).toHaveURL(/\/chats\/[^/]+$/);
+    await openDirectChatFromIdentifier(bob, nip19.npubEncode(owner.pubkey), 'Public owner');
+    await updateStoredContactRelays(bob, owner.pubkey, [relay]);
+    await navigateInApp(bob, `/public/${source.naddr}`);
+    await action(bob, received, 'Forward');
+    await bob
+      .getByRole('dialog', { name: 'forward', exact: true })
+      .locator(
+        `[data-testid="forward-destination"][data-kind="user"][data-public-key="${owner.pubkey}"]`,
+      )
+      .click();
+    await expect(bob.getByRole('dialog', { name: 'forward', exact: true })).toHaveCount(0);
+    await received.getByTestId('thread-author-name-link').click();
+    await expect(
+      bob.getByTestId('message-bubble').filter({ hasText: 'Action edited twice' }),
+    ).toBeVisible();
+    await navigateInApp(bob, `/public/${source.naddr}`);
+
+    await action(alice, ownMessage, 'Delete');
+    await expect(ownMessage).toContainText('Message deleted');
+    await expect(received).toContainText('Message deleted');
+    await expect(
+      received.getByRole('button', { name: 'Message actions', exact: true }),
+    ).toHaveCount(0);
+    await alice.reload();
+    await bob.reload();
+    await expect(alice.locator(`[id="message-${id}"]`)).toContainText('Message deleted');
+    await expect(bob.locator(`[id="message-${id}"]`)).toContainText('Message deleted');
+  } finally {
+    await a.close();
+    await b.close();
+  }
 });

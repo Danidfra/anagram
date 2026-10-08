@@ -42,6 +42,7 @@ function setup() {
   const deps = {
     ndk: new NostrClient(),
     recovery,
+    persistIncomingGroupEpochTicket: vi.fn(async () => {}),
     getLoggedInPublicKeyHex: () => owner.pubkey,
     ensureGroupIdentitySecretEpochState: async () => ({ contact, secret }),
     giftWrapSignedEvent: vi.fn(async (event: any) => event),
@@ -73,6 +74,21 @@ function setup() {
   };
 }
 describe('recoverable group membership publication', () => {
+  it('resends an existing member ticket without rotating the epoch or rewriting membership', async () => {
+    const f = setup();
+    const before = JSON.stringify(f.secret);
+    await f.runtime.sendGroupEpochTicket(f.group.pubkey, f.member.pubkey);
+    const ticket = f.deps.giftWrapSignedEvent.mock.calls[0][0];
+    expect(ticket.verifySignature()).toBe(true);
+    expect(ticket.tags).toEqual([
+      ['p', f.member.pubkey],
+      ['epoch', String(f.secret.epoch_number)],
+    ]);
+    expect(ticket.content).toBe(f.secret.epoch_privkey);
+    expect(JSON.stringify(f.secret)).toBe(before);
+    expect(f.recovery.update).not.toHaveBeenCalled();
+    expect(f.deps.publishGroupMembershipFollowSet).not.toHaveBeenCalled();
+  });
   it('does not distribute keys or overwrite membership when recovery state cannot be committed', async () => {
     const f = setup();
     f.recovery.update.mockRejectedValue(new Error('Recovery relay unavailable'));

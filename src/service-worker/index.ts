@@ -49,7 +49,13 @@ self.addEventListener('fetch', (event) => {
     // whose hashed chunks may not be cached. Deep links work offline too.
     event.respondWith(
       (async () => {
-        const saved = await readCached(shell);
+        // Static invitation pages must keep their redirect script when opened
+        // from an installed PWA, including while offline. No invitation data is cached.
+        const sharePage = /^\/join\/(chat|call)(?:\.html)?\/?$/.exec(url.pathname);
+        const navigationShell = sharePage
+          ? new URL(`join/${sharePage[1]}.html`, scope).href
+          : shell;
+        const saved = await readCached(navigationShell);
         if (!saved) return fetch(request);
         // Hosts such as `serve` redirect /index.html to /index. Cache Storage
         // preserves that redirect flag, but navigation requests use redirect:

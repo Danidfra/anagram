@@ -4,6 +4,8 @@
   import { useMessageStore } from '#src/stores/messageStore.ts';
   import ProfileName from './ProfileName.svelte';
   export let message: Message;
+  export let ontoggle: ((emoji: string, remove: boolean) => Promise<void>) | undefined = undefined;
+  export let readonly = false;
   let selected = '';
   $: reactions = message.meta.reactions ?? [];
   $: groups = [...new Set(reactions.map((reaction) => reaction.emoji))];
@@ -16,7 +18,8 @@
         (reaction) =>
           reaction.emoji === emoji && reaction.reactorPublicKey === nostr.getLoggedInPublicKeyHex(),
       );
-      if (mine) await messages.removeReaction(message.chatId, message.id, mine);
+      if (ontoggle) await ontoggle(emoji, Boolean(mine));
+      else if (mine) await messages.removeReaction(message.chatId, message.id, mine);
       else await messages.addReaction(message.chatId, message.id, emoji);
       selected = '';
     } catch {
@@ -50,7 +53,7 @@
               fallback={author.reactorPublicKey.slice(0, 16)}
             /><small>{author.reactorPublicKey.slice(0, 16)}</small>
           </div>{/each}
-        {#if selected === emoji}<button onclick={() => toggle(emoji)}
+        {#if selected === emoji && !readonly}<button onclick={() => toggle(emoji)}
             >{authors.some((a) => a.reactorPublicKey === nostr.getLoggedInPublicKeyHex())
               ? 'Remove reaction'
               : 'Add reaction'}</button
@@ -84,6 +87,7 @@
     max-width: 260px;
     padding: 10px;
     background: var(--nc-menu-bg);
+    color: var(--nc-text);
     border: 1px solid var(--nc-border);
     border-radius: 8px;
     box-shadow: var(--nc-shadow-md);

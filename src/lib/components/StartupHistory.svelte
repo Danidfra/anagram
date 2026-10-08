@@ -264,10 +264,10 @@
     color: var(--nc-text-secondary);
   }
   .success {
-    color: #16a34a;
+    color: var(--nc-success);
   }
   .failed {
-    color: #dc2626;
+    color: var(--nc-danger);
   }
   .mini-progress {
     overflow: hidden;

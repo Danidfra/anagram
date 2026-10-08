@@ -50,8 +50,10 @@ test('group owner can create a group, invite a member, and exchange messages bot
       about: groupAbout,
     });
 
-    await pauseRelayService('relay-two');
     const invite = await selectGroupInviteMembers(alice.page, [bob.session.publicKey]);
+    // Opening the form verifies recovery too; interrupt the relay after that read
+    // to exercise the independent guard immediately before saving.
+    await pauseRelayService('relay-two');
     await invite.getByRole('button', { name: 'Invite (1)', exact: true }).click();
     await expect(alice.page.getByRole('alert')).toContainText('Could not verify group state');
     await expect(

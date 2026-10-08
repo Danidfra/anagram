@@ -98,6 +98,7 @@ function makeRelayStatus(overrides: Partial<MessageRelayStatus> = {}): MessageRe
 function createDeps() {
   const deps = {
     appendRelayStatusesToGroupMemberTicketEvent: vi.fn().mockResolvedValue(undefined),
+    prepareOutgoingPrivateMessage: vi.fn(async () => {}),
     appendRelayStatusesToMessageEvent: vi.fn().mockResolvedValue(undefined),
     buildFailedOutboundRelayStatuses: vi.fn((relayUrls, scope, detail) => {
       return relayUrls.map((relayUrl) =>
@@ -326,6 +327,32 @@ describe('userActions runtime', () => {
       direction: 'out',
       relay_statuses: [makeRelayStatus()],
     });
+  });
+
+  it('rejects unauthorized retries before reusing or publishing a cached envelope', async () => {
+    const deps = createDeps();
+    deps.prepareOutgoingPrivateMessage.mockRejectedValue(
+      new Error('Invalid membership proof'),
+    );
+    serviceMocks.chatDataService.getMessageById.mockResolvedValue({
+      id: 7,
+      event_id: 'event-1',
+    });
+    serviceMocks.nostrEventDataService.getEventById.mockResolvedValue({
+      direction: 'out',
+      event: {
+        id: 'event-1',
+        kind: 14,
+        created_at: 1700000000,
+        pubkey: 's'.repeat(64),
+        tags: [['p', 'r'.repeat(64)]],
+      },
+    });
+    await expect(
+      createUserActions(deps).retryDirectMessageRelay(7, 'wss://relay.example', 'recipient'),
+    ).rejects.toThrow('membership proof');
+    expect(ndkMocks.giftWrap).not.toHaveBeenCalled();
+    expect(deps.publishEventWithRelayStatuses).not.toHaveBeenCalled();
   });
 
   it('marks relay retries as pending first and failed when republish errors', async () => {

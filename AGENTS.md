@@ -2,7 +2,7 @@
 
 This is the SvelteKit 3 / Tauri 2 Anagram rebuild. Use npm and the committed lockfile. Configuration belongs in `vite.config.ts`; SvelteKit 3 does not use `svelte.config.js`. Internal package imports use `#src/` with explicit `.ts` or `.svelte` extensions.
 
-Keep Nostr protocol work in `src/stores/nostr/` and the nostr-tools adapter in `src/lib/nostr/client.ts`. Read `nips/NIPS_USED.md`, `nips/nip171.md`, and `nips/nip171b.md` before modifying group or message semantics. Do not add NDK.
+Keep Nostr protocol work in `src/stores/nostr/` and the nostr-tools adapter in `src/lib/nostr/client.ts`. Read `nips/NIPS_USED.md` and `nips/nip171.md` before modifying group or message semantics. Do not add NDK.
 
 Keep messages in IndexedDB. Do not introduce full-history reads into startup, message ingestion, thread paging or search jumps. Preserve per-account queue isolation, real-EOSE coverage checks and bounded hydration. Keep desktop split view and mobile route navigation working.
 

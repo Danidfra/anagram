@@ -124,6 +124,7 @@ function createDeps() {
   };
 
   return {
+    verifyIncomingGroupMessage: vi.fn().mockResolvedValue(true),
     appendRelayStatusesToMessageEvent: vi.fn().mockResolvedValue(undefined),
     applyPendingIncomingDeletionsForMessage: vi.fn(async (messageRow) => messageRow),
     applyPendingIncomingReactionsForMessage: vi.fn(async (messageRow) => messageRow),
@@ -231,6 +232,30 @@ describe('privateMessagesIngestRuntime', () => {
     serviceMocks.nostrEventDataService.init.mockResolvedValue(undefined);
     serviceMocks.nostrEventDataService.upsertEvent.mockResolvedValue(undefined);
     ndkMocks.giftUnwrap.mockReset();
+  });
+
+  it.each([14, 7, 5])('drops unauthorized group kind %s before any effects', async (kind) => {
+    const deps = createDeps();
+    const group = 'c'.repeat(64),
+      epoch = 'd'.repeat(64),
+      account = 'b'.repeat(64);
+    deps.resolveIncomingPrivateMessageRecipientContext.mockResolvedValue({
+      recipientPubkey: epoch,
+      unwrapSigner: {} as never,
+      groupChatPublicKey: group,
+    });
+    deps.verifyIncomingGroupMessage.mockResolvedValue(false);
+    ndkMocks.giftUnwrap.mockResolvedValue(makeRumorEvent({ recipientPubkey: epoch, kind }));
+    const runtime = createPrivateMessagesIngestRuntime(deps);
+    await runtime.queuePrivateMessageIngestion(makeWrappedEvent(), account);
+    expect(deps.verifyIncomingGroupMessage).toHaveBeenCalledOnce();
+    expect(serviceMocks.chatDataService.createMessage).not.toHaveBeenCalled();
+    expect(serviceMocks.chatDataService.applyMessageEdit).not.toHaveBeenCalled();
+    expect(serviceMocks.nostrEventDataService.upsertEvent).not.toHaveBeenCalled();
+    expect(deps.processIncomingDeletionRumorEvent).not.toHaveBeenCalled();
+    expect(deps.processIncomingReactionRumorEvent).not.toHaveBeenCalled();
+    expect(deps.showIncomingMessageBrowserNotification).not.toHaveBeenCalled();
+    expect(deps.chatStore.applyIncomingMessage).not.toHaveBeenCalled();
   });
 
   it('preempts a persisted history page when foreground traffic arrives', async () => {
@@ -911,13 +936,13 @@ describe('privateMessagesIngestRuntime', () => {
       unwrapSigner: {} as never,
       groupChatPublicKey: groupPublicKey,
     });
-    deps.findGroupChatEpochContextByRecipientPubkey.mockResolvedValue({
+    deps.findGroupChatEpochContextByRecipientPubkey.mockImplementation(async (key) => key === epochPublicKey ? {
       chat: groupChat,
       epochEntry: {
         epoch_number: 0,
         epoch_public_key: epochPublicKey,
       },
-    });
+    } : null);
     deps.resolveIncomingChatInboxStateValue.mockReturnValue('accepted');
     deps.shouldNotifyForAcceptedChatOnly.mockResolvedValue(true);
     ndkMocks.giftUnwrap.mockResolvedValue(rumorEvent);
@@ -1144,13 +1169,13 @@ describe('privateMessagesIngestRuntime', () => {
       unwrapSigner: {} as never,
       groupChatPublicKey: groupPublicKey,
     });
-    deps.findGroupChatEpochContextByRecipientPubkey.mockResolvedValue({
+    deps.findGroupChatEpochContextByRecipientPubkey.mockImplementation(async (key) => key === oldEpochPublicKey ? {
       chat: groupChat,
       epochEntry: {
         epoch_number: 0,
         epoch_public_key: oldEpochPublicKey,
       },
-    });
+    } : null);
     deps.findHigherKnownGroupEpochConflict.mockReturnValue({
       higherEpochEntry,
       olderHigherEpochEntry: higherEpochEntry,

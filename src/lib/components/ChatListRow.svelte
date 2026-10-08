@@ -6,6 +6,7 @@
   export let publicKey = '';
   export let testId = 'chat-item';
   export let onselect: () => void;
+  export let onkeydown: ((event: KeyboardEvent) => void) | undefined = undefined;
   export let children: Snippet;
   export let actions: Snippet | undefined = undefined;
 </script>
@@ -14,6 +15,7 @@
   <button
     class="chat-item"
     onclick={onselect}
+    {onkeydown}
     data-testid={testId}
     data-chat-id={chatId || undefined}
     data-chat-public-key={publicKey || undefined}
@@ -47,7 +49,12 @@
   }
   .chat-row.active {
     background: var(--nc-active);
+  }
+  .chat-row.active > .chat-item {
     color: var(--nc-active-text);
+  }
+  .active > .chat-item :global(.private-group-badge) {
+    color: var(--nc-active-group-icon, var(--q-primary));
   }
   .chat-row :global(.chat-copy strong) {
     font-size: 14px;
@@ -57,9 +64,9 @@
     line-height: 1.25;
     margin-top: 4px;
   }
-  .active :global(.chat-preview),
-  .active :global(time),
-  .active :global(.preview-author) {
+  .active > .chat-item :global(.chat-preview),
+  .active > .chat-item :global(time),
+  .active > .chat-item :global(.preview-author) {
     color: var(--nc-active-subtext);
   }
   @media (max-width: 767px) {

@@ -31,6 +31,7 @@ import {
 import { buildMentionMetadata, formatGroupMentionsForDisplay } from '#src/utils/nostrMentions.ts';
 
 export function createPrivateMessagesIngestRuntime({
+  verifyIncomingGroupMessage,
   appendRelayStatusesToMessageEvent,
   applyPendingIncomingDeletionsForMessage,
   applyPendingIncomingReactionsForMessage,
@@ -569,7 +570,11 @@ export function createPrivateMessagesIngestRuntime({
 
     let rumorEvent: ClientEvent;
     try {
-      rumorEvent = await giftUnwrap(wrappedEvent, undefined, recipientContext.unwrapSigner);
+      rumorEvent = await giftUnwrap(
+        wrappedEvent,
+        { requireEmptySealTags: Boolean(recipientContext.groupChatPublicKey) },
+        recipientContext.unwrapSigner,
+      );
       if (processingGeneration !== ingestQueueGeneration) return false;
     } catch (error) {
       logDeveloperTrace('warn', 'inbound', 'unwrap-failed', {
@@ -618,6 +623,9 @@ export function createPrivateMessagesIngestRuntime({
       return;
     }
 
+    if (await findGroupChatEpochContextByRecipientPubkey(senderPubkeyHex)) return;
+    if (processingGeneration !== ingestQueueGeneration) return false;
+
     // Call controls never enter chat, contact, message, unread, or notification persistence.
     // Only one-to-one rumors addressed to the active account can negotiate a call.
     if (rumorEvent.kind === CALL_SIGNAL_KIND) {
@@ -654,6 +662,32 @@ export function createPrivateMessagesIngestRuntime({
           break;
         }
       }
+    }
+
+    if (resolvedGroupChatPublicKey) {
+      if (
+        recipientContext.groupChatPublicKey !== resolvedGroupChatPublicKey ||
+        !(await verifyIncomingGroupMessage(rumorEvent, recipientContext.recipientPubkey))
+      ) {
+        logInboundEvent('drop', {
+          reason: 'invalid-group-membership-proof',
+          wrappedEventId: wrappedEvent.id,
+        });
+        return;
+      }
+      if (processingGeneration !== ingestQueueGeneration) return false;
+      // Apply epoch freshness to mutations as well as messages. Old epochs remain readable
+      // for history preceding the next observed ticket, never writable after rotation.
+      if (
+        [5, 7].includes(rumorEvent.kind) &&
+        resolvedGroupEpochContext &&
+        findHigherKnownGroupEpochConflict(
+          resolvedGroupEpochContext.chat,
+          resolvedGroupEpochContext.epochEntry.epoch_number,
+          toIsoTimestampFromUnix(rumorEvent.created_at),
+        )?.olderHigherEpochEntry
+      )
+        return;
     }
 
     const chatPubkey = resolvedGroupChatPublicKey
@@ -914,6 +948,8 @@ export function createPrivateMessagesIngestRuntime({
           fallbackName: fallbackGroupName,
           accepted: wasAcceptedGroup,
           invitationCreatedAt: incomingEpochCreatedAt,
+          invitationProof: verificationResult.signedEvent?.sig,
+          invitationEventId: verificationResult.signedEvent?.id,
           seedRelayUrls: wrappedRelayUrls,
         },
       );

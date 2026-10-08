@@ -2,7 +2,14 @@ import { confirmGroupBackup } from './parity/helpers';
 import { finishOnboarding } from './auth-helpers';
 import WebSocket from 'ws';
 import { test, expect, type Page } from '@playwright/test';
-import { generateSecretKey, getPublicKey, nip19, nip59, nip44, finalizeEvent } from 'nostr-tools';
+import {
+  generateSecretKey,
+  getPublicKey,
+  nip19,
+  nip59,
+  nip44,
+  finalizeEvent,
+} from 'nostr-tools';
 const relay = 'ws://127.0.0.1:7777/';
 async function login(page: Page, key = generateSecretKey()) {
   await page.addInitScript((relay) => {
@@ -29,6 +36,50 @@ async function contact(page: Page, pubkey: string, name: string) {
   await page.getByRole('button', { name: 'Add contact', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(page.getByTestId('message-composer-input')).toBeVisible();
+}
+async function groupTicketState(page: Page, clearProof = false) {
+  return page.evaluate(
+    (clearProof) =>
+      new Promise<{ proof: string; epoch: string }>((resolve, reject) => {
+        const request = indexedDB.open('chat-data-indexeddb-v2');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const transaction = db.transaction('chats', clearProof ? 'readwrite' : 'readonly');
+          let result: { proof: string; epoch: string } | undefined;
+          transaction.oncomplete = () => {
+            db.close();
+            result ? resolve(result) : reject(new Error('Group fixture not found'));
+          };
+          transaction.onerror = () => {
+            db.close();
+            reject(transaction.error);
+          };
+          const cursor = transaction.objectStore('chats').openCursor();
+          cursor.onsuccess = () => {
+            const entry = cursor.result;
+            if (!entry) return;
+            const chat = entry.value;
+            if (chat.type !== 'group') {
+              entry.continue();
+              return;
+            }
+            const epoch = chat.meta.group_epoch_keys.find(
+              (key: { epoch_public_key: string }) =>
+                key.epoch_public_key === chat.meta.current_epoch_public_key,
+            );
+            if (clearProof) {
+              delete epoch.invitation_proof;
+              delete epoch.invitation_event_id;
+              delete chat.meta.group_member_ticket_deliveries;
+              entry.update(chat);
+            }
+            result = { proof: epoch.invitation_proof ?? '', epoch: epoch.epoch_public_key };
+          };
+        };
+      }),
+    clearProof,
+  );
 }
 test('invalid key remains on login', async ({ page }) => {
   await page.goto('/');
@@ -111,18 +162,98 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await a.getByTestId('message-send-button').click();
   await b.getByRole('button', { name: 'Chat options' }).click();
   await b.getByRole('button', { name: /Message requests/ }).click();
-  await expect(b.getByTestId('chat-item').filter({ hasText: 'Private test group' })).toBeVisible();
+  await expect(
+    b.getByTestId('chat-item').filter({ hasText: 'Private test group' }),
+  ).toBeVisible();
   await b.getByTestId('chat-item').filter({ hasText: 'Private test group' }).click();
   await b.getByRole('button', { name: 'Accept', exact: true }).click();
   await expect(
     b.getByTestId('message-bubble').filter({ hasText: 'Hello encrypted group' }),
   ).toBeVisible();
+  // A missing personal ticket must not lock out an owner who is already a member.
+  const ownerEpoch = (await groupTicketState(a, true)).epoch;
+  await a.getByTestId('message-composer-input').fill('Owner issued personal ticket');
+  await a.getByTestId('message-send-button').click();
+  await expect(
+    b.getByTestId('message-bubble').filter({ hasText: 'Owner issued personal ticket' }),
+  ).toBeVisible();
+  const issued = await groupTicketState(a);
+  expect(issued.proof).toMatch(/^[0-9a-f]{128}$/);
+  expect(issued.epoch).toBe(ownerEpoch);
+  await a.reload();
+  await expect(a.getByTestId('message-composer-input')).toBeVisible();
+  expect(await groupTicketState(a)).toEqual(issued);
+
+  // An ordinary member can receive a replacement without a rotation or rejoining.
+  expect((await groupTicketState(b, true)).proof).toBe('');
+  await a.getByRole('button', { name: 'Contact profile', exact: true }).click();
+  await a.getByRole('tab', { name: 'Members', exact: true }).click();
+  await a
+    .locator(`.member[data-public-key="${bob.pubkey}"]`)
+    .getByRole('button', { name: 'Resend invitation', exact: true })
+    .click();
+  await expect(a.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
+  await a.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await expect.poll(async () => (await groupTicketState(b)).proof).toMatch(/^[0-9a-f]{128}$/);
+  const resent = await groupTicketState(b);
+  expect(resent.epoch).toBe(ownerEpoch);
+  await b.reload();
+  await expect(b.getByTestId('message-composer-input')).toBeVisible();
+  expect(await groupTicketState(b)).toEqual(resent);
   // Members can reply but must not see owner-only group controls.
   await b.getByTestId('message-composer-input').fill('Reply from group member');
   await b.getByTestId('message-send-button').click();
   await expect(
     a.getByTestId('message-bubble').filter({ hasText: 'Reply from group member' }),
   ).toBeVisible();
+  // Encrypting to the public epoch address must not grant posting rights.
+  const epochPubkey = await a.evaluate(async () => {
+    const path = '/src/services/chatDataService.ts';
+    const url = performance
+      .getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((url) => new URL(url).pathname === path);
+    const { chatDataService } = await import(url ?? path);
+    const chats = await chatDataService.listChats();
+    return chats.find((chat: { type: string }) => chat.type === 'group').meta
+      .current_epoch_public_key as string;
+  });
+  const outsider = generateSecretKey();
+  const forged = nip59.createRumor(
+    {
+      kind: 14,
+      created_at: Math.floor(Date.now() / 1000),
+      content: 'Uninvited group injection',
+      tags: [['p', epochPubkey]],
+    },
+    outsider,
+  );
+  await publishFixture(relay, [
+    nip59.createWrap(nip59.createSeal(forged, outsider, epochPubkey), epochPubkey),
+  ]);
+  await b
+    .getByTestId('message-bubble')
+    .filter({ hasText: 'Hello encrypted group' })
+    .click({ button: 'right' });
+  await b.getByRole('button', { name: 'React', exact: true }).click();
+  await expect(
+    a
+      .getByTestId('message-bubble')
+      .filter({ hasText: 'Hello encrypted group' })
+      .locator('.reactions'),
+  ).toContainText('👍');
+  await a
+    .getByTestId('message-bubble')
+    .filter({ hasText: 'Hello encrypted group' })
+    .click({ button: 'right' });
+  await a.getByRole('menuitem', { name: 'Edit', exact: true }).click();
+  await a.getByTestId('message-composer-input').fill('Edited encrypted group message');
+  await a.getByTestId('message-send-button').click();
+  await expect(
+    b.getByTestId('message-bubble').filter({ hasText: 'Edited encrypted group message' }),
+  ).toBeVisible();
+  await expect(a.getByText('Uninvited group injection', { exact: true })).toHaveCount(0);
+  await expect(b.getByText('Uninvited group injection', { exact: true })).toHaveCount(0);
   await b.getByRole('button', { name: 'Contact profile', exact: true }).click();
   await b.getByRole('tab', { name: 'Members', exact: true }).click();
   await expect(b.getByRole('button', { name: 'Invite members', exact: true })).toHaveCount(0);
@@ -131,7 +262,9 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await b.getByRole('button', { name: 'Close dialog', exact: true }).click();
 
   await a.getByRole('button', { name: 'Contact profile', exact: true }).click();
-  await a.getByLabel('Description', { exact: true }).fill('A private group with rotating keys');
+  await a
+    .getByLabel('Description', { exact: true })
+    .fill('A private group with rotating keys');
   await a.getByRole('button', { name: 'Save group profile', exact: true }).click();
   await expect(a.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
   await a.getByRole('tab', { name: 'Relays', exact: true }).click();
@@ -157,7 +290,9 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await login(restored, bob.key);
   await restored.getByTestId('chat-item').filter({ hasText: 'Private test group' }).click();
   await expect(
-    restored.getByTestId('message-bubble').filter({ hasText: 'Hello encrypted group' }),
+    restored
+      .getByTestId('message-bubble')
+      .filter({ hasText: 'Edited encrypted group message' }),
   ).toBeVisible();
   await expect(
     restored.getByTestId('message-bubble').filter({ hasText: 'Reply from group member' }),
@@ -182,13 +317,16 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await expect(a.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
   await a.getByRole('tab', { name: 'Epochs', exact: true }).click();
   await expect(a.getByTestId('group-details').locator('.epoch')).toHaveCount(3);
-  const currentEpoch = await a.getByLabel('Epoch public key', { exact: true }).first().inputValue();
+  const currentEpoch = await a
+    .getByLabel('Epoch public key', { exact: true })
+    .first()
+    .inputValue();
   await b.getByRole('button', { name: 'Contact profile', exact: true }).click();
   await b.getByRole('tab', { name: 'Epochs', exact: true }).click();
   await expect(b.getByTestId('group-details').locator('.epoch')).toHaveCount(2);
-  expect(await b.getByLabel('Epoch public key', { exact: true }).first().inputValue()).not.toEqual(
-    currentEpoch,
-  );
+  expect(
+    await b.getByLabel('Epoch public key', { exact: true }).first().inputValue(),
+  ).not.toEqual(currentEpoch);
   await b.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await a.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await a.getByTestId('message-composer-input').fill('Only remaining members');
@@ -198,6 +336,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   ).toBeVisible();
   // A later direct message is a relay/ingestion barrier, not an arbitrary sleep.
   await a.locator(`[data-testid="chat-item"][data-chat-public-key="${bob.pubkey}"]`).click();
+  await expect(a.getByTestId('chat-thread')).toHaveAttribute('data-chat-public-key', bob.pubkey);
   await a.getByTestId('message-composer-input').fill('Removal check complete');
   await a.getByTestId('message-send-button').click();
   await b.locator(`[data-testid="chat-item"][data-chat-public-key="${alice.pubkey}"]`).click();

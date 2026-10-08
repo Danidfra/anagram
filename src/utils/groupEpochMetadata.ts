@@ -1,6 +1,30 @@
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import type { ChatGroupEpochKey } from '#src/types/chat.ts';
 
+// Keep timestamp and signature together; recovery-only key writes must not erase a ticket.
+export function preferGroupEpochInvitation(
+  previous: ChatGroupEpochKey,
+  next: ChatGroupEpochKey,
+): ChatGroupEpochKey {
+  if (!next.invitation_created_at || (previous.invitation_proof && !next.invitation_proof))
+    return previous;
+  const before = Date.parse(previous.invitation_created_at ?? '') || 0;
+  const after = Date.parse(next.invitation_created_at) || 0;
+  if (
+    after < before ||
+    (after === before &&
+      previous.invitation_proof &&
+      (previous.invitation_event_id ?? '') <= (next.invitation_event_id ?? ''))
+  )
+    return previous;
+  return {
+    ...previous,
+    invitation_created_at: next.invitation_created_at,
+    invitation_proof: next.invitation_proof,
+    invitation_event_id: next.invitation_event_id,
+  };
+}
+
 export function normalizeChatGroupEpochKeysValue(value: unknown): ChatGroupEpochKey[] {
   if (!Array.isArray(value)) {
     return [];
@@ -25,7 +49,7 @@ export function normalizeChatGroupEpochKeysValue(value: unknown): ChatGroupEpoch
         : '';
 
     if (
-      !Number.isInteger(epochNumber) ||
+      !Number.isSafeInteger(epochNumber) ||
       epochNumber < 0 ||
       !epochPublicKey ||
       !epochPrivateKeyEncrypted
@@ -37,6 +61,16 @@ export function normalizeChatGroupEpochKeysValue(value: unknown): ChatGroupEpoch
       epoch_number: Math.floor(epochNumber),
       epoch_public_key: epochPublicKey,
       epoch_private_key_encrypted: epochPrivateKeyEncrypted,
+      ...('invitation_proof' in entry &&
+      typeof entry.invitation_proof === 'string' &&
+      /^[0-9a-f]{128}$/.test(entry.invitation_proof)
+        ? { invitation_proof: entry.invitation_proof }
+        : {}),
+      ...('invitation_event_id' in entry &&
+      typeof entry.invitation_event_id === 'string' &&
+      /^[0-9a-f]{64}$/.test(entry.invitation_event_id)
+        ? { invitation_event_id: entry.invitation_event_id }
+        : {}),
       ...('invitation_created_at' in entry &&
       typeof entry.invitation_created_at === 'string' &&
       entry.invitation_created_at.trim()
@@ -71,16 +105,11 @@ export function mergeGroupEpochMetadata(
   for (const entry of normalizeChatGroupEpochKeysValue(next.group_epoch_keys)) {
     const previous = epochs.get(`${entry.epoch_number}:${entry.epoch_public_key}`);
     if (!previous) epochs.set(`${entry.epoch_number}:${entry.epoch_public_key}`, entry);
-    else if (
-      previous.epoch_public_key === entry.epoch_public_key &&
-      Date.parse(entry.invitation_created_at ?? '') >
-        (Date.parse(previous.invitation_created_at ?? '') || 0)
-    ) {
-      epochs.set(`${entry.epoch_number}:${entry.epoch_public_key}`, {
-        ...previous,
-        invitation_created_at: entry.invitation_created_at,
-      });
-    }
+    else
+      epochs.set(
+        `${entry.epoch_number}:${entry.epoch_public_key}`,
+        preferGroupEpochInvitation(previous, entry),
+      );
   }
   const keys = [...epochs.values()].sort((a, b) => b.epoch_number - a.epoch_number);
   const current = keys[0];

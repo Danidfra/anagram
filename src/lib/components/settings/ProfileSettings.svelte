@@ -11,6 +11,10 @@
   import { createEmptyContactProfileForm } from '#src/types/contactProfile.ts';
   import { buildContactProfilePublishPayload } from '#src/utils/contactProfilePublish.ts';
   import Icon from '../Icon.svelte';
+  import ImageUrlField from '../ImageUrlField.svelte';
+  let pictureUploading = false,
+    bannerUploading = false;
+  $: imageUploading = pictureUploading || bannerUploading;
   const nostr = useNostrStore(),
     relays = useRelayStore();
   const pubkey = nostr.getLoggedInPublicKeyHex() ?? '',
@@ -76,7 +80,7 @@
     }
   }
   async function publish() {
-    if (busy || !ready) return;
+    if (busy || !ready || imageUploading) return;
     busy = true;
     error = '';
     notice = '';
@@ -119,7 +123,7 @@
     ><button
       class="primary"
       data-testid="contact-profile-publish-button"
-      disabled={busy || !ready}
+      disabled={busy || !ready || imageUploading}
       onclick={publish}>{$translate('common.publishAction')}</button
     >
   </div>
@@ -144,30 +148,53 @@
     <details open>
       <summary>{$translate('profile.userMetadataNip01')}</summary>
       <div class="profile-fields">
-        {#each fields as [key, label]}<label class="profile-field" class:filled={!!form[key]}
-            ><span>{$translate(label)}</span>{#if key === 'about'}<textarea
-                bind:value={form[key]}
-                use:autosizeTextarea={form[key]}
-                disabled={busy}
-                rows="1"></textarea>{:else}<input
-                bind:value={form[key]}
-                disabled={busy}
-                data-testid={`profile-${key}`}
-                spellcheck="false"
-              />{/if}</label
-          >{/each}
+        {#each fields as [key, label]}{#if key === 'picture'}
+            <ImageUrlField
+              label={$translate(label)}
+              bind:value={form.picture}
+              bind:uploading={pictureUploading}
+              disabled={busy}
+              compact
+              testId="profile-picture"
+              contextKey={pubkey}
+              onchange={() => (dirty = true)}
+            />
+          {:else}<label class="profile-field" class:filled={!!form[key]}
+              ><span>{$translate(label)}</span>{#if key === 'about'}<textarea
+                  bind:value={form[key]}
+                  use:autosizeTextarea={form[key]}
+                  disabled={busy}
+                  rows="1"></textarea>{:else}<input
+                  bind:value={form[key]}
+                  disabled={busy}
+                  data-testid={`profile-${key}`}
+                  spellcheck="false"
+                />{/if}</label
+            >{/if}{/each}
       </div>
     </details>
     <details>
       <summary>{$translate('profile.extraMetadataFieldsNip24')}</summary>
       <div class="profile-fields">
-        {#each extra as [key, label]}<label class="profile-field" class:filled={!!form[key]}
-            ><span>{$translate(label)}</span><input
-              bind:value={form[key]}
+        {#each extra as [key, label]}{#if key === 'banner'}
+            <ImageUrlField
+              label={$translate(label)}
+              kind="banner"
+              bind:value={form.banner}
+              bind:uploading={bannerUploading}
               disabled={busy}
-              data-testid={`profile-${key}`}
-            /></label
-          >{/each}
+              compact
+              testId="profile-banner"
+              contextKey={pubkey}
+              onchange={() => (dirty = true)}
+            />
+          {:else}<label class="profile-field" class:filled={!!form[key]}
+              ><span>{$translate(label)}</span><input
+                bind:value={form[key]}
+                disabled={busy}
+                data-testid={`profile-${key}`}
+              /></label
+            >{/if}{/each}
         <label class="settings-switch"
           ><span
             >{$translate('profile.bot')}<small
@@ -230,7 +257,11 @@
     </details>
   </div>
 </div>
-<dialog bind:this={shareDialog} class="settings-dialog" use:dismissOnBackdrop={() => shareDialog.close()}>
+<dialog
+  bind:this={shareDialog}
+  class="settings-dialog"
+  use:dismissOnBackdrop={() => shareDialog.close()}
+>
   <h2>{$translate('common.share')}</h2>
   {#if qr}<img src={qr} alt="Public profile QR code" />{/if}
   <p class="settings-key">{npub}</p>

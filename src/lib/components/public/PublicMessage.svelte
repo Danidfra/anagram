@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { publicGroupLinkTarget } from '#src/utils/publicGroupLink.ts';
   import type { NostrEvent } from '#src/lib/nostr/client.ts';
   import {
     formatMessage,
@@ -11,19 +12,24 @@
   import MessageBody from '../MessageBody.svelte';
   import { openExternalHttpUrl } from '#src/utils/externalLinks.ts';
   export let event: NostrEvent;
+  export let displayMessage: Message | undefined = undefined;
   export let trusted = false;
+  export let bubbleLayout = false;
   export let oncontact: (publicKey: string) => void = () => {};
-  // Never invoke rich parsing or create media components for an untrusted sender.
+  // Untrusted senders supply literal text parts, with no rich parsing, links or media.
   function safeParts(parts: FormattedMessagePart[]): FormattedMessagePart[] {
     return parts.map((p) =>
       p.type === 'format'
         ? { ...p, children: safeParts(p.children) }
-        : p.type === 'url' && !previewUrl(p.href)
+        : p.type === 'url' && !publicGroupLinkTarget(p.href) && !previewUrl(p.href)
           ? { type: 'text', text: p.text, key: p.key }
           : p,
     );
   }
-  $: parts = trusted ? safeParts(formatMessage(event.content)) : [];
+  let parts: FormattedMessagePart[];
+  $: parts = trusted
+    ? safeParts(formatMessage(event.content))
+    : [{ type: 'text', text: redactPublicLinks(event.content), key: 'plain' }];
   $: urls = trusted
     ? messageFormatUrls(parts)
     : { visible: new Set<string>(), hidden: new Set<string>() };
@@ -66,8 +72,9 @@
       ].slice(0, 4)
     : [];
   $: message = {
-    ...publicMessageForDisplay(event),
+    ...(displayMessage ?? publicMessageForDisplay(event)),
     meta: {
+      ...displayMessage?.meta,
       attachments: media.map((item) => ({
         type: 'media',
         url: item.url,
@@ -78,23 +85,13 @@
   } satisfies Message;
 </script>
 
-{#if trusted}
-  <MessageBody
-    {message}
-    formattedParts={parts}
-    allowMedia
-    bubbleLayout
-    {oncontact}
-    onroom={(url) => {
-      if (previewUrl(url)) void openExternalHttpUrl(url);
-    }}
-  />
-{:else}<div class="public-message-content">{redactPublicLinks(event.content)}</div>{/if}
-
-<style>
-  .public-message-content {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    min-width: 0;
-  }
-</style>
+<MessageBody
+  {message}
+  formattedParts={parts}
+  allowMedia={trusted}
+  {bubbleLayout}
+  {oncontact}
+  onroom={(url) => {
+    if (previewUrl(url)) void openExternalHttpUrl(url);
+  }}
+/>

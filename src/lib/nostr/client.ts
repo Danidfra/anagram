@@ -489,11 +489,19 @@ export async function giftWrap(
   await wrap.sign(ephemeral);
   return wrap;
 }
-export async function giftUnwrap(wrap: ClientEvent, _?: unknown, signer = wrap.ndk?.signer) {
+export async function giftUnwrap(
+  wrap: ClientEvent,
+  options?: { requireEmptySealTags?: boolean },
+  signer = wrap.ndk?.signer,
+) {
   if (signer instanceof NostrPrivateKeySigner && typeof Worker !== 'undefined')
     return new ClientEvent(
       wrap.ndk,
-      await unwrapInWorker(wrap.rawEvent() as Event, signer.secretKey),
+      await unwrapInWorker(
+        wrap.rawEvent() as Event,
+        signer.secretKey,
+        options?.requireEmptySealTags,
+      ),
     );
   if (!signer || wrap.kind !== 1059 || !wrap.verifySignature())
     throw new Error('Invalid gift wrap');
@@ -506,13 +514,20 @@ export async function giftUnwrap(wrap: ClientEvent, _?: unknown, signer = wrap.n
       ),
     ),
   );
-  if (seal.kind !== 13 || !seal.verifySignature()) throw new Error('Invalid seal');
+  if (
+    seal.kind !== 13 ||
+    !seal.verifySignature() ||
+    (options?.requireEmptySealTags && seal.tags.length !== 0)
+  )
+    throw new Error('Invalid seal');
   const rumor: NostrEvent = parsePrivateJson(
     await privateOperation(
       () => signer.decrypt(seal.author, seal.content, 'nip44'),
       'Unable to decrypt seal',
     ),
   );
+  if (options?.requireEmptySealTags && rumor.sig)
+    throw new Error('Group rumor must be unsigned');
   return new ClientEvent(wrap.ndk, normalizeRumor(rumor, seal.pubkey));
 }
 export class NostrRelayList extends ClientEvent {

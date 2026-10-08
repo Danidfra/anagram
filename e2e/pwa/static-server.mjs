@@ -12,6 +12,7 @@ const types = {
   '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
   '.ico': 'image/x-icon',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
@@ -20,11 +21,14 @@ createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
     // Match serve's clean-URL redirect used by the VPS deployment.
-    if (pathname === '/index.html') {
-      response.writeHead(301, { Location: '/index', 'Cache-Control': 'no-cache' }).end();
+    if (pathname === '/index.html' || /^\/join\/(chat|call)\.html$/.test(pathname)) {
+      response
+        .writeHead(301, { Location: pathname.slice(0, -5), 'Cache-Control': 'no-cache' })
+        .end();
       return;
     }
-    let file = resolve(root, '.' + pathname);
+    const sharePath = /^\/join\/(chat|call)\/?$/.exec(pathname);
+    let file = resolve(root, '.' + (sharePath ? `/join/${sharePath[1]}.html` : pathname));
     if (file !== root && !file.startsWith(root + sep)) {
       response.writeHead(403).end();
       return;

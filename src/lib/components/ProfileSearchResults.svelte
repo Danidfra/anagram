@@ -8,7 +8,16 @@
   import { getPublicProfile, rememberPublicProfile } from '#src/lib/state/publicProfiles.ts';
   import { contactsService } from '#src/services/contactsService.ts';
   import Avatar from './Avatar.svelte';
+  import PublicGroupRow from './PublicGroupRow.svelte';
+  import type { PublicRoom } from '#src/stores/nostr/publicGroups.ts';
   export let query = '';
+  export let includePublicGroups = false;
+  export let joinedAddresses: string[] = [];
+  export let ongroup: (room: PublicRoom) => void = () => {};
+  let groups: PublicRoom[] = [];
+  let groupLoading = false;
+  let groupStatus = '';
+  $: visibleGroups = groups.filter((room) => !joinedAddresses.includes(room.address));
   export let existingKeys: string[] = [];
   export let excludedMessage = 'Matching profiles are already in your chats.';
   export let onselect: (profile: ProfileSearchResult) => void;
@@ -28,11 +37,30 @@
     const current = new AbortController();
     controller = current;
     results = [];
+    groups = [];
+    groupLoading = false;
+    groupStatus = '';
     status = '';
     dismissed = false;
     loading = profileSearchAllowed(value);
     if (!loading) return;
+    groupLoading = includePublicGroups;
     timer = setTimeout(async () => {
+      if (includePublicGroups) {
+        void nostr
+          .searchPublicGroups(value, current.signal, (rooms) => {
+            if (!current.signal.aborted) groups = rooms;
+          })
+          .then((result) => {
+            if (!current.signal.aborted) groupStatus = result;
+          })
+          .catch(() => {
+            if (!current.signal.aborted) groupStatus = 'unavailable';
+          })
+          .finally(() => {
+            if (!current.signal.aborted) groupLoading = false;
+          });
+      }
       const saved = new Set<string>();
       try {
         const result = await nostr.searchProfiles(value, current.signal, (profiles) => {
@@ -61,7 +89,7 @@
       return;
     }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-    if (!visible.length) return;
+    if (!visible.length && !visibleGroups.length) return;
     event.preventDefault();
     dismissed = false;
     await tick();
@@ -78,38 +106,61 @@
 </script>
 
 {#if profileSearchAllowed(query) && !dismissed}
-  <section class="profile-search-results" aria-label="People on relays" bind:this={container}>
-    <h2>People on relays</h2>
-    {#each visible as profile (profile.publicKey)}
-      <button
-        class="profile-result"
-        data-testid="profile-search-result"
-        onclick={() => onselect(profile)}
-        onkeydown={handleKeydown}
-      >
-        <Avatar
-          publicKey={profile.publicKey}
-          name={profile.name}
-          picture={profile.picture}
-          size={40}
-          eager
-        />
-        <span
-          ><strong>{profile.name}</strong><small
-            >{profile.nip05 ||
-              `${profile.publicKey.slice(0, 12)}…${profile.publicKey.slice(-6)}`}</small
-          ></span
+  <div bind:this={container} role="group" aria-label="Relay search results">
+    {#if includePublicGroups}
+      <section class="profile-search-results" aria-label="Public groups on relays">
+        <h2>Public groups on relays</h2>
+        {#each visibleGroups as room (room.address)}
+          <PublicGroupRow
+            {room}
+            testId="public-group-search-result"
+            onselect={() => ongroup(room)}
+            onkeydown={handleKeydown}
+          />
+        {/each}
+        <p role="status" aria-live="polite">
+          {#if groupLoading}Searching public groups…
+          {:else if groupStatus === 'unavailable'}Public group search is unavailable. Try again
+            shortly.
+          {:else if !visibleGroups.length}{groups.length
+              ? 'Matching public groups are already in your chats.'
+              : 'No public groups found on your relays.'}{/if}
+        </p>
+      </section>
+    {/if}
+    <section class="profile-search-results" aria-label="People on relays">
+      <h2>People on relays</h2>
+      {#each visible as profile (profile.publicKey)}
+        <button
+          class="profile-result"
+          data-testid="profile-search-result"
+          onclick={() => onselect(profile)}
+          onkeydown={handleKeydown}
         >
-      </button>
-    {/each}
-    <p role="status" aria-live="polite">
-      {#if loading}Searching profiles…
-      {:else if status === 'unavailable'}Profile search is unavailable. Try again shortly.
-      {:else if !visible.length}{results.length
-          ? excludedMessage
-          : 'No profiles found on your relays.'}{/if}
-    </p>
-  </section>
+          <Avatar
+            publicKey={profile.publicKey}
+            name={profile.name}
+            picture={profile.picture}
+            size={40}
+            eager
+          />
+          <span
+            ><strong>{profile.name}</strong><small
+              >{profile.nip05 ||
+                `${profile.publicKey.slice(0, 12)}…${profile.publicKey.slice(-6)}`}</small
+            ></span
+          >
+        </button>
+      {/each}
+      <p role="status" aria-live="polite">
+        {#if loading}Searching profiles…
+        {:else if status === 'unavailable'}Profile search is unavailable. Try again shortly.
+        {:else if !visible.length}{results.length
+            ? excludedMessage
+            : 'No profiles found on your relays.'}{/if}
+      </p>
+    </section>
+  </div>
 {/if}
 
 <style>

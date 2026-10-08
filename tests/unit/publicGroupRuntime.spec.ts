@@ -21,6 +21,7 @@ import { parsePublicRoom, roomTags, encodeRoomLink } from '#src/stores/nostr/pub
 const stops: Array<() => void> = [];
 afterEach(() => {
   stops.splice(0).forEach((f) => f());
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 function setup(
@@ -36,6 +37,7 @@ function setup(
   }>();
   const subscriptions: NostrFilter[][] = [];
   const failures = new Set<string>();
+  const published: Array<{ url: string; event: Event }> = [];
   const client = {
     subscribe(filters: NostrFilter[], options: NostrSubscriptionOptions) {
       subscriptions.push(filters);
@@ -74,6 +76,7 @@ function setup(
         url,
         connect: async () => {},
         publish: async (event: ClientEvent) => {
+          published.push({ url, event: event.rawEvent() as Event });
           if (failures.has(url)) throw new Error('Relay rejected this event');
           if (url.includes('stalled')) return new Promise(() => {});
           events.push(event.rawEvent() as Event);
@@ -95,6 +98,7 @@ function setup(
     listeners,
     subscriptions,
     failures,
+    published,
     setAccount: (value: string | null) => (account = value),
   };
 }
@@ -292,18 +296,17 @@ it('shows cached messages immediately, hydrates during refresh and keeps posting
   await runtime.send('Now verified');
 });
 
-it('owner edits still refuse incomplete relay coverage', async () => {
+it('owner edits succeed through a healthy relay without waiting for stalled replicas', async () => {
   const key = generateSecretKey();
-  const event = room(key, 'strict-write', [['relay', 'wss://stalled.example.org/']]);
-  const { runtime } = setup([event], key, (url) => !url.includes('stalled'));
+  const event = room(key, 'available-write', [['relay', 'wss://stalled.example.org/']]);
+  const { runtime, published } = setup([event], key, (url) => !url.includes('stalled'));
   await runtime.open(encodeRoomLink(parsePublicRoom(event)));
-  vi.useFakeTimers();
-  const updating = runtime.update({ name: 'Unsafe overwrite' }, event.id);
-  const rejected = expect(updating).rejects.toThrow(/complete/);
-  await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0));
-  await vi.advanceTimersByTimeAsync(10001);
-  await rejected;
-  expect(get(runtime.state).room?.name).toBe('strict-write');
+  await runtime.update({ name: 'Updated through healthy relay' }, event.id);
+  expect(get(runtime.state).room?.name).toBe('Updated through healthy relay');
+  expect(published.map((entry) => entry.url)).toEqual([
+    'wss://relay.example.org/',
+    'wss://stalled.example.org/',
+  ]);
 });
 
 it('never downgrades cached moderation when a replica replays an old room', async () => {
@@ -464,4 +467,620 @@ it('redacts links before signing normal-user posts', async () => {
   await runtime.open(encodeRoomLink(parsePublicRoom(definition)));
   await runtime.send('Look https://example.org/post and www.example.org');
   expect(events.find((e) => e.kind === 9)?.content).toBe('Look [link removed] and [link removed]');
+});
+
+it.each(['stopView', 'stop'] as const)(
+  'does not reopen after %s while account storage is initializing',
+  async (stop) => {
+    const definition = room(generateSecretKey(), 'cancel-initial-open');
+    const { runtime, listeners } = setup([definition]);
+    const opening = runtime.open(encodeRoomLink(parsePublicRoom(definition)));
+    runtime[stop]();
+    await opening;
+    expect(listeners.size).toBe(0);
+    expect(get(runtime.state).room).toBeNull();
+  },
+);
+
+it('keeps the verified successor and saved messages visible when reopening an old link offline', async () => {
+  const old = generateSecretKey(),
+    next = generateSecretKey();
+  const source = `34550:${getPublicKey(old)}:offline-source`;
+  const target = `34550:${getPublicKey(next)}:offline-target`;
+  const from = room(old, 'offline-source', [['successor', target]]);
+  const destination = room(next, 'offline-target', [['predecessor', source]]);
+  const { runtime, events } = setup([from, destination], next);
+  const link = encodeRoomLink(parsePublicRoom(from));
+  await runtime.open(link);
+  await runtime.send('Saved in the successor');
+  runtime.stop();
+  events.length = 0;
+  await runtime.open(link);
+  expect(get(runtime.state).room?.address).toBe(target);
+  expect(get(runtime.state).ancestors.map((r) => r.address)).toEqual([source]);
+  expect(get(runtime.state).messages.map((e) => e.content)).toContain('Saved in the successor');
+  expect(get(runtime.state).stale).toBe(true);
+  await expect(runtime.send('Offline')).rejects.toThrow(/unavailable/);
+});
+
+it('re-enables older paging when live traffic overflows a previously empty room', async () => {
+  const key = generateSecretKey();
+  const definition = room(key, 'live-window');
+  const address = parsePublicRoom(definition);
+  const { runtime, listeners } = setup([definition], key);
+  await runtime.open(encodeRoomLink(address));
+  await vi.waitFor(() => expect(get(runtime.state).more).toBe(false));
+  const live = [...listeners].find((l) => l.filters.some((f) => f.kinds?.includes(9)))!;
+  for (let i = 0; i < 201; i++) {
+    live.options.onEvent?.(
+      new ClientEvent(
+        undefined,
+        finalizeEvent(
+          {
+            kind: 9,
+            created_at: 100 + i,
+            tags: [['a', address.address]],
+            content: `Live ${i}`,
+          },
+          key,
+        ),
+      ),
+    );
+  }
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(200));
+  expect(get(runtime.state).more).toBe(true);
+  await runtime.older();
+  expect(get(runtime.state).messages[0].content).toBe('Live 0');
+});
+
+it('cancels publication if a block arrives while the signer is approving the message', async () => {
+  const owner = generateSecretKey(),
+    member = generateSecretKey();
+  const definition = room(owner, 'pending-signature');
+  const { runtime, listeners, events } = setup([definition], member);
+  await runtime.open(encodeRoomLink(parsePublicRoom(definition)));
+  let release!: () => void;
+  const approval = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const original = NostrPrivateKeySigner.prototype.sign;
+  const signing = vi
+    .spyOn(NostrPrivateKeySigner.prototype, 'sign')
+    .mockImplementation(async function (event) {
+      await approval;
+      return original.call(this, event);
+    });
+  const sending = runtime.send('Awaiting approval');
+  // Attach rejection handling before releasing the delayed signer.
+  const outcome = sending.then(
+    () => '',
+    (error) => String(error),
+  );
+  await vi.waitFor(() => expect(signing).toHaveBeenCalled());
+  const live = [...listeners].find((l) => l.filters.some((f) => f.kinds?.includes(9)))!;
+  live.options.onEvent?.(
+    new ClientEvent(
+      undefined,
+      room(owner, 'pending-signature', [['blocked', getPublicKey(member)]], 11),
+    ),
+  );
+  await vi.waitFor(() => expect(get(runtime.state).room?.blocked).toContain(getPublicKey(member)));
+  release();
+  expect(await outcome).toMatch(/policy changed/i);
+  expect(events.some((e) => e.kind === 9)).toBe(false);
+});
+
+it('removes an explicitly deselected unavailable relay before retrying moderation', async () => {
+  const key = generateSecretKey();
+  const trusted = getPublicKey(generateSecretKey());
+  const blocked = getPublicKey(generateSecretKey());
+  const event = room(key, 'repair-relays', [
+    ['relay', 'wss://stalled.example.org/'],
+    ['trusted', trusted],
+    ['blocked', blocked],
+  ]);
+  const { runtime } = setup([event], key, (url) => !url.includes('stalled'));
+  await runtime.open(encodeRoomLink(parsePublicRoom(event)));
+  await runtime.update({ relays: ['wss://relay.example.org/'] }, event.id);
+  const repaired = get(runtime.state).room!;
+  expect(repaired.relays).toEqual(['wss://relay.example.org/']);
+  expect(repaired.trusted).toEqual([trusted]);
+  expect(repaired.blocked).toEqual([blocked]);
+  const newcomer = getPublicKey(generateSecretKey());
+  await runtime.update({ trusted: [trusted, newcomer] }, repaired.event.id!);
+  expect(get(runtime.state).room!.trusted).toEqual([trusted, newcomer]);
+});
+
+it('publishes relay changes to retained, new and removed relays with the same signature', async () => {
+  const key = generateSecretKey();
+  const event = room(key, 'move-relays', [['relay', 'wss://old.example.org/']]);
+  const { runtime, published } = setup([event], key);
+  await runtime.open(encodeRoomLink(parsePublicRoom(event)));
+  await runtime.update(
+    { relays: ['wss://relay.example.org/', 'wss://new.example.org/'] },
+    event.id,
+  );
+  const updated = get(runtime.state).room!;
+  const copies = published.filter((entry) => entry.event.id === updated.event.id);
+  expect(copies.map((entry) => entry.url).sort()).toEqual([
+    'wss://new.example.org/',
+    'wss://old.example.org/',
+    'wss://relay.example.org/',
+  ]);
+  expect(copies.every((entry) => entry.event.sig === updated.event.sig)).toBe(true);
+  runtime.stop();
+  await runtime.open(encodeRoomLink(parsePublicRoom(event)));
+  expect(get(runtime.state).room!.relays).toEqual(updated.relays);
+});
+
+it('rejects unsafe relay edits and stale forms without publishing', async () => {
+  const key = generateSecretKey();
+  const event = room(key, 'relay-validation');
+  const { runtime, events, published } = setup([event], key);
+  await runtime.open(encodeRoomLink(parsePublicRoom(event)));
+  for (const relays of [
+    [],
+    ['https://relay.example.org'],
+    ['ws://127.0.0.1:7777/'],
+    Array(9).fill('wss://relay.example.org/'),
+  ])
+    await expect(runtime.update({ relays }, event.id)).rejects.toThrow();
+  await expect(
+    runtime.update({ relays: ['wss://relay.example.org/'], blocked: [] }, event.id),
+  ).rejects.toThrow('separately');
+  events.splice(
+    0,
+    events.length,
+    room(key, 'relay-validation', [['blocked', getPublicKey(generateSecretKey())]], 20),
+  );
+  await expect(runtime.update({ relays: ['wss://relay.example.org/'] }, event.id)).rejects.toThrow(
+    'group changed',
+  );
+  expect(published).toHaveLength(0);
+});
+
+it('accepts a complete relay replacement when only the app relay acknowledges it', async () => {
+  const key = generateSecretKey();
+  const event = room(key, 'rejected-relay');
+  const { runtime, failures } = setup([event], key);
+  await runtime.open(encodeRoomLink(parsePublicRoom(event)));
+  failures.add('wss://new.example.org/');
+  await runtime.update({ relays: ['wss://new.example.org/'] }, event.id);
+  expect(get(runtime.state).room!.relays).toEqual(['wss://new.example.org/']);
+  expect(get(runtime.state).room!.event.id).not.toBe(event.id);
+});
+
+it('uses app relays for creation, moderation, messages and reload with eight unavailable preferred relays', async () => {
+  const preferred = Array.from({ length: 8 }, (_, i) => `wss://failed${i}.example.org/`);
+  const { runtime, failures, published } = setup([], undefined, (url) => !preferred.includes(url));
+  preferred.forEach((url) => failures.add(url));
+  const link = await runtime.create({
+    name: 'App fallback',
+    about: '',
+    picture: '',
+    relays: preferred,
+  });
+  expect(published).toHaveLength(9);
+  await runtime.open(link);
+  const member = getPublicKey(generateSecretKey());
+  await runtime.update({ trusted: [member] }, get(runtime.state).room!.event.id!);
+  await runtime.send('Through the app relay');
+  runtime.stop();
+  await runtime.open(link);
+  expect(get(runtime.state).room!.relays).toEqual(preferred);
+  expect(get(runtime.state).room!.trusted).toEqual([member]);
+  await vi.waitFor(() =>
+    expect(get(runtime.state).messages[0]?.content).toBe('Through the app relay'),
+  );
+  expect(get(runtime.state).stale).toBe(false);
+});
+
+it('reports failure when no preferred or app relay acknowledges an owner update', async () => {
+  const key = generateSecretKey();
+  const event = room(key, 'all-rejected', [['relay', 'wss://second.example.org/']]);
+  const { runtime, failures } = setup([event], key);
+  await runtime.open(encodeRoomLink(parsePublicRoom(event)));
+  parsePublicRoom(event).relays.forEach((url) => failures.add(url));
+  await expect(runtime.update({ name: 'Not saved' }, event.id)).rejects.toThrow(
+    'No public group or app relay accepted',
+  );
+  expect(get(runtime.state).room!.event.id).toBe(event.id);
+});
+
+it('creates a group with explicitly selected relays', async () => {
+  const { runtime, published } = setup([]);
+  const link = await runtime.create({
+    name: 'Chosen relays',
+    about: '',
+    picture: '',
+    relays: ['wss://chosen.example.org/'],
+  });
+  expect(published.map((entry) => entry.url)).toEqual([
+    'wss://chosen.example.org/',
+    'wss://relay.example.org/',
+  ]);
+  expect(parsePublicRoom(published[0].event).relays).toEqual(['wss://chosen.example.org/']);
+  expect(link).toContain('naddr');
+});
+
+it('searches cached public history and jumps with bounded hydration, preserving policy and pagination', async () => {
+  const key = generateSecretKey(),
+    blocked = generateSecretKey(),
+    stranger = generateSecretKey();
+  const metadata = room(key, 'search', [['blocked', getPublicKey(blocked)]]);
+  const group = parsePublicRoom(metadata);
+  const db = new PublicGroupData(getPublicKey(key));
+  const events = Array.from({ length: 180 }, (_, i) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: i + 20,
+        tags: [['a', group.address]],
+        content: i === 10 || i === 40 ? `Search needle ${i}` : `filler ${i}`,
+      },
+      key,
+    ),
+  );
+  await db.putMany(group.address, events);
+  await db.putMany(group.address, [
+    finalizeEvent(
+      { kind: 9, created_at: 201, tags: [['a', group.address]], content: 'search needle blocked' },
+      blocked,
+    ),
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 202,
+        tags: [['a', group.address]],
+        content: 'search needle https://secret.example/hidden',
+      },
+      stranger,
+    ),
+    { ...events[0], id: '0'.repeat(64), content: 'search needle forged' },
+  ]);
+  const { runtime, subscriptions } = setup([metadata], key);
+  await runtime.open(encodeRoomLink(group));
+  expect(get(runtime.state).messages.some((event) => event.id === events[40].id)).toBe(false);
+  const results = await runtime.searchMessages('SEARCH  needle');
+  expect(results.map((result) => result.text)).toEqual([
+    'search needle [link removed]',
+    'Search needle 40',
+    'Search needle 10',
+  ]);
+  expect(await runtime.searchMessages('secret.example')).toEqual([]);
+  const pageSpy = vi.spyOn(PublicGroupData.prototype, 'page');
+  const networkQueries = subscriptions.length;
+  expect((await runtime.jumpToMessage(events[40].id))?.id).toBe(events[40].id);
+  expect(pageSpy.mock.calls.map((args) => args[2])).toEqual([25, 26]);
+  expect(subscriptions).toHaveLength(networkQueries);
+  expect(get(runtime.state).messages).toHaveLength(51);
+  expect(get(runtime.state).messages[25].id).toBe(events[40].id);
+  expect(get(runtime.state).hasNewer).toBe(true);
+  await runtime.newer();
+  expect(get(runtime.state).messages.at(-1)?.id).toBe(events[115].id);
+  await runtime.jumpToMessage(events[179].id);
+  expect(get(runtime.state).hasNewer).toBe(false);
+  await db.close();
+});
+
+it('discards cancelled and superseded public search jumps, including account changes', async () => {
+  const key = generateSecretKey(),
+    metadata = room(key, 'search-races');
+  const group = parsePublicRoom(metadata);
+  const db = new PublicGroupData(getPublicKey(key));
+  const events = [20, 21].map((created_at) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at,
+        tags: [['a', group.address]],
+        content: `needle ${created_at}`,
+      },
+      key,
+    ),
+  );
+  await db.putMany(group.address, events);
+  const { runtime, setAccount } = setup([metadata], key);
+  await runtime.open(encodeRoomLink(group));
+  const lookup = PublicGroupData.prototype.message;
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => (release = resolve));
+  vi.spyOn(PublicGroupData.prototype, 'message').mockImplementationOnce(async function (room, id) {
+    await pending;
+    return lookup.call(this, room, id);
+  });
+  const first = runtime.jumpToMessage(events[0].id);
+  expect((await runtime.jumpToMessage(events[1].id))?.id).toBe(events[1].id);
+  const window = get(runtime.state).messages;
+  release();
+  expect(await first).toBeNull();
+  expect(get(runtime.state).messages).toBe(window);
+  const abort = new AbortController();
+  const cancelled = runtime.jumpToMessage(events[0].id, abort.signal);
+  abort.abort();
+  expect(await cancelled).toBeNull();
+  expect(get(runtime.state).loading).toBe(false);
+  const search = runtime.searchMessages('needle');
+  const jump = runtime.jumpToMessage(events[0].id);
+  setAccount(getPublicKey(generateSecretKey()));
+  expect(await search).toEqual([]);
+  expect(await jump).toBeNull();
+  expect(get(runtime.state).messages).toBe(window);
+  await db.close();
+});
+
+it('searches the selected ownership history under the current owner policy', async () => {
+  const old = generateSecretKey(),
+    next = generateSecretKey(),
+    blocked = generateSecretKey();
+  const source = `34550:${getPublicKey(old)}:search-old`,
+    target = `34550:${getPublicKey(next)}:search-new`;
+  const from = room(old, 'search-old', [['successor', target]]);
+  const to = room(next, 'search-new', [
+    ['predecessor', source],
+    ['blocked', getPublicKey(blocked)],
+  ]);
+  const db = new PublicGroupData(getPublicKey(next));
+  const event = (address: string, key: Uint8Array, content: string) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 20,
+        tags: [['a', address]],
+        content,
+      },
+      key,
+    );
+  const prior = event(source, old, 'needle old');
+  await db.putMany(source, [prior, event(source, blocked, 'needle blocked')]);
+  await db.put(target, event(target, next, 'needle current'));
+  const { runtime } = setup([from, to], next);
+  await runtime.open(encodeRoomLink(parsePublicRoom(from)));
+  expect((await runtime.searchMessages('needle')).map((r) => r.text)).toEqual(['needle current']);
+  await runtime.history(source);
+  expect((await runtime.searchMessages('needle')).map((r) => r.text)).toEqual(['needle old']);
+  expect((await runtime.jumpToMessage(prior.id))?.id).toBe(prior.id);
+  expect(get(runtime.state).history).toBe(source);
+  await db.close();
+});
+
+it('publishes public replies, edits, reactions and deletions and restores their state after reopening', async () => {
+  const key = generateSecretKey(),
+    metadata = room(key, 'message-actions');
+  const group = parsePublicRoom(metadata);
+  const { runtime, published } = setup([metadata], key);
+  await runtime.open(encodeRoomLink(group));
+  await runtime.send('Original message');
+  const root = get(runtime.state).messages[0];
+  await runtime.send('A reply', undefined, root.id);
+  expect(published.at(-1)!.event.tags).toContainEqual([
+    'q',
+    root.id,
+    group.relays[0],
+    getPublicKey(key),
+  ]);
+  await runtime.editMessage(root.id!, 'Edited message');
+  const { publicMessageState } = await import('#src/stores/nostr/publicMessageActions.ts');
+  const display = () =>
+    get(runtime.state).messages.map((event) => publicMessageState(event, group, getPublicKey(key)));
+  expect(display().find((message) => message.id === root.id)?.text).toBe('Edited message');
+  expect(get(runtime.state).messages).toHaveLength(2);
+  expect(await runtime.searchMessages('Original message')).toHaveLength(0);
+  expect(await runtime.searchMessages('Edited message')).toHaveLength(1);
+  await runtime.react(root.id!, '❤️');
+  expect(display().find((message) => message.id === root.id)?.meta.reactions).toHaveLength(1);
+  await runtime.react(root.id!, '❤️', true);
+  expect(display().find((message) => message.id === root.id)?.meta.reactions).toHaveLength(0);
+  await runtime.react(root.id!, '👍');
+  await runtime.open(encodeRoomLink(group));
+  expect(display().find((message) => message.id === root.id)?.meta.reactions).toHaveLength(1);
+  await runtime.deleteMessage(root.id!);
+  expect(published.at(-1)!.event.kind).toBe(5);
+  expect(published.at(-1)!.event.tags.some((tag) => tag[0] === 'a')).toBe(false);
+  expect(display().find((message) => message.id === root.id)?.meta.deleted).toBeTruthy();
+  await runtime.open(encodeRoomLink(group));
+  expect(display().find((message) => message.id === root.id)?.meta.deleted).toBeTruthy();
+  expect(await runtime.searchMessages('Edited message')).toHaveLength(0);
+});
+
+it('rejects edits and deletions of another author and leaves failed deletions unapplied', async () => {
+  const key = generateSecretKey(),
+    other = generateSecretKey(),
+    metadata = room(key, 'actions-auth');
+  const group = parsePublicRoom(metadata);
+  const db = new PublicGroupData(getPublicKey(key));
+  const foreign = finalizeEvent(
+    { kind: 9, created_at: 12, content: 'Other author', tags: [['a', group.address]] },
+    other,
+  );
+  await db.put(group.address, foreign);
+  const { runtime, published, failures } = setup([metadata], key);
+  await runtime.open(encodeRoomLink(group));
+  await expect(runtime.editMessage(foreign.id, 'fake')).rejects.toThrow('Only the author');
+  await expect(runtime.deleteMessage(foreign.id)).rejects.toThrow('Only the author');
+  expect(published).toHaveLength(0);
+  await runtime.send('Own post');
+  const own = get(runtime.state).messages.find((event) => event.pubkey === getPublicKey(key))!;
+  failures.add('wss://relay.example.org/');
+  await expect(runtime.deleteMessage(own.id!)).rejects.toThrow('No public group');
+  const { publicMessageState } = await import('#src/stores/nostr/publicMessageActions.ts');
+  expect(
+    publicMessageState(
+      get(runtime.state).messages.find((event) => event.id === own.id)!,
+      group,
+    ).meta.deleted,
+  ).toBeUndefined();
+  await db.close();
+});
+
+it('forwards into another public group without replacing the open thread', async () => {
+  const key = generateSecretKey(),
+    first = room(key, 'forward-source'),
+    second = room(key, 'forward-target');
+  const source = parsePublicRoom(first),
+    target = parsePublicRoom(second);
+  const { runtime, published } = setup([first, second], key);
+  await runtime.open(encodeRoomLink(target));
+  await runtime.open(encodeRoomLink(source));
+  await runtime.forwardMessage(target.address, { text: 'Forwarded public text', meta: {} });
+  expect(published.at(-1)?.event.tags).toContainEqual(['a', target.address]);
+  expect(get(runtime.state).room?.address).toBe(source.address);
+  expect(get(runtime.state).messages).toHaveLength(0);
+  await runtime.open(encodeRoomLink(target));
+  expect(
+    get(runtime.state).messages.some((event) => event.content === 'Forwarded public text'),
+  ).toBe(true);
+});
+
+it('receives standard reactions and deletions without application-specific room hints', async () => {
+  const key = generateSecretKey(),
+    reactor = generateSecretKey(),
+    metadata = room(key, 'standard-actions');
+  const group = parsePublicRoom(metadata);
+  const original = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Standard events', tags: [['a', group.address]] },
+    key,
+  );
+  const reaction = finalizeEvent(
+    {
+      kind: 7,
+      created_at: 21,
+      content: '+',
+      tags: [
+        ['e', original.id],
+        ['p', original.pubkey],
+        ['k', '9'],
+      ],
+    },
+    reactor,
+  );
+  const { runtime, listeners, events } = setup([metadata, reaction, original], key);
+  const { publicMessageState } = await import('#src/stores/nostr/publicMessageActions.ts');
+  await runtime.open(encodeRoomLink(group));
+  const displayed = () =>
+    get(runtime.state).messages.map((event) => publicMessageState(event, group));
+  await vi.waitFor(() => expect(displayed()[0]?.meta.reactions).toHaveLength(1));
+  const removal = finalizeEvent(
+    {
+      kind: 5,
+      created_at: 22,
+      content: '',
+      tags: [
+        ['e', reaction.id],
+        ['k', '7'],
+      ],
+    },
+    reactor,
+  );
+  events.push(removal);
+  for (const listener of listeners)
+    if (matchFilters(listener.filters, removal))
+      listener.options.onEvent?.(new ClientEvent(undefined, removal));
+  await vi.waitFor(() => expect(displayed()[0]?.meta.reactions).toHaveLength(0));
+  const deletion = finalizeEvent(
+    {
+      kind: 5,
+      created_at: 23,
+      content: '',
+      tags: [
+        ['e', original.id],
+        ['k', '9'],
+      ],
+    },
+    key,
+  );
+  events.push(deletion);
+  for (const listener of listeners)
+    if (matchFilters(listener.filters, deletion))
+      listener.options.onEvent?.(new ClientEvent(undefined, deletion));
+  await vi.waitFor(() => expect(displayed()[0]?.meta.deleted).toBeTruthy());
+  await runtime.open(encodeRoomLink(group));
+  expect(displayed()[0]?.meta.deleted).toBeTruthy();
+});
+
+it('shows an edited replacement to a fresh client after relays have removed its original', async () => {
+  const author = generateSecretKey(),
+    metadata = room(author, 'removed-original');
+  const group = parsePublicRoom(metadata);
+  const original = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Original', tags: [['a', group.address]] },
+    author,
+  );
+  const replacement = finalizeEvent(
+    {
+      kind: 9,
+      created_at: 20,
+      content: 'Replacement',
+      tags: [
+        ['a', group.address],
+        ['e', original.id, '', 'edit'],
+      ],
+    },
+    author,
+  );
+  const latest = finalizeEvent(
+    {
+      kind: 9,
+      created_at: 20,
+      content: 'Latest replacement',
+      tags: [
+        ['a', group.address],
+        ['e', replacement.id, '', 'edit'],
+        ['e', original.id],
+      ],
+    },
+    author,
+  );
+  const { runtime } = setup([metadata, latest, replacement]);
+  const { publicMessageState } = await import('#src/stores/nostr/publicMessageActions.ts');
+  await runtime.open(encodeRoomLink(group));
+  const displayed = () =>
+    get(runtime.state).messages.map((event) => publicMessageState(event, group));
+  await vi.waitFor(() =>
+    expect(displayed().map((message) => message.text)).toEqual(['Latest replacement']),
+  );
+  expect(displayed()[0].meta.edited).toBeTruthy();
+  await runtime.open(encodeRoomLink(group));
+  expect(displayed().map((message) => message.text)).toEqual(['Latest replacement']);
+});
+
+it('pages edited replacements whose originals were already removed by relays', async () => {
+  const author = generateSecretKey(),
+    metadata = room(author, 'paged-edits');
+  const group = parsePublicRoom(metadata);
+  const original = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Old original', tags: [['a', group.address]] },
+    author,
+  );
+  const replacement = finalizeEvent(
+    {
+      kind: 9,
+      created_at: 20,
+      content: 'Older replacement',
+      tags: [
+        ['a', group.address],
+        ['e', original.id, '', 'edit'],
+      ],
+    },
+    author,
+  );
+  const recent = Array.from({ length: 50 }, (_, index) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 100 + index,
+        content: `Recent ${index}`,
+        tags: [['a', group.address]],
+      },
+      author,
+    ),
+  );
+  const { runtime } = setup([metadata, replacement, ...recent]);
+  await runtime.open(encodeRoomLink(group));
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(50));
+  await runtime.older();
+  const { publicMessageState } = await import('#src/stores/nostr/publicMessageActions.ts');
+  expect(
+    get(runtime.state).messages.map((event) => publicMessageState(event, group).text),
+  ).toContain('Older replacement');
 });

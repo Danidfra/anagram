@@ -4,6 +4,9 @@ import androidx.annotation.Nullable;
 import java.util.Locale;
 import java.util.regex.Pattern;
 import org.json.JSONException;
+import org.json.JSONArray;
+import java.util.HashSet;
+import java.util.Set;
 import org.json.JSONObject;
 
 final class NotificationConversation {
@@ -15,6 +18,8 @@ final class NotificationConversation {
     final String chatPubkey;
     @Nullable
     final String recipientPubkey;
+    long epochNumber = -1L;
+    final Set<String> knownEpochPubkeys = new HashSet<>();
     final String name;
     final String avatarUrl;
     final String avatarText;
@@ -45,6 +50,8 @@ final class NotificationConversation {
         if (recipientPubkey != null) {
             result.put("recipientPubkey", recipientPubkey);
         }
+        result.put("epochNumber", epochNumber);
+        result.put("knownEpochPubkeys", new JSONArray(knownEpochPubkeys));
         result.put("name", name);
         result.put("avatarUrl", avatarUrl);
         result.put("avatarText", avatarText);
@@ -62,7 +69,7 @@ final class NotificationConversation {
         if (chatPubkey == null) {
             return null;
         }
-        return new NotificationConversation(
+        NotificationConversation conversation = new NotificationConversation(
             chatPubkey,
             normalizePubkey(value.optString("recipientPubkey", "")),
             value.optString("name", ""),
@@ -71,6 +78,13 @@ final class NotificationConversation {
             value.optBoolean("policyEligible", false),
             value.optBoolean("notificationsEnabled", false)
         );
+        conversation.epochNumber = value.optLong("epochNumber", -1L);
+        JSONArray epochs = value.optJSONArray("knownEpochPubkeys");
+        if (epochs != null) for (int i = 0; i < epochs.length(); i++) {
+            String pubkey = normalizePubkey(epochs.optString(i, ""));
+            if (pubkey != null) conversation.knownEpochPubkeys.add(pubkey);
+        }
+        return conversation;
     }
 
     @Nullable

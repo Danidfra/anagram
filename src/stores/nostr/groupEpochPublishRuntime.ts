@@ -72,6 +72,8 @@ interface GroupEpochPublishRuntimeDeps {
       fallbackName?: string;
       accepted?: boolean;
       invitationCreatedAt?: string;
+      invitationProof?: string;
+      invitationEventId?: string;
       seedRelayUrls?: string[];
     },
   ) => Promise<void>;
@@ -153,7 +155,7 @@ export function createGroupEpochPublishRuntime({
       const secret = await recovery.secretFor(group);
       if (expectedStateId && secret.recovery_state_id !== expectedStateId)
         throw new Error(
-          'Group membership changed since you opened this form. Refresh recovery and review the members.',
+          'Group membership changed since you opened this form. Close it and refresh members before saving again.',
         );
       const members = normalizeUniqueMemberPublicKeys(
         [...memberPublicKeys, account],
@@ -291,6 +293,22 @@ export function createGroupEpochPublishRuntime({
     });
     await epochTicketEvent.sign(groupSigner);
 
+    if (getLoggedInPublicKeyHex() !== loggedInPubkeyHex)
+      throw new Error('The active account changed.');
+    if (normalizedMemberPublicKey === loggedInPubkeyHex) {
+      await persistIncomingGroupEpochTicket(
+        normalizedGroupPublicKey,
+        Number(secret.epoch_number),
+        normalizedEpochPrivateKey,
+        {
+          accepted: true,
+          invitationCreatedAt: toIsoTimestampFromUnix(createdAt),
+          invitationProof: epochTicketEvent.sig,
+          invitationEventId: epochTicketEvent.id,
+          seedRelayUrls: relayUrls,
+        },
+      );
+    }
     const storedEpochTicketEvent = await toStoredNostrEvent(epochTicketEvent);
     const epochTicketEventId = normalizeEventId(storedEpochTicketEvent?.id ?? epochTicketEvent.id);
     const createdAtIso = toIsoTimestampFromUnix(createdAt);

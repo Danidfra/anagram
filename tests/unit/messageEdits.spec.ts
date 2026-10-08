@@ -21,6 +21,8 @@ describe('message edit helpers', () => {
 
   it('preserves the empty relay slot in edit marker tags on kind 14 rumors', () => {
     const runtime = createMessageEventRuntime({
+      issueOwnGroupInvitation: async () => null,
+      getLoggedInPublicKeyHex: () => null,
       decryptPrivateStringContent: async () => null,
       derivePublicKeyFromPrivateKey: () => null,
       findGroupChatEpochContextByRecipientPubkey: async () => null,

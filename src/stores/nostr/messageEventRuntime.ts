@@ -8,17 +8,27 @@ import NostrClient, {
 } from '#src/lib/nostr/client.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import { INVITATION_PROOF_TAG } from '#src/stores/nostr/constants.ts';
+import type { ChatRow } from '#src/services/chatDataService.ts';
+import type { ChatGroupEpochKey } from '#src/types/chat.ts';
+import {
+  groupInteger,
+  singleGroupTag,
+  verifyGroupMembershipProof,
+  verifyGroupMessage,
+  type GroupMessageEpoch,
+} from '#src/stores/nostr/groupMessageAuthorization.ts';
 
 interface GroupEpochContext {
-  chat: {
-    public_key: string;
-  };
-  epochEntry: {
-    epoch_private_key_encrypted?: string | null;
-  };
+  chat: ChatRow;
+  epochEntry: ChatGroupEpochKey;
 }
 
 interface MessageEventRuntimeDeps {
+  issueOwnGroupInvitation: (
+    group: string,
+    epoch: string,
+  ) => Promise<{ proof: string; invitedAt: number } | null>;
+  getLoggedInPublicKeyHex: () => string | null;
   decryptPrivateStringContent: (value: string) => Promise<string | null>;
   derivePublicKeyFromPrivateKey: (privateKey: string) => string | null;
   findGroupChatEpochContextByRecipientPubkey: (
@@ -31,6 +41,8 @@ interface MessageEventRuntimeDeps {
 }
 
 export function createMessageEventRuntime({
+  issueOwnGroupInvitation,
+  getLoggedInPublicKeyHex,
   decryptPrivateStringContent,
   derivePublicKeyFromPrivateKey,
   findGroupChatEpochContextByRecipientPubkey,
@@ -39,6 +51,84 @@ export function createMessageEventRuntime({
   readEpochNumberTag,
   readFirstTagValue,
 }: MessageEventRuntimeDeps) {
+  async function messageEpoch(context: GroupEpochContext): Promise<GroupMessageEpoch | null> {
+    const key = await decryptPrivateStringContent(
+      context.epochEntry.epoch_private_key_encrypted,
+    );
+    if (!key || derivePublicKeyFromPrivateKey(key) !== context.epochEntry.epoch_public_key)
+      return null;
+    return {
+      groupPublicKey: context.chat.public_key,
+      epochNumber: context.epochEntry.epoch_number,
+      epochPublicKey: context.epochEntry.epoch_public_key,
+      epochPrivateKey: key,
+    };
+  }
+
+  async function verifyIncomingGroupMessage(
+    rumor: ClientEvent,
+    recipient: string,
+  ): Promise<boolean> {
+    const context = await findGroupChatEpochContextByRecipientPubkey(recipient);
+    if (!context || (await findGroupChatEpochContextByRecipientPubkey(rumor.pubkey)))
+      return false;
+    const epoch = await messageEpoch(context);
+    return epoch !== null && verifyGroupMessage(rumor, epoch);
+  }
+
+  async function prepareOutgoingPrivateMessage(
+    rumor: ClientEvent,
+    recipient: string,
+    retry = false,
+  ): Promise<void> {
+    const account = getLoggedInPublicKeyHex();
+    if (!account || rumor.pubkey !== account)
+      throw new Error('The message author does not match the active account.');
+    const context = await findGroupChatEpochContextByRecipientPubkey(recipient);
+    if (context) {
+      const { chat, epochEntry } = context;
+      if (
+        Number(chat.meta.group_conflicting_epoch ?? -1) >= epochEntry.epoch_number ||
+        chat.meta.current_epoch_public_key !== recipient
+      )
+        throw new Error('Refresh the group invitation before sending to this epoch.');
+      const epoch = await messageEpoch(context);
+      if (!epoch || (await findGroupChatEpochContextByRecipientPubkey(account)))
+        throw new Error('A group epoch key cannot be used as a message identity.');
+      if (!retry) {
+        let proof = epochEntry.invitation_proof;
+        let invitedAt = Date.parse(epochEntry.invitation_created_at ?? '') / 1000;
+        if (!proof || !(await verifyGroupMembershipProof(epoch, account, invitedAt, proof))) {
+          const invitation = await issueOwnGroupInvitation(chat.public_key, recipient);
+          if (getLoggedInPublicKeyHex() !== account)
+            throw new Error('The active account changed. Reopen the conversation.');
+          if (!invitation)
+            throw new Error('Your signed group invitation is missing. Ask an owner to resend it.');
+          proof = invitation.proof;
+          invitedAt = invitation.invitedAt;
+        }
+        // A reaction's target author p tag is a DM convention; groups have one recipient.
+        const tags = rumor.tags.filter(
+          (tag) => !['p', 'h', 'epoch', 'invited_at', 'invitation_proof'].includes(tag[0]),
+        );
+        rumor.tags = [
+          ['p', recipient],
+          ['h', chat.public_key],
+          ['epoch', String(epoch.epochNumber)],
+          ['invited_at', String(invitedAt)],
+          ['invitation_proof', proof],
+          ...tags,
+        ];
+      }
+      if (!(await verifyGroupMessage(rumor, epoch)))
+        throw new Error(
+          'This group message has no valid membership proof. Send a new message with a current invitation.',
+        );
+    }
+    if (getLoggedInPublicKeyHex() !== account)
+      throw new Error('The active account changed. Reopen the conversation.');
+  }
+
   function normalizeEventId(value: unknown): string | null {
     if (typeof value !== 'string') {
       return null;
@@ -159,7 +249,7 @@ export function createMessageEventRuntime({
   async function giftWrapSignedEvent(
     event: ClientEvent,
     recipient: NostrUser,
-    signer: NostrSigner
+    signer: NostrSigner,
   ): Promise<ClientEvent> {
     if (!event.sig) {
       throw new Error('Signed event is required before gift wrapping.');
@@ -240,7 +330,9 @@ export function createMessageEventRuntime({
     }
   }
 
-  async function unwrapGiftWrapSealEvent(wrappedEvent: ClientEvent): Promise<NostrEvent | null> {
+  async function unwrapGiftWrapSealEvent(
+    wrappedEvent: ClientEvent,
+  ): Promise<NostrEvent | null> {
     const normalizedContent = wrappedEvent.content.trim();
     const wrapAuthorPubkey = inputSanitizerService.normalizeHexKey(wrappedEvent.pubkey ?? '');
     if (!normalizedContent || !wrapAuthorPubkey) {
@@ -266,7 +358,7 @@ export function createMessageEventRuntime({
 
   async function verifyIncomingGroupEpochTicket(
     rumorEvent: ClientEvent,
-    sealEvent: NostrEvent | null
+    sealEvent: NostrEvent | null,
   ): Promise<{
     isValid: boolean;
     signedEvent: NostrEvent | null;
@@ -279,7 +371,23 @@ export function createMessageEventRuntime({
     const invitationProof = readFirstTagValue(sealTags, INVITATION_PROOF_TAG);
     const epochNumber = readEpochNumberTag(rumorEvent.tags);
     const epochPrivateKey = inputSanitizerService.normalizeHexKey(rumorEvent.content ?? '');
-    if (!invitationProof || epochNumber === null || !epochPrivateKey) {
+    if (
+      !invitationProof ||
+      epochNumber === null ||
+      !epochPrivateKey ||
+      rumorEvent.kind !== 1014 ||
+      !Number.isSafeInteger(rumorEvent.created_at) ||
+      Number(rumorEvent.created_at) < 0 ||
+      rumorEvent.content !== epochPrivateKey ||
+      JSON.stringify(rumorEvent.tags) !==
+        JSON.stringify([
+          ['p', singleGroupTag(rumorEvent.tags, 'p')],
+          ['epoch', String(epochNumber)],
+        ]) ||
+      groupInteger(singleGroupTag(rumorEvent.tags, 'epoch')) !== epochNumber ||
+      !/^[0-9a-f]{64}$/.test(singleGroupTag(rumorEvent.tags, 'p') ?? '') ||
+      singleGroupTag(sealTags, INVITATION_PROOF_TAG) !== invitationProof
+    ) {
       return {
         isValid: false,
         signedEvent: null,
@@ -423,6 +531,8 @@ export function createMessageEventRuntime({
   }
 
   return {
+    prepareOutgoingPrivateMessage,
+    verifyIncomingGroupMessage,
     createDirectMessageRumorEvent,
     createEventDeletionRumorEvent,
     createReactionRumorEvent,

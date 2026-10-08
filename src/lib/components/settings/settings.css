@@ -238,14 +238,14 @@
 .settings-shell .settings-item > span {
   margin: 0;
 }
-.settings-shell .settings-item:hover {
+.settings-shell .settings-item:not(.active):hover {
   background: var(--nc-hover);
 }
 .settings-shell .settings-item.active {
   color: var(--nc-active-text);
 }
 .settings-shell .danger-text {
-  color: #f39aa0;
+  color: var(--nc-danger);
 }
 .settings-detail-header {
   min-height: 50px;
@@ -735,7 +735,7 @@
 .relay-delete {
   border-left: 1px solid var(--nc-border);
   border-radius: 0;
-  color: var(--q-negative, #ef6b73);
+  color: var(--nc-danger);
 }
 .relay-info {
   padding: 0 14px 14px;

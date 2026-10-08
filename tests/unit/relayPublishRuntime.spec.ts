@@ -12,6 +12,7 @@ function createRuntime(
 ) {
   const ndk = {};
   const runtime = createRelayPublishRuntime({
+    prepareOutgoingPrivateMessage: vi.fn(async () => {}),
     appendRelayStatusesToMessageEvent: vi.fn(async () => {}),
     buildRelaySaveStatus: vi.fn(() => ({
       errorMessage: null,

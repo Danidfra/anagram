@@ -1,3 +1,4 @@
+import { resolveGroupChatEpochEntriesValue } from '#src/stores/nostr/valueUtils.ts';
 import {
   isAndroidNative,
   type PluginListenerHandle,
@@ -47,6 +48,8 @@ export interface AndroidNotificationWatchPlan {
 interface AndroidNotificationConversation {
   chatPubkey: string;
   recipientPubkey?: string;
+  epochNumber?: number;
+  knownEpochPubkeys?: string[];
   name: string;
   avatarUrl: string;
   avatarText: string;
@@ -360,6 +363,7 @@ export function createAndroidNotificationConversationSignature(
         blocked: chat.meta.blocked === true,
         blockedAt: readMetaString(chat.meta, 'blocked_at'),
         epochPublicKey: chat.epochPublicKey ?? '',
+        knownEpochPubkeys: resolveGroupChatEpochEntriesValue(chat).map((entry) => entry.epoch_public_key),
         inboxState: readMetaString(chat.meta, 'inbox_state'),
         lastOutgoingMessageAt: readMetaString(chat.meta, 'last_outgoing_message_at'),
         muted: chat.meta.muted === true,
@@ -522,6 +526,8 @@ async function buildAndroidNotificationConfiguration(): Promise<AndroidNotificat
     conversations.push({
       ...baseConversation,
       recipientPubkey: epochPubkey,
+      epochNumber: epochEntry?.epoch_number,
+      knownEpochPubkeys: resolveGroupChatEpochEntriesValue(chat).map((entry) => entry.epoch_public_key),
     });
     if (!identityPrivateKey || !epochEntry?.epoch_private_key_encrypted) {
       continue;

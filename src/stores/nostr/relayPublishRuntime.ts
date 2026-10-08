@@ -29,6 +29,7 @@ import type {
 import type { MessageRelayStatus } from '#src/types/chat.ts';
 
 interface RelayPublishRuntimeDeps {
+  prepareOutgoingPrivateMessage: (rumor: ClientEvent, recipient: string, retry?: boolean) => Promise<void>;
   appendRelayStatusesToMessageEvent: (
     messageId: number,
     relayStatuses: MessageRelayStatus[],
@@ -62,6 +63,7 @@ interface RelayPublishRuntimeDeps {
 }
 
 export function createRelayPublishRuntime({
+  prepareOutgoingPrivateMessage,
   appendRelayStatusesToMessageEvent,
   buildRelaySaveStatus,
   decryptGroupIdentitySecretContent,
@@ -399,6 +401,7 @@ export function createRelayPublishRuntime({
       normalizedRecipientPubkey,
       createdAt
     );
+    await prepareOutgoingPrivateMessage(recipientRumorEvent, normalizedRecipientPubkey);
     const recipientRumorNostrEvent = await toStoredNostrEvent(recipientRumorEvent);
     const rumorEventId = normalizeEventId(recipientRumorNostrEvent?.id ?? recipientRumorEvent.id);
     const selfRelayUrls = shouldPublishSelfCopy ? await resolveLoggedInPublishRelayUrls() : [];
@@ -450,6 +453,7 @@ export function createRelayPublishRuntime({
               )
             )
           : await giftWrap(recipientRumorEvent, recipient, signer, { rumorKind });
+      await prepareOutgoingPrivateMessage(recipientRumorEvent, normalizedRecipientPubkey, true);
       const recipientPublishResult = await publishEventWithRelayStatuses(
         recipientGiftWrapEvent,
         relayUrls,

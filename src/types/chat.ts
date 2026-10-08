@@ -9,6 +9,8 @@ export interface ChatGroupEpochKey {
   epoch_public_key: string;
   epoch_private_key_encrypted: string;
   invitation_created_at?: string;
+  invitation_proof?: string;
+  invitation_event_id?: string;
 }
 
 export interface GroupMemberTicketDelivery {

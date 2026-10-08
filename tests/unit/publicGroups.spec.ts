@@ -3,6 +3,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-too
 import {
   decodeRoomLink,
   encodeRoomLink,
+  publicGroupShareLink,
   newerRoom,
   parsePublicRoom,
   publicRoomRelays,
@@ -132,4 +133,20 @@ describe('public groups', () => {
       'ws://127.0.0.1:7777/',
     ]);
   });
+});
+
+it('round-trips preview links and existing public links without changing the room address', () => {
+  const room = {
+    address: `34550:${pubkey}:lounge`,
+    owner: pubkey,
+    slug: 'lounge',
+    relays: ['wss://relay.example.org/'],
+  };
+  const token = encodeRoomLink(room);
+  const share = publicGroupShareLink(room);
+  expect(share).toContain(`/join/chat.html#/public/${token}`);
+  expect(decodeRoomLink(share)).toEqual(room);
+  expect(decodeRoomLink(`https://anagram.chat/join/chat#/public/${token}`)).toEqual(room);
+  expect(decodeRoomLink(`https://anagram.chat/public/${token}`)).toEqual(room);
+  expect(() => decodeRoomLink('https://anagram.chat/join/chat.html#https://example.org')).toThrow();
 });

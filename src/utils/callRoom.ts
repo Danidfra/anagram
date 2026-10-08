@@ -85,21 +85,22 @@ export function roomLinkToken(link: CallRoomLink): string {
 export function formatRoomLink(
   link: CallRoomLink,
   base = document.baseURI,
-  native = Capacitor.isNativePlatform()
+  native = Capacitor.isNativePlatform(),
 ): string {
   const url = new URL(base);
-  if (!native && (url.protocol === 'http:' || url.protocol === 'https:')) {
-    url.search = '';
-    url.hash = `/call/${roomLinkToken(link)}`;
-    return url.href;
-  }
-  // Portable across installed apps via their Join call / paste link action.
-  return `anagram://room/call/${roomLinkToken(link)}`;
+  const origin =
+    !native &&
+    ['http:', 'https:'].includes(url.protocol) &&
+    !url.hostname.endsWith('tauri.localhost')
+      ? url.origin
+      : 'https://anagram.chat';
+  // A public entry page gives crawlers a call card; the capability stays client-side.
+  return `${origin}/join/call.html#/call/${roomLinkToken(link)}`;
 }
 export function parseRoomSignal(
   content: string,
   createdAt?: number,
-  now = Date.now()
+  now = Date.now(),
 ): CallRoomSignal | null {
   if (
     content.length > 20_000 ||

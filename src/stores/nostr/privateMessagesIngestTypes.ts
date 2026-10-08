@@ -55,6 +55,7 @@ export interface InboundTraceOptions {
 }
 
 export interface PrivateMessagesIngestRuntimeDeps {
+  verifyIncomingGroupMessage: (rumor: ClientEvent, recipient: string) => Promise<boolean>;
   processIncomingRoomSignal?: (senderPubkey: string, signal: CallRoomSignal) => Promise<void>;
   processIncomingCallSignal?: (senderPubkey: string, signal: CallSignal) => Promise<void>;
   appendRelayStatusesToMessageEvent: (
@@ -159,6 +160,8 @@ export interface PrivateMessagesIngestRuntimeDeps {
       fallbackName?: string;
       accepted?: boolean;
       invitationCreatedAt?: string;
+      invitationProof?: string;
+      invitationEventId?: string;
       seedRelayUrls?: string[];
     },
   ) => Promise<void>;

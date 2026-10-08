@@ -1,3 +1,4 @@
+import { groupTicketTemplate } from '#src/stores/nostr/groupMessageAuthorization.ts';
 import NostrClient, {
   ClientEvent,
   NostrPrivateKeySigner,
@@ -40,6 +41,8 @@ interface Dependencies {
       fallbackName?: string;
       seedRelayUrls?: string[];
       invitationCreatedAt?: string;
+      invitationProof?: string;
+      invitationEventId?: string;
       allowRecoveryFork?: boolean;
     },
   ) => Promise<void>;
@@ -371,17 +374,44 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
       ...historical.filter((r) => r.id !== record.id).sort((a, b) => b.state.epoch - a.state.epoch),
     ]) {
       check();
-      await d.persistEpoch(
-        secret.group_pubkey,
+      const epochKey = deriveGroupEpochKey(
+        entropy,
         entry.state.epoch,
-        deriveGroupEpochKey(entropy, entry.state.epoch, entry.state.epoch_revision),
-        {
-          accepted: true,
-          fallbackName: secret.name,
-          seedRelayUrls: entry.state.relays,
-          allowRecoveryFork: true,
-        },
+        entry.state.epoch_revision,
       );
+      // Master recovery grants reading keys. Only an explicitly listed member gets a posting ticket.
+      const account = d.account();
+      let ticket: ClientEvent | null = null;
+      if (account && entry.state.members.includes(account)) {
+        ticket = new ClientEvent(
+          d.ndk,
+          groupTicketTemplate(
+            {
+              groupPublicKey: secret.group_pubkey,
+              epochNumber: entry.state.epoch,
+              epochPublicKey: new NostrPrivateKeySigner(epochKey).pubkey,
+              epochPrivateKey: epochKey,
+            },
+            account,
+            entry.event?.created_at ?? Math.floor(Date.now() / 1000),
+          ),
+        );
+        await ticket.sign(new NostrPrivateKeySigner(secret.group_privkey, d.ndk));
+        check();
+      }
+      await d.persistEpoch(secret.group_pubkey, entry.state.epoch, epochKey, {
+        accepted: true,
+        fallbackName: secret.name,
+        seedRelayUrls: entry.state.relays,
+        allowRecoveryFork: true,
+        ...(ticket
+          ? {
+              invitationCreatedAt: new Date(ticket.created_at! * 1000).toISOString(),
+              invitationProof: ticket.sig,
+              invitationEventId: ticket.id,
+            }
+          : {}),
+      });
     }
     check();
     d.changed();
@@ -527,9 +557,13 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     const records = await readJournal(secret.recovery_entropy!, secret.recovery_state.relays);
     const heads = recoveryHeads(records);
     if (!heads.length) throw new Error('Group recovery state is missing.');
-    if (!reconcile && (heads.length !== 1 || heads[0].id !== secret.recovery_state_id)) {
+    if (!reconcile && heads.length !== 1)
       throw new Error(
-        'Another owner changed this group. Refresh recovery and review the members before saving again.',
+        'Conflicting group recovery updates. Reconcile recovery before changing membership.',
+      );
+    if (!reconcile && heads[0].id !== secret.recovery_state_id) {
+      throw new Error(
+        'Group recovery state has changed. Close this form and refresh members before saving again.',
       );
     }
     const nextMembers = reconcile ? safeRecoveryMembers(heads) : [...new Set(members)].sort();
@@ -629,16 +663,64 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     };
   }
   async function current(group: string, expectedStateId?: string) {
+    const check = session();
     const secret = await secretFor(group);
-    const heads = recoveryHeads(
-      await readJournal(secret.recovery_entropy!, secret.recovery_state!.relays),
-    );
-    if (heads.length !== 1 || (expectedStateId && heads[0].id !== expectedStateId)) {
+    const records = await readJournal(secret.recovery_entropy!, secret.recovery_state!.relays);
+    const heads = recoveryHeads(records);
+    check();
+    const baseline = installed.get(group);
+    if (
+      heads.length !== 1 ||
+      (expectedStateId && heads[0].id !== expectedStateId) ||
+      (baseline && !records.some((record) => record.id === baseline.id))
+    ) {
       throw new Error(
         'Group ownership state changed. Refresh or reconcile recovery before sending.',
       );
     }
+    // Preserve the verified baseline when account-backup hydration replays an older snapshot.
+    // This does not update an already reviewed form or install a new writable epoch.
+    installed.set(group, heads[0]);
     return secretFromState(secret.recovery_entropy!, heads[0]);
+  }
+  async function issueOwnInvitation(group: string, epochPublicKey: string) {
+    const check = session();
+    const account = d.account()!;
+    const contact = await contactsService.getContactByPublicKey(group);
+    check();
+    if (!contact?.meta.group_private_key_encrypted) return null;
+
+    // Possession of the master permits signing, but does not implicitly join this account.
+    const secret = await current(group);
+    check();
+    if (!secret.recovery_state!.members.includes(account))
+      throw new Error('This account is not a group member. Join the group before sending.');
+    if (new NostrPrivateKeySigner(secret.epoch_privkey!).pubkey !== epochPublicKey)
+      throw new Error('The group epoch changed. Refresh group recovery before sending.');
+
+    const invitedAt = Math.floor(Date.now() / 1000);
+    const ticket = new ClientEvent(
+      d.ndk,
+      groupTicketTemplate(
+        {
+          groupPublicKey: group,
+          epochNumber: secret.epoch_number!,
+          epochPublicKey,
+          epochPrivateKey: secret.epoch_privkey!,
+        },
+        account,
+        invitedAt,
+      ),
+    );
+    await ticket.sign(new NostrPrivateKeySigner(secret.group_privkey, d.ndk));
+    check();
+    await d.persistEpoch(group, secret.epoch_number!, secret.epoch_privkey!, {
+      invitationCreatedAt: new Date(invitedAt * 1000).toISOString(),
+      invitationProof: ticket.sig,
+      invitationEventId: ticket.id,
+    });
+    check();
+    return { proof: ticket.sig, invitedAt };
   }
   async function assertCanSend(group: string, epochPublicKey: string) {
     const secret = await current(group);
@@ -670,6 +752,7 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     backup,
     assertCurrent,
     assertCanSend,
+    issueOwnInvitation,
     current,
     exclusive,
     secretFor,

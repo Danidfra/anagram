@@ -9,6 +9,7 @@ export function redactPublicLinks(text: string): string {
 }
 
 export function publicMessageForDisplay(event: PublicGroupMessage, own = ''): Message {
+  const { activity: _, replyEvent: __, relay_statuses: ___, ...signed } = event;
   return {
     id: event.id ?? '',
     chatId: '',
@@ -19,7 +20,7 @@ export function publicMessageForDisplay(event: PublicGroupMessage, own = ''): Me
     eventId: event.id ?? null,
     meta: {},
     nostrEvent: {
-      event,
+      event: signed,
       direction: event.pubkey === own ? 'out' : 'in',
       relay_statuses: event.relay_statuses ?? [],
     },

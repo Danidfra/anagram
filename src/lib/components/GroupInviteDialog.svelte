@@ -348,7 +348,7 @@
     font-size: 12px;
   }
   .error {
-    color: var(--nc-danger, #ff5353);
+    color: var(--nc-danger);
     overflow-wrap: anywhere;
   }
   footer {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { dismissOnOutside } from '#src/lib/actions/dismissOnOutside.ts';
   import { observePublicProfile } from '#src/lib/state/publicProfiles.ts';
   import type { Chat } from '#src/types/chat.ts';
   import { translate, locale } from '#src/i18n.ts';
@@ -12,6 +13,7 @@
   export let onselect: (chat: Chat) => void;
   export let onaction: (chat: Chat, action: string) => void;
   let menu = false;
+  let menuTrigger: HTMLButtonElement;
   $: profile = observePublicProfile(chat.publicKey);
   $: name =
     chat.publicKey === ownPublicKey
@@ -65,6 +67,7 @@
     >{/if}
   {#snippet actions()}
     <button
+      bind:this={menuTrigger}
       class="icon-button row-menu"
       aria-label="Chat actions"
       data-testid="chat-item-actions-button"
@@ -72,11 +75,9 @@
       onclick={() => (menu = !menu)}><Icon name="more" /></button
     >
     {#if menu}<div
+        use:dismissOnOutside={{ dismiss: () => (menu = false), trigger: menuTrigger }}
         class="row-dropdown"
         role="menu"
-        onkeydown={(e) => {
-          if (e.key === 'Escape') menu = false;
-        }}
         tabindex="-1"
       >
         <button role="menuitem" onclick={() => action('profile')}
@@ -140,6 +141,7 @@
     top: 48px;
     right: 6px;
     background: var(--nc-menu-bg);
+    color: var(--nc-text);
     box-shadow: var(--nc-shadow-md);
     border: 1px solid var(--nc-border);
     border-radius: 10px;

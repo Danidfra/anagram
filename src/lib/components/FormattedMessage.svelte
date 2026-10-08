@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { FormattedMessagePart } from '#src/utils/messageFormatting.ts';
+  import { publicGroupLinkTarget } from '#src/utils/publicGroupLink.ts';
   import { parseRoomLink } from '#src/utils/callRoom.ts';
   import { translate } from '#src/i18n.ts';
   import Icon from './Icon.svelte';
@@ -41,9 +42,10 @@
   {:else if part.type === 'code'}<code class:block={part.block}>{part.text}</code>
   {:else if part.type === 'url'}
     {@const room = Boolean(parseRoomLink(part.href))}
+    {@const publicGroup = publicGroupLinkTarget(part.href)}
     <a
       data-testid="message-url-link"
-      class:room-link={room}
+      class:room-link={room || publicGroup !== null}
       href={part.href}
       title={part.href}
       rel="noopener noreferrer"
@@ -53,7 +55,9 @@
         event.preventDefault();
         onopen(part.href);
       }}
-      >{#if room}{$translate('room.joinGroupCall')}<Icon name="group" />{:else}{part.text}{/if}</a
+      >{#if room || publicGroup}{$translate(room ? 'room.joinGroupCall' : 'Join chat')}<Icon
+          name="group"
+        />{:else}{part.text}{/if}</a
     >
   {:else if part.type === 'mention' && part.publicKey}<button
       class="mention"

@@ -1,3 +1,4 @@
+import { preferGroupEpochInvitation } from '#src/utils/groupEpochMetadata.ts';
 import { NostrPrivateKeySigner, type NostrEvent } from '#src/lib/nostr/client.ts';
 import { type ChatRow, chatDataService } from '#src/services/chatDataService.ts';
 import { contactsService } from '#src/services/contactsService.ts';
@@ -421,6 +422,8 @@ export function createGroupEpochStateRuntime({
       fallbackName?: string;
       accepted?: boolean;
       invitationCreatedAt?: string;
+      invitationProof?: string;
+      invitationEventId?: string;
       seedRelayUrls?: string[];
     } = {}
   ): Promise<void> {
@@ -476,17 +479,34 @@ export function createGroupEpochStateRuntime({
       existingGroupEpochKeys.map((entry) => [`${entry.epoch_number}:${entry.epoch_public_key}`, entry])
     );
     if (existingEpochEntry) {
-      entriesByEpoch.set(`${epochNumber}:${normalizedEpochPublicKey}`, {
-        ...existingEpochEntry,
-        ...(invitationCreatedAt ? { invitation_created_at: invitationCreatedAt } : {}),
-      });
+      entriesByEpoch.set(
+        `${epochNumber}:${normalizedEpochPublicKey}`,
+        preferGroupEpochInvitation(existingEpochEntry, {
+          ...existingEpochEntry,
+          ...(invitationCreatedAt
+            ? {
+                invitation_created_at: invitationCreatedAt,
+                invitation_proof: options.invitationProof,
+                invitation_event_id: options.invitationEventId,
+              }
+            : {}),
+        }),
+      );
     } else {
-      const encryptedEpochPrivateKey = await encryptPrivateStringContent(normalizedEpochPrivateKey);
+      const encryptedEpochPrivateKey = await encryptPrivateStringContent(
+        normalizedEpochPrivateKey,
+      );
       entriesByEpoch.set(`${epochNumber}:${normalizedEpochPublicKey}`, {
         epoch_number: epochNumber,
         epoch_public_key: normalizedEpochPublicKey,
         epoch_private_key_encrypted: encryptedEpochPrivateKey,
-        ...(invitationCreatedAt ? { invitation_created_at: invitationCreatedAt } : {}),
+        ...(invitationCreatedAt
+          ? {
+              invitation_created_at: invitationCreatedAt,
+              invitation_proof: options.invitationProof,
+              invitation_event_id: options.invitationEventId,
+            }
+          : {}),
       });
     }
 

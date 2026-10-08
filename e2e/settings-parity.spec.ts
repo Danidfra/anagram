@@ -40,11 +40,12 @@ test('settings routes, mobile back navigation, appearance and language persist',
     await expect(page.getByTestId(`settings-${id}-item`)).toBeVisible();
   await page.getByTestId('settings-theme-item').click();
   await page.getByRole('switch', { name: 'Dark mode', exact: true }).uncheck();
-  await page.getByTestId('settings-desktop-message-layout-toggle').selectOption('bubbles');
+  await expect(page.getByTestId('settings-desktop-message-layout-toggle')).toHaveValue('bubbles');
+  await page.getByTestId('settings-desktop-message-layout-toggle').selectOption('text');
   await page.reload();
   await expect(page.getByRole('switch', { name: 'Dark mode', exact: true })).not.toBeChecked();
   await expect(page.locator('body')).not.toHaveClass(/body--dark/);
-  await expect(page.getByTestId('settings-desktop-message-layout-toggle')).toHaveValue('bubbles');
+  await expect(page.getByTestId('settings-desktop-message-layout-toggle')).toHaveValue('text');
   const splitter = page.getByRole('separator', { name: 'Resize left panel' });
   const previousWidth = Number(await splitter.getAttribute('aria-valuenow'));
   await splitter.press('ArrowRight');

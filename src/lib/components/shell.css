@@ -35,6 +35,11 @@ select {
   padding: 12px;
   outline: none;
 }
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  opacity: 1;
+}
 input:focus,
 textarea:focus {
   border-color: var(--q-primary);
@@ -69,7 +74,7 @@ p {
 }
 .danger-text,
 .error {
-  color: #ef6b73;
+  color: var(--nc-danger);
 }
 .link {
   color: var(--q-primary);
@@ -216,8 +221,8 @@ p {
   text-overflow: ellipsis;
   line-height: 21px;
 }
-.active .chat-preview,
-.active time {
+.chat-item.active .chat-preview,
+.chat-item.active time {
   color: var(--nc-active-subtext);
 }
 .badge {
@@ -478,6 +483,7 @@ p {
   top: 50px;
   z-index: 10;
   background: var(--nc-menu-bg);
+  color: var(--nc-text);
   border: 1px solid var(--nc-border);
   border-radius: 12px;
   box-shadow: var(--nc-shadow-md);
@@ -595,6 +601,7 @@ p {
   border-radius: 16px;
   border: 1px solid var(--nc-border);
   background: var(--nc-menu-bg);
+  color: var(--nc-text);
   padding: 24px;
   box-shadow: var(--nc-shadow-md);
 }
@@ -612,6 +619,7 @@ p {
   margin: 16px auto;
 }
 .notices {
+  color: var(--nc-text);
   position: fixed;
   bottom: 24px;
   left: 50%;
@@ -962,6 +970,7 @@ input[type='range'] {
   bottom: 72px;
   left: 16px;
   background: var(--nc-menu-bg);
+  color: var(--nc-text);
   border: 1px solid var(--nc-border);
   box-shadow: var(--nc-shadow-md);
   border-radius: 12px;
@@ -980,6 +989,7 @@ input[type='range'] {
   left: 16px;
   z-index: 12;
   background: var(--nc-menu-bg);
+  color: var(--nc-text);
   border: 1px solid var(--nc-border);
   border-radius: 12px;
   padding: 6px;

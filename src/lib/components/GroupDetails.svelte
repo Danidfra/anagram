@@ -1,4 +1,7 @@
 <script lang="ts">
+  import GroupProfileFields from './GroupProfileFields.svelte';
+  import DetailTabs from './DetailTabs.svelte';
+  import RelayEditor from './RelayEditor.svelte';
   import GroupInviteDialog from './GroupInviteDialog.svelte';
   import GroupSeedBackup from './GroupSeedBackup.svelte';
   import { onMount } from 'svelte';
@@ -18,7 +21,11 @@
   } from '#src/types/chat.ts';
   import type { PublishUserMetadataInput, RelaySaveStatus } from '#src/stores/nostr/types.ts';
   import ProfileName from './ProfileName.svelte';
-  import Avatar from './Avatar.svelte';
+  import MemberRow from './MemberRow.svelte';
+  import ImageUrlField from './ImageUrlField.svelte';
+  let pictureUploading = false,
+    bannerUploading = false;
+  $: imageUploading = pictureUploading || bannerUploading;
 
   export let publicKey: string;
   const nostr = useNostrStore();
@@ -51,16 +58,17 @@
     contact?.meta.owner_public_key === nostr.getLoggedInPublicKeyHex() &&
     contact?.meta.group_private_key_encrypted,
   );
-  $: visibleMembers = [
-    ...(owner &&
-    contact?.meta.owner_public_key &&
-    !(contact.meta.group_members ?? []).some(
-      (member) => member.public_key === contact?.meta.owner_public_key,
-    )
-      ? [{ public_key: contact.meta.owner_public_key, name: '', given_name: '', picture: '' }]
-      : []),
-    ...(contact?.meta.group_members ?? []),
-  ];
+  $: visibleMembers = owner
+    ? reviewedMemberKeys.map(
+        (public_key) =>
+          contact?.meta.group_members?.find((member) => member.public_key === public_key) ?? {
+            public_key,
+            name: '',
+            given_name: '',
+            picture: '',
+          },
+      )
+    : (contact?.meta.group_members ?? []);
   $: if (mounted && publicKey && $version >= 0)
     void load(false).catch(() => {
       error = 'Unable to load group details. Please reopen the profile.';
@@ -148,7 +156,7 @@
       notice = `Saved, but ${status.failedRelayUrls.length} relays need a retry.`;
   }
   async function run(action: () => Promise<unknown>) {
-    if (busy) return;
+    if (busy || imageUploading) return;
     busy = true;
     error = '';
     notice = '';
@@ -190,6 +198,29 @@
       throw new Error(
         `Membership saved, but ${result.failedMemberPubkeys.length} invitations need a retry. Use Resend invitation below.`,
       );
+  }
+  async function openInvitations() {
+    if (!owner || busy) return;
+    const group = publicKey;
+    const account = nostr.getLoggedInPublicKeyHex();
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      // Account backups can lag behind the signed recovery journal after reload.
+      // Capture a verified membership snapshot before the user starts editing it.
+      const recovery = await nostr.groupRecovery.current(group);
+      if (!mounted || group !== publicKey || account !== nostr.getLoggedInPublicKeyHex()) return;
+      reviewedStateId = recovery.recovery_state_id;
+      reviewedMemberKeys = [...recovery.recovery_state!.members];
+      knownOwners = [...recovery.recovery_state!.owners];
+      inviting = true;
+    } catch (cause) {
+      if (mounted && group === publicKey && account === nostr.getLoggedInPublicKeyHex())
+        error = cause instanceof Error ? cause.message : 'Unable to refresh group membership.';
+    } finally {
+      busy = false;
+    }
   }
   async function inviteMembers(keys: string[], hideEarlierMessages = false) {
     if (!owner || busy) throw new Error('Group membership cannot be updated right now.');
@@ -270,6 +301,7 @@
     await nostr.refreshContactRelayList(publicKey);
   }
   async function refresh() {
+    if (owner) await nostr.groupRecovery.current(publicKey);
     await Promise.all([
       nostr.refreshContactByPublicKey(publicKey),
       nostr.refreshGroupMembershipRoster(publicKey),
@@ -280,47 +312,53 @@
 
 {#if inviting && owner}
   <GroupInviteDialog
-    existingKeys={[
-      publicKey,
-      nostr.getLoggedInPublicKeyHex() ?? '',
-      ...reviewedMemberKeys,
-      ...visibleMembers.map((member) => member.public_key),
-    ]}
+    existingKeys={[publicKey, nostr.getLoggedInPublicKeyHex() ?? '', ...reviewedMemberKeys]}
     oninvite={inviteMembers}
     onclose={() => (inviting = false)}
   />
 {/if}
 
 <div class="group-details" data-testid="group-details">
-  <div class="tabs" role="tablist" aria-label="Group details">
-    {#each ['Profile', 'Members', 'Relays', 'Epochs', ...(owner ? ['Recovery'] : [])] as name}
-      <button
-        role="tab"
-        aria-selected={tab === name}
-        disabled={busy}
-        onclick={() => {
-          tab = name as typeof tab;
-          backup = null;
-          replacement = 'none';
-        }}>{name}</button
-      >
-    {/each}
-  </div>
+  <DetailTabs
+    items={['Profile', 'Members', 'Relays', 'Epochs', ...(owner ? ['Recovery'] : [])]}
+    active={tab}
+    label="Group details"
+    disabled={busy || imageUploading}
+    onselect={(name) => {
+      tab = name as typeof tab;
+      backup = null;
+      replacement = 'none';
+    }}
+  />
   {#if !contact}<p>Loading group…</p>
   {:else if tab === 'Profile'}
     {#if owner}
-      <label>Group name<input bind:value={profile.name} /></label>
-      <label>Description<textarea bind:value={profile.about}></textarea></label>
-      <label>Picture URL<input bind:value={profile.picture} /></label>
+      <GroupProfileFields
+        bind:name={profile.name}
+        bind:about={profile.about}
+        bind:picture={profile.picture}
+        bind:uploading={pictureUploading}
+        disabled={busy}
+        contextKey={publicKey}
+      />
       <details>
         <summary>More profile fields</summary>
         {#each [['display_name', 'Display name'], ['website', 'Website'], ['banner', 'Banner URL'], ['nip05', 'NIP-05 address'], ['lud16', 'Lightning address'], ['lud06', 'LNURL']] as [key, label]}
-          <label>{label}<input bind:value={profile[key]} /></label>
+          {#if key === 'banner'}
+            <ImageUrlField
+              label="Banner URL"
+              kind="banner"
+              bind:value={profile.banner}
+              bind:uploading={bannerUploading}
+              disabled={busy}
+              contextKey={publicKey}
+            />
+          {:else}<label>{label}<input bind:value={profile[key]} /></label>{/if}
         {/each}
       </details>
       <button
         class="primary"
-        disabled={busy}
+        disabled={busy || imageUploading}
         onclick={() =>
           run(async () => {
             await nostr.publishGroupMetadata(publicKey, { ...profile, group: true });
@@ -329,70 +367,68 @@
       >
     {:else}<h3>{contact.name}</h3>
       <p>{contact.meta.about ?? ''}</p>{/if}
-    <button class="outline" disabled={busy} onclick={() => run(refresh)}>Refresh group</button>
+    <button class="outline" disabled={busy || imageUploading} onclick={() => run(refresh)}
+      >Refresh group</button
+    >
   {:else if tab === 'Members'}
     <div class="member-actions">
-      {#if owner}<button class="primary" disabled={busy} onclick={() => (inviting = true)}
+      {#if owner}<button class="primary" disabled={busy || imageUploading} onclick={openInvitations}
           >Invite members</button
         >{/if}
-      <button class="outline" disabled={busy} onclick={() => run(refresh)}>Refresh members</button>
+      <button class="outline" disabled={busy || imageUploading} onclick={() => run(refresh)}
+        >Refresh members</button
+      >
     </div>
     {#if owner && deliveries.some( (delivery) => delivery.statuses.some((status) => status.direction === 'outbound' && status.status === 'failed') )}
-      <button class="outline" disabled={busy} onclick={() => run(retryFailedInvitations)}
-        >Retry all failed deliveries</button
+      <button
+        class="outline"
+        disabled={busy || imageUploading}
+        onclick={() => run(retryFailedInvitations)}>Retry all failed deliveries</button
       >
     {/if}
     {#each visibleMembers as member (member.public_key)}
-      <div class="member" data-public-key={member.public_key}>
-        <Avatar
-          publicKey={member.public_key}
-          name={member.name || member.public_key.slice(0, 12)}
-          picture={member.picture ?? ''}
-          size={36}
-        />
-        <div class="member-info">
-          <button class="member-profile" onclick={() => goto(`/contacts/${member.public_key}`)}
-            ><ProfileName
-              publicKey={member.public_key}
-              givenName={member.given_name ?? ''}
-              fallback={member.name || member.public_key.slice(0, 16)}
-            /></button
-          ><small>{nostr.encodeNpub(member.public_key)}</small>
-          {#if owner}
-            {#each deliveries.filter((delivery) => delivery.member_public_key === member.public_key) as delivery}
-              <small>Epoch {delivery.epoch_number}</small>
-              {#each delivery.statuses.filter((status) => status.direction === 'outbound') as status}
-                <small>{status.relay_url}: {status.status}</small>
-                {#if status.status === 'failed'}<button
-                    disabled={busy}
-                    onclick={() =>
-                      run(() =>
-                        nostr.retryGroupEpochTicketRelay(delivery.event_id, status.relay_url),
-                      )}>Retry relay</button
-                  >{/if}
-              {/each}
+      <MemberRow
+        publicKey={member.public_key}
+        npub={nostr.encodeNpub(member.public_key)}
+        name={member.name ?? ''}
+        givenName={member.given_name ?? ''}
+        picture={member.picture ?? ''}
+        onopen={() => goto(`/contacts/${member.public_key}`)}
+      >
+        {#if owner}
+          {#each deliveries.filter((delivery) => delivery.member_public_key === member.public_key) as delivery}
+            <small>Epoch {delivery.epoch_number}</small>
+            {#each delivery.statuses.filter((status) => status.direction === 'outbound') as status}
+              <small>{status.relay_url}: {status.status}</small>
+              {#if status.status === 'failed'}<button
+                  disabled={busy || imageUploading}
+                  onclick={() =>
+                    run(() =>
+                      nostr.retryGroupEpochTicketRelay(delivery.event_id, status.relay_url),
+                    )}>Retry relay</button
+                >{/if}
             {/each}
-            <div class="member-actions">
+          {/each}
+          <div class="member-actions">
+            <button
+              class="outline"
+              disabled={busy || imageUploading}
+              onclick={() =>
+                run(async () =>
+                  checkDelivery(await nostr.sendGroupEpochTicket(publicKey, member.public_key)),
+                )}>Resend invitation</button
+            >
+            {#if member.public_key !== nostr.getLoggedInPublicKeyHex()}
               <button
-                class="outline"
-                disabled={busy}
-                onclick={() =>
-                  run(async () =>
-                    checkDelivery(await nostr.sendGroupEpochTicket(publicKey, member.public_key)),
-                  )}>Resend invitation</button
+                class="outline danger-text"
+                data-testid="group-remove-member"
+                disabled={busy || imageUploading}
+                onclick={() => run(() => removeMember(member.public_key))}>Remove member</button
               >
-              {#if member.public_key !== nostr.getLoggedInPublicKeyHex()}
-                <button
-                  class="outline danger-text"
-                  data-testid="group-remove-member"
-                  disabled={busy}
-                  onclick={() => run(() => removeMember(member.public_key))}>Remove member</button
-                >
-              {/if}
-            </div>
-          {/if}
-        </div>
-      </div>
+            {/if}
+          </div>
+        {/if}
+      </MemberRow>
     {/each}
     {#if owner}
       <p>
@@ -401,39 +437,33 @@
       </p>
       <button
         class="outline"
-        disabled={busy}
+        disabled={busy || imageUploading}
         onclick={() => run(() => publishMembers([...reviewedMemberKeys], true))}
         >Rotate group keys</button
       >
     {/if}
   {:else if tab === 'Relays'}
-    {#if !owner}
-      {#each contact.relays ?? [] as entry}<div class="relay">
-          {entry.url} · {entry.read ? 'Read' : ''}
-          {entry.write ? 'Write' : ''}
-        </div>{:else}<p>No relays configured.</p>{/each}
-      <button class="outline" disabled={busy} onclick={() => run(refresh)}>Refresh group</button>
-    {:else}
-      {#each relayEntries as entry, index}
-        <div class="relay">
-          <span>{entry.url}</span><label
-            ><input type="checkbox" bind:checked={entry.read} />Read</label
-          ><label><input type="checkbox" bind:checked={entry.write} />Write</label><button
-            disabled={busy}
-            aria-label={`Remove ${entry.url}`}
-            onclick={() => (relayEntries = relayEntries.filter((_, i) => i !== index))}
-            >Remove</button
-          >
-        </div>
-      {/each}
-      <label>Relay URL<input bind:value={relayUrl} placeholder="wss://relay.example.com" /></label>
-      <button class="outline" disabled={busy || !relayUrl.trim()} onclick={addRelay}
-        >Add relay</button
+    <RelayEditor
+      entries={owner ? relayEntries : (contact.relays ?? [])}
+      bind:url={relayUrl}
+      editable={owner}
+      disabled={busy || imageUploading}
+      showFlags
+      onadd={addRelay}
+      onremove={(index) => (relayEntries = relayEntries.filter((_, i) => i !== index))}
+      onflag={(index, flag, value) =>
+        (relayEntries = relayEntries.map((entry, i) =>
+          i === index ? { ...entry, [flag]: value } : entry,
+        ))}
+    />
+    {#if !owner}<button
+        class="outline"
+        disabled={busy || imageUploading}
+        onclick={() => run(refresh)}>Refresh group</button
       >
-      <button class="primary" disabled={busy} onclick={() => run(saveRelays)}
+    {:else}<button class="primary" disabled={busy || imageUploading} onclick={() => run(saveRelays)}
         >Save group relays</button
-      >
-    {/if}
+      >{/if}
   {:else if tab === 'Recovery' && owner}
     {#if backup}
       <GroupSeedBackup
@@ -491,7 +521,7 @@
       {/if}
       <button
         class="outline"
-        disabled={busy}
+        disabled={busy || imageUploading}
         onclick={() =>
           run(async () => {
             backup = await nostr.groupRecovery.backup(publicKey);
@@ -499,7 +529,7 @@
       >
       <button
         class="outline"
-        disabled={busy}
+        disabled={busy || imageUploading}
         onclick={() => run(() => nostr.groupRecovery.refresh(publicKey))}>Refresh recovery</button
       >
       <details>
@@ -510,7 +540,7 @@
         </p>
         <button
           class="outline"
-          disabled={busy}
+          disabled={busy || imageUploading}
           onclick={() =>
             run(async () => {
               const state = await nostr.groupRecovery.refresh(publicKey, true);
@@ -525,7 +555,7 @@
       </details>
       <button
         class="outline"
-        disabled={busy}
+        disabled={busy || imageUploading}
         onclick={() => {
           replacementMembers = reviewedMemberKeys
             .filter((key) => key !== nostr.getLoggedInPublicKeyHex())
@@ -556,62 +586,17 @@
 </div>
 
 <style>
-  .tabs {
-    display: flex;
-    gap: 4px;
-    margin: 16px 0;
-    border-bottom: 1px solid var(--nc-border);
-  }
-  .tabs button {
-    flex: 1;
-    padding: 10px 4px;
-  }
-  .tabs button[aria-selected='true'] {
-    color: var(--q-primary);
-    border-bottom: 2px solid var(--q-primary);
-  }
-  .member {
-    display: flex;
-    align-items: start;
-    gap: 10px;
-    padding: 12px 0;
-  }
   .member-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     margin-top: 8px;
   }
-  .member-info {
-    min-width: 0;
-    flex: 1;
-  }
   small {
     display: block;
     overflow-wrap: anywhere;
     opacity: 0.75;
     margin: 4px 0;
-  }
-  .relay {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 12px 0;
-  }
-  .relay span {
-    width: 100%;
-    overflow-wrap: anywhere;
-  }
-  .relay label {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 4px;
-    margin: 0;
-  }
-  .relay input {
-    width: auto;
   }
   .epoch {
     padding: 12px 0;

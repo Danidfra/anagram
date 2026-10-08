@@ -8,7 +8,9 @@
   export let x: number;
   export let y: number;
   export let onaction: (action: string, message: Message) => void;
-  export let onreact: (emoji: string, message: Message) => void;
+  export let onreact: (emoji: string, message: Message) => void = () => {};
+  export let allowedActions: string[] = ['reply', 'copy', 'forward', 'edit', 'info', 'delete'];
+  export let allowReactions = true;
   export let onclose: () => void;
   let menu: HTMLDivElement;
   let left = x,
@@ -87,7 +89,7 @@
   {:else}
     <div class="action-list">
       {#each actions as [action, label, icon]}
-        {#if message.sender === 'me' || (action !== 'edit' && action !== 'delete')}
+        {#if allowedActions.includes(action) && (message.sender === 'me' || (action !== 'edit' && action !== 'delete'))}
           <button
             role="menuitem"
             aria-label={label}
@@ -102,13 +104,13 @@
         {/if}
       {/each}
     </div>
-    <div class="quick-reactions" aria-label="Quick reactions">
-      {#each ['👍', '👎', '🙏', '❤️', '😂'] as emoji}<button
-          aria-label={emoji === '👍' ? 'React' : `React ${emoji}`}
-          onclick={() => onreact(emoji, message)}>{emoji}</button
-        >{/each}
-      <button aria-label="Choose reaction" onclick={moreEmoji}><Icon name="more" /></button>
-    </div>
+    {#if allowReactions}<div class="quick-reactions" aria-label="Quick reactions">
+        {#each ['👍', '👎', '🙏', '❤️', '😂'] as emoji}<button
+            aria-label={emoji === '👍' ? 'React' : `React ${emoji}`}
+            onclick={() => onreact(emoji, message)}>{emoji}</button
+          >{/each}
+        <button aria-label="Choose reaction" onclick={moreEmoji}><Icon name="more" /></button>
+      </div>{/if}
   {/if}
 </div>
 
@@ -124,6 +126,7 @@
     border: 1px solid var(--nc-border);
     border-radius: 12px;
     background: var(--nc-menu-bg);
+    color: var(--nc-text);
     box-shadow: var(--nc-shadow-md);
     padding: 6px;
   }

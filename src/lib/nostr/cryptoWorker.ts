@@ -18,7 +18,7 @@ export function disposeCryptoWorker() {
   }
   pending.clear();
 }
-export function unwrapInWorker(wrap: Event, key: Uint8Array): Promise<Event> {
+export function unwrapInWorker(wrap: Event, key: Uint8Array, requireEmptySealTags = false): Promise<Event> {
   if (!worker) {
     worker = new Worker(new URL('./crypto.worker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = ({ data }) => {
@@ -38,6 +38,6 @@ export function unwrapInWorker(wrap: Event, key: Uint8Array): Promise<Event> {
     }, 30000);
     pending.set(id, { resolve, reject, timer });
     const copy = key.slice();
-    worker!.postMessage({ id, wrap, key: copy }, [copy.buffer]);
+    worker!.postMessage({ id, wrap, key: copy, requireEmptySealTags }, [copy.buffer]);
   });
 }

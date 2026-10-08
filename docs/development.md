@@ -18,6 +18,14 @@ The PWA caches the app shell; saved messages remain in IndexedDB. Relay sync and
 
 PWA installation is available in production builds. On iPhone, use Safari → Share → Add to Home Screen. There is no push delivery while the app is closed.
 
+## Social link previews
+
+The client URL includes a branded Open Graph / Twitter card. Copied public-chat and Iroh-call links use `/join/chat.html#/public/<naddr>` and `/join/call.html#/call/<token>`. The static entry pages expose “Join chat” and “Join call” cards without JavaScript, then open the existing app flow in browsers. Call secrets remain in the fragment, outside HTTP requests and preview metadata. Existing direct links still open normally.
+
+Serve the actual `build/join/*.html` files before the SPA fallback, and serve `build/social/*.jpg` as `image/jpeg`. Include these files when deploying; no preview backend is needed. If hosting on another domain, change the absolute `https://anagram.chat` metadata URLs in `src/app.html` and `static/join/*.html`. Social platforms may cache previously fetched previews.
+
+The three committed 1200×630 cards reuse the app logo and font. Regenerate them with `npm run assets:social` (set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` when using a system Chromium). The layout lives in `scripts/render-social-cards.mjs`. Verify the built HTML, images and offline entry pages with `npm run test:e2e:pwa -- e2e/pwa/social-previews.spec.ts`.
+
 ## Native development
 
 Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). On NixOS:

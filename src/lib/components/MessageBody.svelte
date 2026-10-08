@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
+  import { publicGroupLinkTarget } from '#src/utils/publicGroupLink.ts';
   import type { Message } from '#src/types/chat.ts';
   import {
     formatMessage,
@@ -58,6 +60,7 @@
     .filter(
       (href) =>
         !parseRoomLink(href) &&
+        !publicGroupLinkTarget(href) &&
         previewUrl(href) &&
         !attachments.some((attachment) => attachment.url === href) &&
         !/\.(?:png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|pdf)(?:[?#]|$)/i.test(href),
@@ -66,6 +69,11 @@
   $: mediaAllowed =
     allowMedia || showMedia || message.sender === 'me' || $trust.includes(message.authorPublicKey);
   async function open(url: string) {
+    const publicGroup = publicGroupLinkTarget(url);
+    if (publicGroup) {
+      await goto(publicGroup);
+      return;
+    }
     if (parseRoomLink(url)) {
       onroom(url);
       return;
@@ -298,6 +306,7 @@
     border: 1px solid var(--nc-border);
     border-radius: 8px;
     background: var(--nc-menu-bg);
+    color: var(--nc-text);
     box-shadow: 0 4px 18px #0005;
   }
   .link-menu button {

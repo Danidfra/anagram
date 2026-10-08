@@ -1,3 +1,5 @@
+import { searchRelayPublicGroups } from '#src/stores/nostr/publicGroupSearchRuntime.ts';
+import type { PublicRoom } from '#src/stores/nostr/publicGroups.ts';
 import { createPublicGroupRuntime } from '#src/stores/nostr/publicGroupRuntime.ts';
 import { chatDataService } from '#src/services/chatDataService.ts';
 import { createGroupRecoveryRuntime } from './nostr/groupRecoveryRuntime.ts';
@@ -801,6 +803,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
       }),
   });
   const {
+    prepareOutgoingPrivateMessage,
+    verifyIncomingGroupMessage,
     createDirectMessageRumorEvent,
     createEventDeletionRumorEvent,
     createReactionRumorEvent,
@@ -818,6 +822,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
     unwrapGiftWrapSealEvent,
     verifyIncomingGroupEpochTicket,
   } = createMessageEventRuntime({
+    issueOwnGroupInvitation: (group, epoch) => groupRecovery.issueOwnInvitation(group, epoch),
+    getLoggedInPublicKeyHex,
     decryptPrivateStringContent,
     derivePublicKeyFromPrivateKey,
     findGroupChatEpochContextByRecipientPubkey,
@@ -1119,6 +1125,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     publishUserMetadata,
     sendGiftWrappedRumor,
   } = createRelayPublishRuntime({
+    prepareOutgoingPrivateMessage,
     appendRelayStatusesToMessageEvent,
     buildRelaySaveStatus,
     decryptGroupIdentitySecretContent,
@@ -1236,17 +1243,28 @@ export const useNostrStore = defineStore('nostrStore', () => {
   });
 
   const groupRecovery = createGroupRecoveryRuntime({
-    ndk, account: getLoggedInPublicKeyHex,
+    ndk,
+    account: getLoggedInPublicKeyHex,
     connect: (urls) => ensureRelayConnections(urls, { force: true }),
-    encrypt: encryptGroupIdentitySecretContent, decrypt: decryptGroupIdentitySecretContent,
-    saveContact: ensureGroupContactAndChat, persistEpoch: persistIncomingGroupEpochTicket,
+    encrypt: encryptGroupIdentitySecretContent,
+    decrypt: decryptGroupIdentitySecretContent,
+    saveContact: ensureGroupContactAndChat,
+    persistEpoch: persistIncomingGroupEpochTicket,
     publish: publishEventWithRelayStatuses,
-    publishAccountBackup: (key, ciphertext, relays) => publishGroupIdentitySecretRuntime(key, ciphertext, relays),
-    changed: () => { bumpContactListVersion(); void chatStore.reload(); }, defaultRelays: getAppRelayUrls,
+    publishAccountBackup: (key, ciphertext, relays) =>
+      publishGroupIdentitySecretRuntime(key, ciphertext, relays),
+    changed: () => {
+      bumpContactListVersion();
+      void chatStore.reload();
+    },
+    defaultRelays: getAppRelayUrls,
   });
 
   async function publishGroupRelayList(...args: Parameters<typeof publishGroupRelayListImpl>) {
-    await groupRecovery.moveRelays(args[0], args[1].map((entry) => entry.url));
+    await groupRecovery.moveRelays(
+      args[0],
+      args[1].map((entry) => entry.url),
+    );
     return publishGroupRelayListImpl(...args);
   }
 
@@ -1327,6 +1345,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     resumePendingPrivateMessages,
     repairRestoredOutgoingChats,
   } = createPrivateMessagesIngestRuntime({
+    verifyIncomingGroupMessage,
     appendRelayStatusesToMessageEvent,
     applyPendingIncomingDeletionsForMessage,
     applyPendingIncomingReactionsForMessage,
@@ -1866,7 +1885,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
     syncLoggedInContactProfile,
     syncRecentChatContacts,
   } = createStartupContactSyncRuntime({
-    logStartupRestore: (phase, details) => logDeveloperTrace('info', 'startup-restore', phase, details),
+    logStartupRestore: (phase, details) =>
+      logDeveloperTrace('info', 'startup-restore', phase, details),
     applyContactCursorStateToContact,
     beginStartupStep,
     bumpContactListVersion,
@@ -2086,6 +2106,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     validateNsec,
     validatePrivateKey,
   } = createUserActions({
+    prepareOutgoingPrivateMessage,
     appendRelayStatusesToGroupMemberTicketEvent,
     appendRelayStatusesToMessageEvent,
     buildFailedOutboundRelayStatuses,
@@ -2138,7 +2159,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
     resetReconnectHealingRuntimeState: resetReconnectHealingRuntimeStateImpl,
     runReconnectHealing: runReconnectHealingImpl,
   } = createReconnectHealingRuntime({
-    logReconnectHealing: (phase, details) => logDeveloperTrace('info', 'reconnect-healing', phase, details),
+    logReconnectHealing: (phase, details) =>
+      logDeveloperTrace('info', 'reconnect-healing', phase, details),
     getLoggedInPublicKeyHex,
     getPrivateMessagesLiveEoseAt: () => privateMessagesSubscriptionLastEoseAt.value,
     getVisibleChatTarget: () => {
@@ -2264,8 +2286,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
   function containsSessionSecret(value: string): boolean {
     const clientKey =
       ndk.signer instanceof NostrNip46Signer ? ndk.signer.localSigner.privateKey : null;
-    return [getPrivateKeyHexImpl(), clientKey].some(
-      (key) => Boolean(key && value.toLowerCase().includes(key.toLowerCase())),
+    return [getPrivateKeyHexImpl(), clientKey].some((key) =>
+      Boolean(key && value.toLowerCase().includes(key.toLowerCase())),
     );
   }
 
@@ -2273,20 +2295,36 @@ export const useNostrStore = defineStore('nostrStore', () => {
     client: ndk,
     account: getLoggedInPublicKeyHex,
     signer: () => getOrCreateSignerRuntime(),
-    relays: resolveLoggedInReadRelayUrls,
+    relays: async () => getAppRelayUrls(),
     containsSecret: containsSessionSecret,
   });
 
   return {
     publicGroups,
     containsSessionSecret,
+    searchPublicGroups: async (
+      query: string,
+      signal: AbortSignal,
+      onResults: (rooms: PublicRoom[]) => void,
+    ) => {
+      if (!profileSearchAllowed(query) || containsSessionSecret(query)) return 'invalid' as const;
+      const owner = getLoggedInPublicKeyHex();
+      const relayUrls = await resolveLoggedInReadRelayUrls();
+      if (signal.aborted || owner !== getLoggedInPublicKeyHex()) return 'complete' as const;
+      return searchRelayPublicGroups(ndk, query, relayUrls, {
+        signal,
+        onResults: (rooms) => {
+          if (owner === getLoggedInPublicKeyHex()) onResults(rooms);
+        },
+        isBlocked: (key) => isPubkeyBlockedRuntime(key),
+      });
+    },
     searchProfiles: async (
       query: string,
       signal: AbortSignal,
       onResults: (results: ProfileSearchResult[]) => void,
     ) => {
-      if (!profileSearchAllowed(query) || containsSessionSecret(query))
-        return 'invalid' as const;
+      if (!profileSearchAllowed(query) || containsSessionSecret(query)) return 'invalid' as const;
       const owner = getLoggedInPublicKeyHex();
       const relayUrls = await resolveLoggedInReadRelayUrls();
       if (signal.aborted || owner !== getLoggedInPublicKeyHex()) return 'complete' as const;
