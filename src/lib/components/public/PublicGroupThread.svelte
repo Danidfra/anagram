@@ -626,7 +626,13 @@
           'edit',
           'info',
           'delete',
-          ...(canPin && !pinBusy ? [room?.pinned === actionMessage.id ? 'unpin' : 'pin'] : []),
+          ...(canPin && !pinBusy
+            ? [
+                room?.pinned === actionMessage.id || pinned?.id === actionMessage.id
+                  ? 'unpin'
+                  : 'pin',
+              ]
+            : []),
         ]
       : ['copy', 'forward', 'info']}
     allowReactions={writable}

@@ -1047,18 +1047,35 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     fetchMissing = true,
   ) {
     if (!context.active() || !/^[a-f0-9]{64}$/.test(id)) return null;
+    const matches = (event: PublicGroupMessage) =>
+      validRoomMessage(event, context.address) &&
+      (event.id === id || editTarget(event) === id || editRoot(event) === id);
+    const replacement = (events: PublicGroupMessage[]) => {
+      const candidates = events.filter(
+        (event) => matches(event) && context.textFor(event) !== null,
+      );
+      // Use the same available signed anchor as the timeline. Do not guess if
+      // different authors claim to replace an original we have never received.
+      if (new Set(candidates.map((event) => event.pubkey)).size !== 1) return undefined;
+      return publicMessageRoots(candidates)[0];
+    };
     let target = await context.db.message(context.address, id);
+    if (!target)
+      target = replacement([
+        ...get(state).messages,
+        ...(await context.db.actionsFor(context.address, [id])),
+      ]);
     if (!target && fetchMissing && context.active()) {
       const room =
         get(state).ancestors.find((room) => room.address === context.address) ?? get(state).room!;
       const result = await query(
-        [{ kinds: [9], ids: [id], limit: 1 }],
+        [
+          { kinds: [9], ids: [id], limit: 1 },
+          { kinds: [9], '#a': [context.address], '#e': [id], limit: 64 },
+        ],
         await relayUrls(room.relays),
         8,
-        (events) =>
-          events.some(
-            (event) => event.id === id && validRoomMessage(event.rawEvent(), context.address),
-          ),
+        (events) => events.some((event) => matches(event.rawEvent())),
       );
       if (!context.active()) return null;
       const saved = await cacheEvents(
@@ -1066,7 +1083,12 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         result.events.map((event) => receivedMessage(event)),
         context.db,
       );
-      target = saved.find((event) => event.id === id);
+      target =
+        saved.find((event) => event.id === id) ??
+        replacement(result.events.map((event) => receivedMessage(event)));
+      // Edited messages are normally stored as actions. Retain an available
+      // replacement as a timeline anchor when the original has been removed.
+      if (target && editTarget(target)) await context.db.put(context.address, target);
     }
     return context.active() && target && context.textFor(target) !== null ? target : null;
   }

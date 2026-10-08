@@ -1062,6 +1062,65 @@ it('shows an edited replacement to a fresh client after relays have removed its 
   expect(displayed().map((message) => message.text)).toEqual(['Latest replacement']);
 });
 
+it.each([false, true])(
+  'resolves an edited pin with its original removed (outside the loaded window: %s)',
+  async (outsideWindow) => {
+    const key = generateSecretKey();
+    const address = `34550:${getPublicKey(key)}:edited-pin`;
+    const original = finalizeEvent(
+      { kind: 9, created_at: 20, content: 'Welcome', tags: [['a', address]] },
+      key,
+    );
+    const replacement = finalizeEvent(
+      {
+        kind: 9,
+        created_at: 20,
+        content: 'Welcome to Anagram!',
+        tags: [
+          ['a', address],
+          ['e', original.id, '', 'edit'],
+        ],
+      },
+      key,
+    );
+    const metadata = room(key, 'edited-pin', [
+      ['pinned', original.id],
+      ['relay', 'wss://stalled.example.org/'],
+    ]);
+    const recent = Array.from({ length: outsideWindow ? 55 : 0 }, (_, n) =>
+      finalizeEvent(
+        { kind: 9, created_at: 100 + n, content: `Recent ${n}`, tags: [['a', address]] },
+        key,
+      ),
+    );
+    const { runtime, subscriptions, events } = setup(
+      [metadata, replacement, ...recent],
+      key,
+      (url) => !url.includes('stalled'),
+    );
+    await runtime.open(encodeRoomLink(parsePublicRoom(metadata)));
+    await vi.waitFor(() =>
+      expect(get(runtime.state).messages).toHaveLength(outsideWindow ? 50 : 1),
+    );
+    const window = get(runtime.state).messages.map((event) => event.id);
+    const pinRequests = () =>
+      subscriptions.filter((filters) => filters.some((filter) => filter.ids?.includes(original.id)))
+        .length;
+    const requests = pinRequests();
+    const pinned = await runtime.pinnedMessage(outsideWindow);
+    expect(pinned?.text).toBe('Welcome to Anagram!');
+    expect(pinned?.meta.edited).toBeTruthy();
+    if (!outsideWindow) expect(pinRequests()).toBe(requests);
+    expect(get(runtime.state).messages.map((event) => event.id)).toEqual(window);
+    // Once cached, neither the preview nor navigation needs a relay.
+    events.length = 0;
+    const cachedRequests = pinRequests();
+    expect((await runtime.pinnedMessage())?.text).toBe('Welcome to Anagram!');
+    expect((await runtime.jumpToMessage(original.id))?.id).toBe(replacement.id);
+    expect(pinRequests()).toBe(cachedRequests);
+  },
+);
+
 it('pages edited replacements whose originals were already removed by relays', async () => {
   const author = generateSecretKey(),
     metadata = room(author, 'paged-edits');

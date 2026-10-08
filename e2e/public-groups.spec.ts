@@ -1448,3 +1448,71 @@ test('public chat stays usable with a stalled replica and empty cached-policy lo
   ).toBeVisible();
   await expect(page.getByText(/Public group relay checks did not complete/)).toHaveCount(0);
 });
+
+test('an edited public pin resolves and jumps after the original has disappeared', async ({
+  page,
+}) => {
+  const secondary = 'wss://stalled-pin.example.org/';
+  await page.routeWebSocket(secondary, (socket) => socket.onMessage(() => {}));
+  const owner = await login(page);
+  const slug = `edited-pin-${owner.pubkey.slice(0, 12)}`;
+  const address = `34550:${owner.pubkey}:${slug}`;
+  const now = Math.floor(Date.now() / 1000);
+  const original = finalizeEvent(
+    { kind: 9, created_at: now - 10, content: 'Welcome', tags: [['a', address]] },
+    owner.key,
+  );
+  // A fresh client only receives the replacement, as with a relay honoring deletion.
+  await publish(
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: original.created_at,
+        content: 'Welcome to Anagram!',
+        tags: [
+          ['a', address],
+          ['e', original.id, '', 'edit'],
+        ],
+      },
+      owner.key,
+    ),
+  );
+  await publish(
+    finalizeEvent(
+      {
+        kind: 34550,
+        created_at: now,
+        content: '',
+        tags: [
+          ['d', slug],
+          ['name', 'Edited announcement'],
+          ['anagram-room', '1'],
+          ['relay', relay],
+          ['relay', secondary],
+          ['pinned', original.id],
+        ],
+      },
+      owner.key,
+    ),
+  );
+  const link = nip19.naddrEncode({
+    kind: 34550,
+    pubkey: owner.pubkey,
+    identifier: slug,
+    relays: [relay],
+  });
+  await navigateInApp(page, `/public/${link}`);
+  const card = page.getByTestId('pinned-message');
+  const message = page.getByTestId('public-message').filter({ hasText: 'Welcome to Anagram!' });
+  await expect(message).toBeVisible();
+  await expect(card).toContainText('Welcome to Anagram!', { timeout: 5000 });
+  await page.getByRole('button', { name: 'Go to pinned message' }).click();
+  await expect(message).toHaveClass(/highlighted/);
+  await message.click({ button: 'right' });
+  await expect(page.getByRole('menuitem', { name: 'Unpin message', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await expect(card).toContainText('Welcome to Anagram!', { timeout: 5000 });
+  await page.getByRole('button', { name: 'Go to pinned message' }).click();
+  await expect(message).toHaveClass(/highlighted/);
+});
