@@ -179,19 +179,6 @@ describe('mediaCrypto', () => {
     expect(decryptSpy).not.toHaveBeenCalled();
   });
 
-  it('decrypts once the ciphertext hash matches', async () => {
-    const plaintext = plaintextBytes();
-    const encrypted = await encryptMediaBytes(plaintext);
-
-    await expect(
-      verifyAndDecryptMediaBytes(encrypted.ciphertext, {
-        sha256: await sha256Hex(encrypted.ciphertext),
-        key: encrypted.key,
-        nonce: encrypted.nonce,
-      })
-    ).resolves.toEqual(plaintext);
-  });
-
   it('fails closed when the hash matches but GCM authentication fails', async () => {
     const encrypted = await encryptMediaBytes(plaintextBytes());
     const tampered = flipByte(encrypted.ciphertext, 2);

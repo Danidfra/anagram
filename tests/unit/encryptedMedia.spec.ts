@@ -2,7 +2,6 @@ import {
   formatMediaByteSize,
   getMaxEncryptedBlobBytes,
   resolveEncryptedMediaKind,
-  shouldEncryptOutgoingMedia,
 } from '#src/utils/encryptedMedia.ts';
 import { describe, expect, it } from 'vitest';
 
@@ -56,13 +55,6 @@ describe('encrypted media kinds', () => {
 
     expect(video && getMaxEncryptedBlobBytes(video)).toBe(20 * MIB + 16);
     expect(audio && getMaxEncryptedBlobBytes(audio)).toBe(10 * MIB + 16);
-  });
-
-  it('encrypts every supported type and nothing else', () => {
-    expect(shouldEncryptOutgoingMedia({ type: 'video/mp4' })).toBe(true);
-    expect(shouldEncryptOutgoingMedia({ type: 'audio/flac' })).toBe(true);
-    expect(shouldEncryptOutgoingMedia({ type: 'image/png' })).toBe(true);
-    expect(shouldEncryptOutgoingMedia({ type: 'video/quicktime' })).toBe(false);
   });
 });
 

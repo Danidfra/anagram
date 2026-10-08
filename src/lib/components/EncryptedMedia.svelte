@@ -7,68 +7,28 @@
     type EncryptedMediaLoadState,
   } from '#src/services/encryptedMediaLoader.ts';
   import { formatMediaByteSize, resolveEncryptedMediaKind } from '#src/utils/encryptedMedia.ts';
+  import { nearViewport } from '#src/lib/actions/nearViewport.ts';
   import { translate } from '#src/i18n.ts';
   import Icon from './Icon.svelte';
+  // The parent re-creates this component when the attachment changes.
   export let attachment: MessageAttachmentMetadata;
   // Decrypt automatically once the attachment is near the viewport. Only set once the sender's
   // media is allowed (own, trusted, or revealed by the user), mirroring how images are shown.
   export let autoLoad = false;
-  const AUTO_LOAD_ROOT_MARGIN = '200px 0px';
-  let root: HTMLElement | undefined;
   let player: HTMLMediaElement | undefined;
-  let observer: IntersectionObserver | null = null;
   let state: EncryptedMediaLoadState = { status: 'idle', objectUrl: '' };
   let playWhenReady = false;
   const loader = createEncryptedMediaLoader(encryptedMediaService, (next) => {
     state = next;
   });
-  let identity = '';
-  // A reused component that receives a different attachment drops the previous decrypted media.
-  $: if (attachmentIdentity(attachment) !== identity) {
-    if (identity) {
-      stopWatchingViewport();
-      loader.dispose();
-      state = { status: 'idle', objectUrl: '' };
-      playWhenReady = false;
-    }
-    identity = attachmentIdentity(attachment);
-  }
-  function attachmentIdentity(value: MessageAttachmentMetadata) {
-    return [
-      value.url,
-      value.sha256 ?? '',
-      value.mimeType,
-      value.encryption?.key ?? '',
-      value.encryption?.nonce ?? '',
-    ].join('|');
-  }
   $: kind = resolveEncryptedMediaKind(attachment.mimeType)?.kind === 'audio' ? 'audio' : 'video';
   $: label =
     attachment.name?.trim() ||
     $translate(kind === 'audio' ? 'message.encryptedMedia.audio' : 'message.encryptedMedia.video');
   $: sizeLabel = formatMediaByteSize(attachment.size);
-  $: if (root && autoLoad && state.status === 'idle' && !observer) watchViewport(root);
   $: if (player && playWhenReady) startPlayback(player);
-  function stopWatchingViewport() {
-    observer?.disconnect();
-    observer = null;
-  }
   function load() {
-    stopWatchingViewport();
     void loader.load(attachment);
-  }
-  function watchViewport(element: HTMLElement) {
-    if (typeof IntersectionObserver === 'undefined') {
-      load();
-      return;
-    }
-    observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) load();
-      },
-      { rootMargin: AUTO_LOAD_ROOT_MARGIN },
-    );
-    observer.observe(element);
   }
   // Browsers may refuse playback when decryption outlived the user gesture; the native controls
   // stay available for a second tap.
@@ -80,14 +40,15 @@
     playWhenReady = true;
     load();
   }
-  onDestroy(() => {
-    stopWatchingViewport();
-    loader.dispose();
-  });
+  onDestroy(() => loader.dispose());
 </script>
 
 <div
-  bind:this={root}
+  use:nearViewport={{
+    rootMargin: '200px 0px',
+    enabled: autoLoad && state.status === 'idle',
+    onvisible: load,
+  }}
   class="encrypted-media"
   data-kind={kind}
   data-testid="message-encrypted-media"

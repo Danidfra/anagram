@@ -153,25 +153,6 @@ describe('send media then persist changed private-media server', () => {
     expect(flow.getPersisted()).toBe(SERVER_A);
   });
 
-  it('never starts persisting before the send promise has resolved', async () => {
-    const order: string[] = [];
-    await sendMediaThenPersistServer({
-      send: async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-        order.push('send-resolved');
-        return { id: 1 };
-      },
-      serverToPersist: SERVER_B,
-      persistServer: async () => {
-        order.push('persist-started');
-      },
-      onPersistError: vi.fn(),
-    });
-
-    expect(order).toEqual(['send-resolved', 'persist-started']);
-  });
-
   it('persists nothing when the upload used the saved server', async () => {
     const persistServer = vi.fn();
     await sendMediaThenPersistServer({

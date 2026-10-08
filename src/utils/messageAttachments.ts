@@ -12,8 +12,8 @@ import {
 
 const IMETA_TAG_NAME = 'imeta';
 export const IMAGE_ATTACHMENT_PREVIEW_TEXT = 'Picture';
-export const VIDEO_ATTACHMENT_PREVIEW_TEXT = 'Video';
-export const AUDIO_ATTACHMENT_PREVIEW_TEXT = 'Audio';
+const VIDEO_ATTACHMENT_PREVIEW_TEXT = 'Video';
+const AUDIO_ATTACHMENT_PREVIEW_TEXT = 'Audio';
 const FILE_ATTACHMENT_PREVIEW_TEXT = 'File';
 
 // NIP-17 rumor kinds rendered as chat messages.
@@ -370,23 +370,6 @@ export function readImageAttachmentsFromMeta(
     | undefined,
 ): MessageAttachmentMetadata[] {
   return readMediaAttachmentsFromMeta(meta).filter((attachment) => isImageAttachment(attachment));
-}
-
-// Encrypted attachments that cannot be shown at all (unsupported image, video, audio or file types).
-export function readUnsupportedEncryptedAttachmentsFromMeta(
-  meta:
-    | {
-        attachments?: unknown;
-      }
-    | null
-    | undefined,
-): MessageAttachmentMetadata[] {
-  return readMediaAttachmentsFromMeta(meta).filter(
-    (attachment) =>
-      isEncryptedAttachment(attachment) &&
-      !isImageAttachment(attachment) &&
-      !isPlayableEncryptedAttachment(attachment),
-  );
 }
 
 // URLs that should not be shown as message text: rendered images and every encrypted blob
