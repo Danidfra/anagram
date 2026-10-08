@@ -23,7 +23,7 @@
     loading = true,
     refreshing = false,
     saving = false,
-    hex = true;
+    hex = false;
   let error = '',
     notice = '',
     qr = '';

@@ -16,7 +16,7 @@ import { lookup } from 'node:dns';
 import { BlockList, isIP } from 'node:net';
 import { randomInt } from 'node:crypto';
 import WebSocket from 'ws';
-import { SimplePool, useWebSocketImplementation } from 'nostr-tools/pool';
+import { SimplePool } from 'nostr-tools/pool';
 import {
   finalizeEvent,
   generateSecretKey,
@@ -109,7 +109,7 @@ export function unwrap(event, key) {
 }
 export function mentions(content, pubkey) {
   for (const match of content.matchAll(
-    /nostr:((?:npub|nprofile)1[023456789acdefghjklmnpqrstuvwxyz]+)/gi,
+    /(?<![\p{L}\p{N}_:/?=&#.%])(?:nostr:)?((?:npub|nprofile)1[023456789acdefghjklmnpqrstuvwxyz]+)(?![\p{L}\p{N}_])/giu,
   )) {
     try {
       const decoded = nip19.decode(match[1]);
@@ -257,8 +257,11 @@ export class Network {
   constructor(configured) {
     this.configured = relayURLs(configured, configured);
     if (!this.configured.length) throw new Error('Configure at least one RELAYS websocket URL.');
+    this.closed = false;
+    this.sockets = new Set();
+    const sockets = this.sockets;
     const allowed = new Set(this.configured);
-    class SafeWebSocket extends WebSocket {
+    this.WebSocket = class SafeWebSocket extends WebSocket {
       constructor(url) {
         const trusted = allowed.has(new URL(url).href);
         super(url, {
@@ -274,9 +277,32 @@ export class Network {
             });
           },
         });
+        // nostr-tools clears ws.onerror during timeout/close cleanup. Node's ws
+        // emits an asynchronous error when a connecting socket is closed, so keep
+        // an EventEmitter listener attached even after that DOM handler is removed.
+        // The pool still rejects the failed operation and our watcher retries it.
+        this.on('error', () => {});
+        sockets.add(this);
+        // A half-open TCP connection may never emit close. Terminate it if a
+        // WebSocket ping gets no pong, so subscriptions can reconnect promptly.
+        let heartbeat, deadline;
+        this.on('open', () => {
+          heartbeat = setInterval(() => {
+            if (this.readyState !== WebSocket.OPEN) return;
+            deadline = setTimeout(() => this.terminate(), 10000);
+            this.ping(undefined, undefined, (error) => {
+              if (error) this.terminate();
+            });
+          }, 30000);
+        });
+        this.on('pong', () => clearTimeout(deadline));
+        this.once('close', () => {
+          clearInterval(heartbeat);
+          clearTimeout(deadline);
+          sockets.delete(this);
+        });
       }
-    }
-    useWebSocketImplementation(SafeWebSocket);
+    };
     // Reopen subscriptions ourselves: NIP-59 timestamps are randomized, so a reconnect
     // cursor based on the latest outer event would silently skip some new gift wraps.
     this.pools = new Map();
@@ -288,9 +314,13 @@ export class Network {
   pool(key) {
     // AUTH is connection-scoped. A group epoch must not share its authenticated
     // connection with the bot's personal inbox or another group's epoch.
+    if (this.closed) throw new Error('Network is closed.');
     const id = key ? getPublicKey(key) : 'public';
     if (!this.pools.has(id))
-      this.pools.set(id, new SimplePool({ enablePing: true, enableReconnect: false }));
+      this.pools.set(
+        id,
+        new SimplePool({ websocketImplementation: this.WebSocket, enableReconnect: false }),
+      );
     return this.pools.get(id);
   }
   auth(key) {
@@ -308,37 +338,76 @@ export class Network {
     );
   }
   watch(relays, filter, onEvent, key) {
+    const pool = this.pool(key);
     const closers = this.routes(relays).map((url) => {
       let stopped = false,
-        sub,
-        timer,
+        retry,
+        current,
         attempts = 0;
-      const open = () => {
-        if (stopped) return;
-        clearTimeout(timer);
-        sub = this.pool(key).subscribeMany([url], filter(), {
-          onauth: this.auth(key),
-          onevent: onEvent,
-          oneose: () => {
+      const open = async () => {
+        if (stopped || this.closed) return;
+        const attempt = { closed: false };
+        current = attempt;
+        const dispose = () => {
+          attempt.closed = true;
+          clearTimeout(attempt.stable);
+          clearTimeout(attempt.renew);
+          const sub = attempt.sub;
+          attempt.sub = undefined;
+          sub?.close();
+        };
+        attempt.dispose = dispose;
+        const failed = () => {
+          if (attempt.closed) return;
+          dispose();
+          if (!stopped && !this.closed) {
+            const delay = Math.min(60000, 1000 * 2 ** Math.min(attempts++, 6));
+            retry = setTimeout(open, Math.min(60000, delay * (1 + Math.random() / 4)));
+          }
+        };
+        try {
+          const relay = await pool.ensureRelay(url, { connectionTimeout: 10000 });
+          if (attempt.closed) return;
+          const filters = [filter()];
+          const subscribe = (authenticated = false) => {
+            if (attempt.closed) return;
+            attempt.sub = relay.subscribe(filters, {
+              onevent: (event) => {
+                if (!attempt.closed) onEvent(event);
+              },
+              onclose: (reason) => {
+                attempt.sub = undefined;
+                if (attempt.closed) return;
+                if (!authenticated && reason.startsWith('auth-required:')) {
+                  // Track the replacement subscription too, including when a watch
+                  // is stopped while AUTH is still in flight (e.g. key rotation).
+                  relay
+                    .auth(this.auth(key))
+                    .then(() => subscribe(true))
+                    .catch(failed);
+                } else failed();
+              },
+            });
+          };
+          subscribe();
+          // EOSE can be synthetic on failure. Only a stable connection resets backoff.
+          attempt.stable = setTimeout(() => {
             attempts = 0;
-          },
-          onclose: () => {
-            if (!stopped) {
-              clearTimeout(timer);
-              timer = setTimeout(open, Math.min(60000, 1000 * 2 ** Math.min(attempts++, 6)));
-            }
-          },
-        });
-        // Bounds library deduplication memory and retries a relay that silently stops streaming.
-        timer = setTimeout(() => {
-          sub.close();
-        }, 5 * 60000);
+          }, 30000);
+          // Periodically replay bounded history if a relay stops streaming new events.
+          attempt.renew = setTimeout(() => {
+            dispose();
+            void open();
+          }, 5 * 60000);
+        } catch {
+          failed();
+        }
       };
-      open();
+      void open();
       return () => {
         stopped = true;
-        clearTimeout(timer);
-        sub?.close();
+        clearTimeout(retry);
+        current?.dispose();
       };
     });
     const stop = () => {
@@ -349,7 +418,10 @@ export class Network {
     return stop;
   }
   close() {
+    this.closed = true;
     for (const stop of [...this.stops]) stop();
     for (const pool of this.pools.values()) pool.destroy();
+    for (const socket of this.sockets) socket.terminate();
+    this.pools.clear();
   }
 }

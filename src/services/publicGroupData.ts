@@ -98,6 +98,16 @@ export class PublicGroupData {
       r.onsuccess = () => done(r.result);
     });
   }
+  seed(room: PublicRoom): Promise<void> {
+    return this.transaction('rooms', 'readwrite', (store) => {
+      const request = store.get(room.address);
+      request.onsuccess = () => {
+        // Existing rows include explicit leaves and accepted ownership transfers.
+        // Never overwrite either, or a newer profile, with the bundled snapshot.
+        if (!request.result) store.add({ address: room.address, room, joined: true, updated: 0 });
+      };
+    });
+  }
   save(value: SavedPublicRoom): Promise<void> {
     return this.transaction('rooms', 'readwrite', (s) => {
       s.put(value);

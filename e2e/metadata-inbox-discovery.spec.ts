@@ -88,7 +88,7 @@ test('anonymous indexers discover an unknown account inbox and stream all peer p
   // Every websocket is intercepted: no public relay or real account is involved.
   await page.routeWebSocket(/^(wss?:)/, (socket) => {
     const url = socket.url();
-    if (url.includes('127.0.0.1:5173')) {
+    if (new URL(url).host === new URL(test.info().project.use.baseURL!).host) {
       socket.connectToServer();
       return;
     }
@@ -152,7 +152,7 @@ test('anonymous indexers discover an unknown account inbox and stream all peer p
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(ownKey));
   await page.getByTestId('auth-login-button').click();
   await finishOnboarding(page);
-  await expect(page.getByTestId('chat-item')).toHaveCount(12, { timeout: 45000 });
+  await expect(page.getByTestId('chat-item')).toHaveCount(13, { timeout: 45000 });
   await expect
     .poll(
       () =>
@@ -191,7 +191,7 @@ test('anonymous indexers discover an unknown account inbox and stream all peer p
     page
       .getByTestId('message-bubble')
       .filter({ hasText: 'Outgoing 0' })
-      .locator('.message-author img'),
+      .locator('.bubble-avatar img, .message-author img'),
   ).toHaveAttribute('src', `https://profiles.test/${own}.png`);
   await page.reload();
   await expect(

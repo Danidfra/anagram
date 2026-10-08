@@ -56,6 +56,7 @@ interface State {
   more: boolean;
 }
 interface Dependencies {
+  starterRoom?: NostrEvent;
   client: NostrClient;
   account: () => string | null;
   signer: () => Promise<NostrSigner>;
@@ -150,6 +151,10 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     stop();
     account = next;
     data = new PublicGroupData(next);
+    if (deps.starterRoom) {
+      await data.seed(parsePublicRoom(deps.starterRoom));
+      assertSession(next);
+    }
     await reloadRooms();
   }
   async function reloadRooms() {
@@ -435,7 +440,16 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     ];
     for (const id of missing.slice(0, 16)) {
       if (await db.message(address, id)) continue;
-      const fetched = await query([{ kinds: [9], ids: [id], limit: 1 }], urls, 8);
+      // The original may have been deleted from relays. Repair is optional:
+      // relay outages must not prevent saving the verified replacement below.
+      const fetched = await query(
+        [{ kinds: [9], ids: [id], limit: 1 }],
+        urls,
+        8,
+        (events) =>
+          events.some((event) => event.id === id && validRoomMessage(event.rawEvent(), address)),
+        true,
+      ).catch(() => ({ events: [] as ClientEvent[], complete: false }));
       if (!active()) return [];
       saved.push(
         ...(await cacheEvents(

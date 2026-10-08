@@ -301,10 +301,9 @@ export async function waitForReactionCount(page: Page, label: RegExp, count: num
   await expect(page.getByRole('button', { name: label })).toHaveCount(count);
 }
 export async function waitForDeletedMessageState(page: Page, text: string, _options = {}) {
-  const deleted = page.getByTestId('message-bubble').filter({ hasText: 'Message deleted' }).last();
-  await expect(deleted).toBeVisible();
-  await deleted.getByRole('button', { name: 'View Deleted Message' }).click();
-  await expect(deleted.locator('.message-text')).toHaveText(text);
+  await expect(threadMessage(page, text)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'View Deleted Message' })).toHaveCount(0);
+  await expect(page.getByTestId('message-bubble').filter({ hasText: 'Message deleted' })).toHaveCount(0);
 }
 export async function createGroup(page: Page, options: { name: string; about: string }) {
   await page.getByRole('button', { name: 'Chat options' }).click();

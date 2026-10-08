@@ -3,7 +3,9 @@
   import ComposerContext from '../ComposerContext.svelte';
   import MessageReply from '../MessageReply.svelte';
   import { buildMessageReplyPreviewContent } from '#src/utils/messageAttachments.ts';
-  import { getPublicProfile } from '#src/lib/state/publicProfiles.ts';
+  import { getPublicProfile, observePublicProfile } from '#src/lib/state/publicProfiles.ts';
+  import { derived, readable } from 'svelte/store';
+  import { buildMentionProfiles, serializeMentionDraft } from '#src/utils/nostrMentions.ts';
   import MessageInfo from '../MessageInfo.svelte';
   import ModalFrame from '../ModalFrame.svelte';
   import type { Message, MessageReplyPreview } from '#src/types/chat.ts';
@@ -247,8 +249,37 @@
   }
   $: room = $state.room;
   $: own = nostr.getLoggedInPublicKeyHex() || '';
-  $: visible = room ? $state.messages.filter((e) => roomPolicy(room!, e.pubkey) !== 'blocked') : [];
-  $: displayed = visible.map((event) => publicMessageState(event, room!, own));
+  $: mentionKeys = room
+    ? [...new Set([room.owner, ...room.trusted])].filter(
+        (key) => roomPolicy(room!, key) === 'trusted',
+      )
+    : [];
+  $: mentionProfiles = observeMentionProfiles(mentionKeys);
+  function observeMentionProfiles(keys: string[]) {
+    return readable(buildMentionProfiles(keys.map((publicKey) => ({ publicKey }))), (set) => {
+      const releases = keys.map((key) => nostr.retainVisibleProfileTarget(key));
+      const stop = derived(keys.map(observePublicProfile), (profiles) =>
+        buildMentionProfiles(
+          keys.map((publicKey, index) => ({
+            publicKey,
+            displayName: profiles[index]?.name,
+          })),
+        ),
+      ).subscribe(set);
+      return () => {
+        stop();
+        releases.forEach((release) => release());
+      };
+    });
+  }
+  $: entries = room
+    ? $state.messages
+        .filter((event) => roomPolicy(room!, event.pubkey) !== 'blocked')
+        .map((event) => ({ event, message: publicMessageState(event, room!, own) }))
+        .filter(({ message }) => !message.meta.deleted)
+    : [];
+  $: visible = entries.map(({ event }) => event);
+  $: displayed = entries.map(({ message }) => message);
   function date(value: string) {
     return chatDate(value, $locale);
   }
@@ -291,7 +322,8 @@
     if (sending) return;
     sending = true;
     error = '';
-    const text = draft;
+    const originalDraft = draft;
+    const text = serializeMentionDraft(originalDraft, $mentionProfiles);
     try {
       if (nostr.containsSessionSecret(text))
         throw new Error('This message contains your session secret.');
@@ -300,7 +332,7 @@
         cancelContext();
       } else {
         await runtime.send(text, undefined, reply?.messageId);
-        if (draft === text) draft = '';
+        if (draft === originalDraft) draft = '';
         reply = null;
       }
       nearBottom = true;
@@ -362,7 +394,7 @@
       >
     {/snippet}
   </ThreadHeader>
-  {#if room.pinned && !$state.history}
+  {#if room.pinned && !$state.history && !pinned?.meta.deleted}
     <PinnedMessage
       text={pinned
         ? pinned.meta.deleted
@@ -532,6 +564,7 @@
   </p>
   <ComposerContext {reply} editing={Boolean(editing)} oncancel={cancelContext} />
   <MessageComposer
+    mentionProfiles={$mentionProfiles}
     bind:input={composerInput}
     attachDisabled={Boolean(editing)}
     bind:draft

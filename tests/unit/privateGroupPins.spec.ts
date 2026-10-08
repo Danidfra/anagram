@@ -83,6 +83,7 @@ it('rejects non-owners, foreign messages and deleted messages', async () => {
   f.row.meta = { deleted: {} };
   await expect(f.pins.set(group, id)).rejects.toThrow('this group');
   expect((await f.pins.read(group))?.text).toBe('Message deleted');
+  expect((await f.pins.read(group))?.deleted).toBe(true);
   expect(f.publish).not.toHaveBeenCalled();
 });
 it('does not publish if the account changes while reading the target', async () => {

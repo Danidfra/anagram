@@ -4,7 +4,13 @@ import { buildMessageTextParts } from './messageTextParts.ts';
 
 export function redactPublicLinks(text: string): string {
   return buildMessageTextParts(text)
-    .map((part) => (part.type === 'url' ? '[link removed]' : part.text))
+    .map((part) =>
+      part.type === 'url'
+        ? '[link removed]'
+        : part.type === 'mention'
+          ? '[profile removed]'
+          : part.text,
+    )
     .join('');
 }
 

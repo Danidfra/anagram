@@ -79,13 +79,15 @@ test('contacts open cached details, public metadata, sharing, relay preference a
       return await chatDataService.getChatByPublicKey(peer);
     }, peer),
   ).toBeNull();
-  await details.getByRole('button', { name: 'Show public key in npub format' }).click();
   await expect(details.getByLabel('Public Key (npub)', { exact: true })).toHaveValue(
     nip19.npubEncode(peer),
   );
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await details.getByRole('button', { name: 'Copy', exact: true }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(nip19.npubEncode(peer));
+  await details.getByRole('button', { name: 'Show public key in hex format' }).click();
+  await expect(details.getByLabel('Public Key (hex)', { exact: true })).toHaveValue(peer);
+  await details.getByRole('button', { name: 'Show public key in npub format' }).click();
   await details.locator('summary').filter({ hasText: 'NIP-24' }).click();
   await expect(details.getByLabel('Website', { exact: true })).toHaveValue('https://example.test');
   await expect(details.getByLabel('Year', { exact: true })).toHaveValue('1990');
@@ -121,6 +123,19 @@ test('contacts open cached details, public metadata, sharing, relay preference a
   await details.getByRole('button', { name: 'Open Chat', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/chats/${peer}$`));
   await expect(page.getByTestId('message-composer-input')).toBeVisible();
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.getByRole('button', { name: 'Copy npub', exact: true }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(nip19.npubEncode(peer));
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  }
+  await page.getByRole('button', { name: 'Contact profile', exact: true }).click();
+  await expect(page.getByLabel('Public Key (npub)', { exact: true })).toHaveValue(
+    nip19.npubEncode(peer),
+  );
   expect(errors).toEqual([]);
 });
 

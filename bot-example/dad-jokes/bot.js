@@ -313,7 +313,7 @@ export class DadBot {
   }
 }
 
-export async function publishProfile(bot, { pictureURL = DEFAULT_PICTURE_URL } = {}) {
+export async function publishProfile(bot, { pictureURL = DEFAULT_PICTURE_URL, nip05 = '' } = {}) {
   await bot.net.publish(
     sign(
       bot.key,
@@ -334,6 +334,7 @@ export async function publishProfile(bot, { pictureURL = DEFAULT_PICTURE_URL } =
         name: 'Dad Jokes',
         display_name: 'Dad Jokes',
         bot: true,
+        ...(nip05.trim() ? { nip05: nip05.trim() } : {}),
         about: 'DM me for a dad joke, or mention me in an Anagram group.',
         picture,
       }),
@@ -391,6 +392,7 @@ export async function main() {
       try {
         await publishProfile(bot, {
           pictureURL: process.env.PICTURE_URL,
+          nip05: process.env.NIP05,
         });
         console.log('Profile and DM inbox published.');
         clearInterval(profileTimer);

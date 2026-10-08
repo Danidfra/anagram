@@ -30,7 +30,7 @@
     ready = false,
     error = '',
     notice = '',
-    hex = true,
+    hex = false,
     qr = '';
   let shareDialog: HTMLDialogElement;
   let localKeyAvailable = false,

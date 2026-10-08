@@ -96,6 +96,25 @@ describe('nostr mention utilities', () => {
     ]);
   });
 
+  it('resolves bare profile identifiers with correct offsets and excludes malformed or embedded keys', () => {
+    const npub = nip19.npubEncode(BOB_PUBKEY);
+    const nprofile = nip19.nprofileEncode({ pubkey: BOB_PUBKEY });
+    const text = `Hello (${npub}), ${nprofile}!`;
+    expect(
+      parseNostrMentions(text).map((mention) => text.slice(mention.start, mention.end)),
+    ).toEqual([npub, nprofile]);
+    const profiles = buildMentionProfiles([{ publicKey: BOB_PUBKEY, displayName: 'Dad Jokes' }]);
+    expect(formatNostrMentionsForDisplay(text, profiles)).toBe('Hello (@Dad Jokes), @Dad Jokes!');
+    expect(buildMentionMetadata(npub, BOB_PUBKEY).mentions_me).toBe(true);
+    for (const value of [
+      `prefix${npub}`,
+      `${npub}suffix`,
+      `https://example.org/${npub}`,
+      npub.slice(0, -1),
+    ])
+      expect(parseNostrMentions(value)).toEqual([]);
+  });
+
   it('formats group member mentions in preview text', () => {
     const nprofile = nip19.nprofileEncode({
       pubkey: BOB_PUBKEY,

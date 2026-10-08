@@ -4,6 +4,7 @@
   import { parseRoomLink } from '#src/utils/callRoom.ts';
   import { translate } from '#src/i18n.ts';
   import Icon from './Icon.svelte';
+  import ProfileName from './ProfileName.svelte';
   import FormattedMessage from './FormattedMessage.svelte';
   export let parts: FormattedMessagePart[];
   export let onopen: (href: string) => void;
@@ -62,7 +63,9 @@
   {:else if part.type === 'mention' && part.publicKey}<button
       class="mention"
       data-testid="message-mention-link"
-      onclick={() => oncontact(part.publicKey!)}>{part.text}</button
+      onclick={() => oncontact(part.publicKey!)}
+    >
+      @<ProfileName publicKey={part.publicKey} fallback={part.text.slice(1)} hydrate /></button
     >
   {:else}{part.text}{/if}
 {/each}

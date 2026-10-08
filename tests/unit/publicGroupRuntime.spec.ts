@@ -15,6 +15,7 @@ import NostrClient, {
   type NostrSubscriptionOptions,
   type NostrSubscription,
 } from '#src/lib/nostr/client.ts';
+import { STARTER_PUBLIC_GROUP } from '#src/constants/starterPublicGroup.ts';
 import { PublicGroupData } from '#src/services/publicGroupData.ts';
 import { createPublicGroupRuntime } from '#src/stores/nostr/publicGroupRuntime.ts';
 import { parsePublicRoom, roomTags, encodeRoomLink } from '#src/stores/nostr/publicGroups.ts';
@@ -27,7 +28,8 @@ afterEach(() => {
 function setup(
   events: Event[],
   key = generateSecretKey(),
-  eose: boolean | ((url: string) => boolean) = true,
+  eose: boolean | ((url: string, filters: NostrFilter[]) => boolean) = true,
+  starterRoom?: Event,
 ) {
   let account: string | null = getPublicKey(key);
   const listeners = new Set<{
@@ -66,7 +68,7 @@ function setup(
               } as never);
             }
         }
-        if (typeof eose === 'function' ? eose(options.relayUrls?.[0] ?? '') : eose)
+        if (typeof eose === 'function' ? eose(options.relayUrls?.[0] ?? '', filters) : eose)
           options.onEose?.();
       });
       return sub as unknown as NostrSubscription;
@@ -85,6 +87,7 @@ function setup(
     },
   } as unknown as NostrClient;
   const runtime = createPublicGroupRuntime({
+    starterRoom,
     client,
     account: () => account,
     signer: async () => new NostrPrivateKeySigner(key),
@@ -1130,4 +1133,130 @@ it('pins only as owner, keeps the pin across profile edits, and loads an old pin
   await expect(member.runtime.pinMessage(notes[0].id)).rejects.toThrow(
     'Only the current group owner',
   );
+});
+
+it('seeds the verified starter group offline, once per account, without opening its timeline', async () => {
+  const key = generateSecretKey();
+  const seed = STARTER_PUBLIC_GROUP as Event;
+  expect(parsePublicRoom(seed).address).toBe(
+    '34550:c1fc7771f5fa418fd3ac49221a18f19b42ccb7a663da8f04cbbf6c08c80d20b1:c609a674-94c2-4af3-a810-ffbbdd7ac4cb',
+  );
+  const { runtime, subscriptions, setAccount } = setup([], key, false, seed);
+  await runtime.init();
+  expect(get(runtime.state).rooms.map((row) => row.room.name)).toEqual(['Anagram rants']);
+  expect(get(runtime.state).room).toBeNull();
+  expect(subscriptions).toEqual([]);
+  const address = get(runtime.state).rooms[0].address;
+  await runtime.leave(address);
+  runtime.stop();
+  await runtime.init();
+  expect(get(runtime.state).rooms).toEqual([]);
+  setAccount(getPublicKey(generateSecretKey()));
+  await runtime.init();
+  expect(get(runtime.state).rooms).toHaveLength(1);
+  setAccount(getPublicKey(key));
+  await runtime.init();
+  expect(get(runtime.state).rooms).toEqual([]);
+});
+
+it('does not replace newer cached starter profiles during concurrent seeding', async () => {
+  const account = getPublicKey(generateSecretKey());
+  const key = generateSecretKey();
+  const older = parsePublicRoom(room(key, 'starter', [], 1));
+  const newer = parsePublicRoom(room(key, 'starter', [], 2));
+  const db = new PublicGroupData(account);
+  try {
+    await db.save({ address: newer.address, room: newer, joined: true, updated: 123 });
+    await Promise.all([db.seed(older), db.seed(older)]);
+    expect((await db.get(newer.address))?.room.event.id).toBe(newer.event.id);
+    expect((await db.get(newer.address))?.updated).toBe(123);
+  } finally {
+    await db.close();
+  }
+});
+
+it.each(['one', 'all'])(
+  'keeps live edits and later messages when %s original-lookup relays fail',
+  async (failure) => {
+    const author = generateSecretKey();
+    const metadata = room(author, `lookup-${failure}`, [['relay', 'wss://offline.example.org/']]);
+    const group = parsePublicRoom(metadata);
+    const { runtime, listeners } = setup(
+      [metadata],
+      author,
+      (_url, filters) => !filters.some((filter) => filter.ids),
+    );
+    await runtime.open(encodeRoomLink(group));
+    const original = finalizeEvent(
+      { kind: 9, created_at: 20, content: 'Removed original', tags: [['a', group.address]] },
+      author,
+    );
+    const replacement = finalizeEvent(
+      {
+        kind: 9,
+        created_at: 20,
+        content: 'Edited welcome',
+        tags: [
+          ['a', group.address],
+          ['e', original.id, '', 'edit'],
+        ],
+      },
+      author,
+    );
+    const later = finalizeEvent(
+      { kind: 9, created_at: 21, content: 'Later post', tags: [['a', group.address]] },
+      author,
+    );
+    for (const event of [replacement, later])
+      for (const listener of [...listeners])
+        if (matchFilters(listener.filters, event))
+          listener.options.onEvent?.(new ClientEvent(undefined, event));
+    await vi.waitFor(() =>
+      expect(
+        [...listeners].filter((listener) =>
+          listener.filters.some((filter) => filter.ids?.includes(original.id)),
+        ),
+      ).toHaveLength(2),
+    );
+    for (const listener of [...listeners].filter((listener) =>
+      listener.filters.some((filter) => filter.ids?.includes(original.id)),
+    )) {
+      if (failure === 'one' && listener.options.relayUrls?.[0] === 'wss://relay.example.org/')
+        listener.options.onEose?.();
+      else listener.options.onClose?.();
+    }
+    await vi.waitFor(() =>
+      expect(get(runtime.state).messages.map((event) => event.content)).toEqual([
+        'Edited welcome',
+        'Later post',
+      ]),
+    );
+    expect(get(runtime.state).error).toBe('');
+    const db = new PublicGroupData(getPublicKey(author));
+    expect((await db.message(group.address, replacement.id))?.content).toBe('Edited welcome');
+    expect((await db.message(group.address, later.id))?.content).toBe('Later post');
+    await db.close();
+  },
+);
+
+it('still reports genuine local storage failures when saving live public messages', async () => {
+  const author = generateSecretKey();
+  const metadata = room(author, 'failed-write');
+  const group = parsePublicRoom(metadata);
+  const { runtime, listeners } = setup([metadata], author);
+  await runtime.open(encodeRoomLink(group));
+  vi.spyOn(PublicGroupData.prototype, 'putMany').mockRejectedValueOnce(
+    new Error('Disk write failed'),
+  );
+  const event = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Unsaved', tags: [['a', group.address]] },
+    author,
+  );
+  for (const listener of [...listeners])
+    if (matchFilters(listener.filters, event))
+      listener.options.onEvent?.(new ClientEvent(undefined, event));
+  await vi.waitFor(() =>
+    expect(get(runtime.state).error).toBe('Could not save public messages. Refresh to retry.'),
+  );
+  expect(get(runtime.state).messages).toHaveLength(0);
 });

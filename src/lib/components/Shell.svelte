@@ -124,7 +124,9 @@
       ].map((key) => [key, getPublicProfile(key)]),
     ),
     thread: {
-      items: chats.selectedChatId ? messages.getMessages(chats.selectedChatId) : [],
+      items: chats.selectedChatId
+        ? messages.getMessages(chats.selectedChatId).filter((message) => !message.meta.deleted)
+        : [],
       pagination: chats.selectedChatId ? messages.getPaginationState(chats.selectedChatId) : null,
     },
     unread: chats.unreadChatCount,
@@ -641,7 +643,7 @@
       chats.selectedChatId === chatId && scrollArea === node && node.isConnected;
     try {
       await messages.loadOlderMessages(chatId);
-      const firstId = messages.getMessages(chatId)[0]?.id;
+      const firstId = messages.getMessages(chatId).find((message) => !message.meta.deleted)?.id;
       // The Vue-to-Svelte bridge batches notifications. tick() alone can run
       // before the new window reaches the DOM, especially while hydrating.
       for (let frame = 0; current() && $state.thread.items[0]?.id !== firstId && frame < 4; frame++)
@@ -1287,6 +1289,12 @@
           picture={String($state.selected.meta.picture ?? '')}
           privateGroup={$state.selected.type === 'group'}
           onopen={openProfile}
+          oncopy={$state.selected.type === 'user'
+            ? () => void act(async () => {
+                await navigator.clipboard.writeText(nostr.encodeNpub($state.selected!.publicKey));
+                Notify.create({ message: $translate('common.copiedLabel', { label: 'npub' }) });
+              })
+            : undefined}
           onback={() => {
             mobileThread = false;
             chats.setVisibleChatId(null);
@@ -1327,7 +1335,7 @@
             >
           {/snippet}
         </ThreadHeader>
-        {#if groupPin?.group === pinGroup && groupPin?.eventId}
+        {#if groupPin?.group === pinGroup && groupPin?.eventId && !groupPin.deleted}
           <PinnedMessage
             text={groupPin.text}
             onopen={() => void openPinnedMessage()}

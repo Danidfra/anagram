@@ -301,6 +301,28 @@ describe('contact snapshot hydration', () => {
       ).toBe(true),
     );
     expect(contacts.some((contact) => contact.public_key === historicAuthor)).toBe(false);
+    // Mentions hydrate through the same queue without becoming contacts. Releasing
+    // one of two mounted labels must retain the remaining label's profile target.
+    const mentioned = '1'.repeat(64);
+    const releaseFirst = runtime.retainVisibleProfileTarget(mentioned);
+    const releaseSecond = runtime.retainVisibleProfileTarget(mentioned);
+    releaseFirst();
+    runtime.setVisibleProfileTargets([historicAuthor], group);
+    await vi.waitFor(() =>
+      expect(
+        subscribe.mock.calls.some((call) =>
+          call[2].some(
+            (filter: { authors: string[]; kinds: number[] }) =>
+              filter.authors.includes(mentioned) && filter.kinds.includes(0),
+          ),
+        ),
+      ).toBe(true),
+    );
+    expect(contacts.some((contact) => contact.public_key === mentioned)).toBe(false);
     runtime.resetContactSubscriptionsRuntimeState();
+    // A late unmount from the old account must not schedule requests in the new one.
+    const calls = services.restorePublicProfiles.mock.calls.length;
+    releaseSecond();
+    expect(services.restorePublicProfiles.mock.calls.length).toBe(calls);
   });
 });

@@ -1,8 +1,8 @@
 // Local relay fixture: real WebSockets, signatures, filters, EOSE and publish ACKs.
 import { WebSocketServer, WebSocket } from 'ws';
 import { matchFilters, verifyEvent } from 'nostr-tools';
-export async function relay() {
-  const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+export async function relay(options = {}) {
+  const wss = new WebSocketServer({ host: '127.0.0.1', port: 0, ...options });
   await new Promise((resolve) => wss.once('listening', resolve));
   const events = new Map(),
     subscriptions = new Map();
@@ -12,6 +12,8 @@ export async function relay() {
     subscriptions,
     reject: false,
     requireAuth: false,
+    online: true,
+    connections: [],
   };
   const emit = (event) => {
     events.set(event.id, event);
@@ -22,6 +24,12 @@ export async function relay() {
       }
   };
   wss.on('connection', (socket) => {
+    fixture.connections.push(Date.now());
+    socket.on('error', () => {});
+    if (!fixture.online) {
+      socket.terminate();
+      return;
+    }
     const subs = new Map();
     const authorized = new Set();
     const challenge = `challenge-${Math.random()}`;

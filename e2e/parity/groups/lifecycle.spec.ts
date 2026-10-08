@@ -7,6 +7,8 @@ import {
   bootstrapUser,
   createGroup,
   disposeUsers,
+  deleteMessage,
+  waitForDeletedMessageState,
   E2E_DUAL_RELAY_URLS,
   E2E_RELAY_URL,
   E2E_RELAY_URL_TWO,
@@ -184,6 +186,17 @@ test('group owner can create a group, invite a member, and exchange messages bot
       chatId: bob.session.publicKey,
     });
     await expectPrivateContactListMember(alice.page, bob.session.publicKey);
+    await navigateToChat(alice.page, groupPublicKey);
+    await navigateToChat(bob.page, groupPublicKey);
+    await deleteMessage(alice.page, aliceGroupMessage);
+    await waitForDeletedMessageState(alice.page, aliceGroupMessage);
+    await waitForDeletedMessageState(bob.page, aliceGroupMessage);
+    for (const participant of [alice, bob]) {
+      await reloadAndWaitForApp(participant.page);
+      await navigateToChat(participant.page, groupPublicKey);
+      await waitForThreadMessage(participant.page, bobGroupMessage, { chatId: groupPublicKey });
+      await waitForDeletedMessageState(participant.page, aliceGroupMessage);
+    }
     await expectNoUnexpectedBrowserErrors([alice, bob], {
       allowPatterns: [/127\.0\.0\.1:7001/i, /relay-two/i, /websocket/i],
     });

@@ -16,13 +16,15 @@ On first start it saves a new identity, prints its **npub**, publishes a **Dad J
 
 For configuration, copy `.env.example` to `.env` and uncomment the settings you need. `RELAYS` should overlap the Anagram users' app relays. The default relay list matches Anagram; room and inbox relay hints are also used.
 
+Set `NIP05=dad@your-domain.example` in `.env` to include that identifier in the bot profile. The domain must serve `/.well-known/nostr.json` mapping `dad` to the bot’s hex public key; setting the variable alone does not verify the identifier. Restart the bot to publish profile changes.
+
 ## Talk to it
 
 - **DM:** add the printed npub as a contact and send a message. It replies with a joke.
 - **Private group:** invite that npub through Anagram's member picker. The bot accepts its encrypted invitation automatically. Mention its account to get a joke.
 - **Public group:** add the npub to **Trusted**. The bot watches signed group profiles on its configured relays and joins when it sees itself added. Mention it to get a joke.
 
-Use Anagram's mention picker, or paste `nostr:<bot-npub>`; plain `@Dad Jokes` is only text.
+Use Anagram's mention picker, or paste the bot's `npub` (with or without `nostr:`); plain `@Dad Jokes` is only text.
 
 For a public group that isn't discovered, **DM its public group link to the bot**, or put its link/naddr in `PUBLIC_GROUPS`. Public groups have no addressed invitation; automatic discovery can only see profiles on reachable relays. A link carries relay hints and identifies the exact group. Anyone may send a link; text-only replies do not require trusted status. Blocking the bot stops replies. Removing trust stops automatically joined rooms; explicitly joined rooms continue unless blocked. After an ownership transfer, send the new group link.
 
@@ -50,6 +52,8 @@ sudo journalctl -u dad-jokes -f
 The service uses a dedicated dynamic user and saves its state in `/var/lib/anagram-dad-jokes`. A manually started bot defaults to this folder's `data/` directory. **Use the same data directory to preserve an existing identity when moving deployments.**
 
 Back up `state.json` while the bot is stopped: it contains the **nsec and private-group epoch keys**. It is stored with mode `0600` in a `0700` directory and excluded from Git. Run one process per data directory. Invalid state stops startup instead of generating a replacement identity. A stale process lock is recovered after a crash.
+
+Relay failures retry automatically with increasing delays (up to a minute), independently of healthy relays. Heartbeats detect silent connections; reconnects restore subscriptions and authentication. Network outages do not require restarting the bot.
 
 Replies are saved before sending and retried with the same event IDs. One relay acknowledgement is sufficient. Private replies queued for an old or conflicting epoch are discarded. SIGTERM/SIGINT shuts down cleanly. This does not guarantee that a relay will retain a message after acknowledging it.
 

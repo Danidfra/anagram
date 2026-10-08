@@ -198,12 +198,16 @@ export function createContactSubscriptionsRuntime({
   let activeContactPubkeys = new Set<string>();
   let trackedContactPubkeys = new Set<string>();
   let visibleProfileKeys: string[] = [];
+  let baseVisibleProfileKeys: string[] = [];
+  const mountedProfiles = new Map<string, number>();
   let visibleGroupKey = '';
   let visibleProfileSignature = '';
   let visibleProfileTimer: ReturnType<typeof setTimeout> | undefined;
   function setVisibleProfileTargets(publicKeys: string[], groupPublicKey = ''): void {
+    baseVisibleProfileKeys = publicKeys;
+    const targets = [...publicKeys, ...mountedProfiles.keys()];
     const keys = [
-      ...new Set(publicKeys.filter((key) => /^[a-f0-9]{64}$/.test(key) && !isPubkeyBlocked(key))),
+      ...new Set(targets.filter((key) => /^[a-f0-9]{64}$/.test(key) && !isPubkeyBlocked(key))),
     ].sort();
     const groupKey = inputSanitizerService.normalizeHexKey(groupPublicKey) ?? '';
     const signature = JSON.stringify([keys, groupKey]);
@@ -217,6 +221,22 @@ export function createContactSubscriptionsRuntime({
       visibleProfileTimer = undefined;
       void subscribeContactProfileUpdates().catch(() => {});
     }, 50);
+  }
+  // Mounted mention labels share the same batched, account-scoped profile queue.
+  function retainVisibleProfileTarget(publicKey: string): () => void {
+    if (!/^[a-f0-9]{64}$/.test(publicKey) || isPubkeyBlocked(publicKey)) return () => {};
+    const token = generation;
+    mountedProfiles.set(publicKey, (mountedProfiles.get(publicKey) ?? 0) + 1);
+    setVisibleProfileTargets(baseVisibleProfileKeys, visibleGroupKey);
+    let released = false;
+    return () => {
+      if (released || token !== generation) return;
+      released = true;
+      const count = (mountedProfiles.get(publicKey) ?? 1) - 1;
+      if (count) mountedProfiles.set(publicKey, count);
+      else mountedProfiles.delete(publicKey);
+      setVisibleProfileTargets(baseVisibleProfileKeys, visibleGroupKey);
+    };
   }
   async function ensureTrackedContact(publicKey: string): Promise<ContactRecord | null> {
     const existing = await contactsService.getContactByPublicKey(publicKey);
@@ -697,6 +717,8 @@ export function createContactSubscriptionsRuntime({
     clearTimeout(visibleProfileTimer);
     visibleProfileTimer = undefined;
     visibleProfileKeys = [];
+    baseVisibleProfileKeys = [];
+    mountedProfiles.clear();
     visibleGroupKey = '';
     visibleProfileSignature = '';
     subscriptions.stop();
@@ -708,6 +730,7 @@ export function createContactSubscriptionsRuntime({
     profileSnapshots.clear();
   }
   return {
+    retainVisibleProfileTarget,
     setVisibleProfileTargets,
     hasActiveContactHydration: (publicKey: string) =>
       subscriptions.size() > 0 && activeContactPubkeys.has(publicKey),

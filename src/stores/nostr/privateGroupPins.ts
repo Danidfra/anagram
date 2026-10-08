@@ -10,6 +10,7 @@ export interface PrivateGroupPin {
   createdAt?: number;
   text: string;
   available: boolean;
+  deleted: boolean;
 }
 
 export function createPrivateGroupPins(deps: {
@@ -34,6 +35,7 @@ export function createPrivateGroupPins(deps: {
         Boolean(contact.meta.group_private_key_encrypted),
       eventId,
       available: Boolean(message),
+      deleted: Boolean(message?.meta.deleted),
       createdAt: contact.meta.pinned_created_at,
       text: message
         ? message.meta.deleted

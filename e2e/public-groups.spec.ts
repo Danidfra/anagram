@@ -1098,17 +1098,269 @@ test('public message actions reuse private controls and synchronize replies, edi
     await navigateInApp(bob, `/public/${source.naddr}`);
 
     await action(alice, ownMessage, 'Delete');
-    await expect(ownMessage).toContainText('Message deleted');
-    await expect(received).toContainText('Message deleted');
+    await expect(ownMessage).toHaveCount(0);
+    await expect(received).toHaveCount(0);
     await expect(
       received.getByRole('button', { name: 'Message actions', exact: true }),
     ).toHaveCount(0);
     await alice.reload();
     await bob.reload();
-    await expect(alice.locator(`[id="message-${id}"]`)).toContainText('Message deleted');
-    await expect(bob.locator(`[id="message-${id}"]`)).toContainText('Message deleted');
+    await expect(
+      alice.getByTestId('public-message').filter({ hasText: 'A public reply' }),
+    ).toBeVisible();
+    await expect(
+      bob.getByTestId('public-message').filter({ hasText: 'A public reply' }),
+    ).toBeVisible();
+    await expect(alice.locator(`[id="message-${id}"]`)).toHaveCount(0);
+    await expect(bob.locator(`[id="message-${id}"]`)).toHaveCount(0);
   } finally {
     await a.close();
     await b.close();
   }
 });
+
+test('pasted profile identifiers resolve through shared mentions and untrusted posts redact them', async ({
+  page,
+}) => {
+  const requestedAuthors = new Set<string>();
+  page.on('websocket', (socket) =>
+    socket.on('framesent', ({ payload }) => {
+      try {
+        const [type, , ...filters] = JSON.parse(String(payload));
+        if (type === 'REQ')
+          for (const filter of filters)
+            if (filter.kinds?.includes(0))
+              for (const author of filter.authors ?? []) requestedAuthors.add(author);
+      } catch {
+        /* Ignore non-Nostr development traffic. */
+      }
+    }),
+  );
+  const owner = await login(page);
+  const room = await create(page, 'Profile mention room');
+  const stranger = generateSecretKey();
+  const hidden = getPublicKey(generateSecretKey());
+  const botKey = generateSecretKey(),
+    botPubkey = getPublicKey(botKey);
+  const now = Math.floor(Date.now() / 1000);
+  await publish(
+    finalizeEvent(
+      {
+        kind: 0,
+        created_at: now,
+        tags: [],
+        content: JSON.stringify({ name: 'Dad Jokes', bot: true }),
+      },
+      botKey,
+    ),
+  );
+  await publish(
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: now,
+        tags: [['a', room.address]],
+        content: `Stranger profiles: ${nip19.npubEncode(hidden)} nostr:${nip19.nprofileEncode({ pubkey: hidden })}`,
+      },
+      stranger,
+    ),
+  );
+  const redacted = page.getByTestId('public-message').filter({ hasText: 'Stranger profiles:' });
+  await expect(redacted).toContainText('Stranger profiles: [profile removed] [profile removed]');
+  await expect(redacted.getByTestId('message-mention-link')).toHaveCount(0);
+
+  await page
+    .getByTestId('message-composer-input')
+    .fill(`Owner mention: ${nip19.npubEncode(botPubkey)}`);
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const mention = page
+    .getByTestId('public-message')
+    .filter({ hasText: 'Owner mention:' })
+    .getByTestId('message-mention-link');
+  await expect(mention).toHaveText('@Dad Jokes');
+  expect(requestedAuthors.has(botPubkey)).toBe(true);
+  expect(requestedAuthors.has(hidden)).toBe(false);
+  await mention.click();
+  await expect(page).toHaveURL(new RegExp(`/chats/${botPubkey}$`));
+  await expect(page.getByTestId('chat-thread')).toHaveAttribute('data-chat-public-key', botPubkey);
+  await navigateInApp(page, `/public/${room.naddr}`);
+
+  // The same rendering applies to trusted members, without adding new UI components.
+  await publish(
+    finalizeEvent(
+      {
+        kind: 34550,
+        created_at: now + 1,
+        tags: [
+          ['d', room.slug],
+          ['name', 'Profile mention room'],
+          ['anagram-room', '1'],
+          ['relay', relay],
+          ['trusted', getPublicKey(stranger)],
+        ],
+        content: '',
+      },
+      owner.key,
+    ),
+  );
+  await publish(
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: now + 1,
+        tags: [['a', room.address]],
+        content: `Trusted mention: nostr:${nip19.npubEncode(botPubkey)}`,
+      },
+      stranger,
+    ),
+  );
+  await expect(
+    page
+      .getByTestId('public-message')
+      .filter({ hasText: 'Trusted mention:' })
+      .getByTestId('message-mention-link'),
+  ).toHaveText('@Dad Jokes');
+});
+
+test('failed original-message lookups do not block edited public posts or later messages', async ({
+  page,
+}) => {
+  let failedLookups = 0;
+  await page.routeWebSocket(relay, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((raw) => {
+      const message = JSON.parse(String(raw));
+      if (
+        message[0] === 'REQ' &&
+        message
+          .slice(2)
+          .some(
+            (filter: { kinds?: number[]; ids?: string[] }) =>
+              filter.kinds?.includes(9) && filter.ids,
+          )
+      ) {
+        failedLookups++;
+        socket.send(JSON.stringify(['CLOSED', message[1], 'error: lookup unavailable']));
+      } else server.send(raw);
+    });
+  });
+  const owner = await login(page);
+  const room = await create(page, 'Optional edit recovery');
+  const created_at = Math.floor(Date.now() / 1000);
+  const original = finalizeEvent(
+    { kind: 9, created_at, content: 'No longer on relays', tags: [['a', room.address]] },
+    owner.key,
+  );
+  const replacement = finalizeEvent(
+    {
+      kind: 9,
+      created_at,
+      content: 'Edited welcome survives lookup failure',
+      tags: [
+        ['a', room.address],
+        ['e', original.id, '', 'edit'],
+      ],
+    },
+    owner.key,
+  );
+  await publish(replacement);
+  await publish(
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: created_at + 1,
+        content: 'Following message survives too',
+        tags: [['a', room.address]],
+      },
+      owner.key,
+    ),
+  );
+  for (const text of ['Edited welcome survives lookup failure', 'Following message survives too'])
+    await expect(page.getByTestId('public-message').filter({ hasText: text })).toBeVisible();
+  expect(failedLookups).toBeGreaterThan(0);
+  await expect(
+    page.getByText('Could not save public messages. Refresh to retry.', { exact: true }),
+  ).toHaveCount(0);
+  await page.reload();
+  for (const text of ['Edited welcome survives lookup failure', 'Following message survives too'])
+    await expect(page.getByTestId('public-message').filter({ hasText: text })).toBeVisible();
+});
+
+for (const width of [1280, 390]) {
+  test(`public trusted-user mention picker reuses composer controls at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 850 });
+    const owner = await login(page);
+    const room = await create(page, 'Mention picker room');
+    const botKey = generateSecretKey();
+    const bot = getPublicKey(botKey);
+    const blocked = getPublicKey(generateSecretKey());
+    const unnamed = getPublicKey(generateSecretKey());
+    const now = Math.floor(Date.now() / 1000) + 1;
+    await publish(
+      finalizeEvent(
+        {
+          kind: 0,
+          created_at: now,
+          tags: [],
+          content: JSON.stringify({ name: 'Dad Jokes' }),
+        },
+        botKey,
+      ),
+    );
+    const metadata = (trusted: string[], created_at: number) =>
+      finalizeEvent(
+        {
+          kind: 34550,
+          created_at,
+          content: '',
+          tags: [
+            ['d', room.slug],
+            ['name', 'Mention picker room'],
+            ['anagram-room', '1'],
+            ['relay', relay],
+            ...trusted.map((key) => ['trusted', key]),
+            ['blocked', blocked],
+          ],
+        },
+        owner.key,
+      );
+    await publish(metadata([bot, unnamed, blocked], now));
+    const input = page.getByTestId('message-composer-input');
+    const suggestions = page.getByRole('listbox', { name: 'Mention suggestions' });
+    await input.fill('@');
+    await expect(suggestions.getByRole('option')).toHaveCount(3);
+    await expect(
+      suggestions.getByRole('option', { name: 'Dad Jokes @DadJokes', exact: true }),
+    ).toBeVisible();
+    await expect(
+      suggestions.getByRole('option', { name: new RegExp(unnamed.slice(0, 12)) }),
+    ).toBeVisible();
+    await expect(suggestions).not.toContainText(blocked.slice(0, 12));
+    await input.fill('Are you here @dadj');
+    await expect(suggestions.getByRole('option')).toHaveCount(1);
+    await input.press('Enter');
+    await expect(input).toHaveValue('Are you here @DadJokes ');
+    await expect(suggestions).toHaveCount(0);
+    await input.press('Enter');
+    await expect(input).toHaveValue('');
+    await expect(
+      page
+        .getByTestId('public-message')
+        .filter({ hasText: 'Are you here' })
+        .getByTestId('message-mention-link'),
+    ).toHaveText('@Dad Jokes');
+
+    // Mouse/touch selection uses the same popup; policy updates remove former trusted users.
+    await input.fill('@d');
+    await suggestions.getByRole('option', { name: 'Dad Jokes @DadJokes', exact: true }).click();
+    await expect(input).toHaveValue('@DadJokes ');
+    await input.fill('@');
+    await publish(metadata([unnamed], now + 1));
+    await expect(suggestions.getByRole('option')).toHaveCount(2);
+    await expect(suggestions).not.toContainText('Dad Jokes');
+    await input.press('Escape');
+    await expect(suggestions).toHaveCount(0);
+  });
+}

@@ -40,7 +40,6 @@
   const trust = observe(() => trusted.trustedImageSenderPublicKeys);
   let imageUrl = '';
   let imageName = '';
-  let revealDeleted = false;
   let expanded = false,
     showMedia = false;
   $: history = readCallHistory(message.meta.call_history);
@@ -153,11 +152,7 @@
       >{/if}
   </div>{/if}
 
-{#if message.meta.deleted}<em>{$translate('Message deleted')}</em>
-  <button class="link" onclick={() => (revealDeleted = !revealDeleted)}
-    >{revealDeleted ? 'Hide Deleted Message' : 'View Deleted Message'}</button
-  >
-  {#if revealDeleted}<span class="message-text">{message.text}</span>{/if}
+{#if message.meta.deleted}<!-- Deleted records must never render their old content. -->
 {:else if history}<div class="call-history" data-testid="message-call-history">
     <button
       class="icon-button"

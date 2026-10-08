@@ -883,11 +883,25 @@ export const useChatStore = defineStore('chatStore', () => {
     selectedChatId.value = resolveDefaultSelectedChatId(chats.value);
   }
 
+  async function ensureStarterSelfChat(account: string | null): Promise<void> {
+    if (!account || !/^[a-f0-9]{64}$/.test(account) || getLoggedInPublicKey() !== account) return;
+    const key = `anagram-starter-self-chat:${account}`;
+    if (window.localStorage.getItem(key)) return;
+    // Seed once per local account setup, so deleting or blocking self-chat sticks.
+    if (!chats.value.some((chat) => chat.publicKey === account)) {
+      const chat = await addContact('My Self', account);
+      if (!chat || getLoggedInPublicKey() !== account) return;
+    }
+    window.localStorage.setItem(key, '1');
+  }
+
   async function init(): Promise<void> {
     if (!initPromise) {
       initPromise = (async () => {
         try {
+          const account = getLoggedInPublicKey();
           await loadChatsIntoState();
+          await ensureStarterSelfChat(account);
         } catch (error) {
           console.error('Failed to initialize chats', error);
           chats.value = [];

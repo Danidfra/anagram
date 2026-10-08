@@ -51,7 +51,7 @@ test('a second upward scroll at the top loads older messages', async ({ browser 
 
     await bob.page.goto('/chats');
     await refreshSession(bob.page);
-    await markChatAsRead(bob.page);
+    await markChatAsRead(bob.page, alice.account.displayName);
     await refreshSession(bob.page, alice.session.publicKey);
     await bob.page.evaluate(() => {
       window.localStorage.setItem('ui-desktop-message-layout', 'bubbles');

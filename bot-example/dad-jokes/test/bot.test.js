@@ -313,6 +313,9 @@ test('old history, edits, own messages, controls and non-mentions never trigger 
     false,
   );
   assert.equal(mentions('@Dad Jokes', bot.pubkey), false);
+  assert.equal(mentions(nip19.npubEncode(bot.pubkey), bot.pubkey), true);
+  assert.equal(mentions(nip19.nprofileEncode({ pubkey: bot.pubkey }), bot.pubkey), true);
+  assert.equal(mentions(`https://example.org/${nip19.npubEncode(bot.pubkey)}`, bot.pubkey), false);
   assert.equal(mentions(`nostr:${nip19.npubEncode(bot.pubkey)}`, bot.pubkey), true);
   await directMessage(
     bot,
@@ -347,8 +350,13 @@ test('profile publishes the hosted default picture and accepts an explicit overr
   assert.equal(JSON.parse(sent[1].content).name, 'Dad Jokes');
   assert.equal(JSON.parse(sent[1].content).bot, true);
   assert.equal(JSON.parse(sent[1].content).picture, DEFAULT_PICTURE_URL);
-  await publishProfile(bot, { pictureURL: 'https://example.org/custom.png' });
+  assert.equal(JSON.parse(sent[1].content).nip05, undefined);
+  await publishProfile(bot, {
+    pictureURL: 'https://example.org/custom.png',
+    nip05: ' dad@example.org ',
+  });
   assert.equal(JSON.parse(sent[3].content).picture, 'https://example.org/custom.png');
+  assert.equal(JSON.parse(sent[3].content).nip05, 'dad@example.org');
 });
 
 test('untrusted relay hints cannot select private server addresses', () => {

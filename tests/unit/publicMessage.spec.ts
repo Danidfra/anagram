@@ -1,3 +1,4 @@
+import { nip19 } from '#src/lib/nostr/client.ts';
 import { expect, it } from 'vitest';
 import { redactPublicLinks } from '#src/utils/publicMessage.ts';
 it.each([
@@ -11,3 +12,11 @@ it.each([
 ])('redacts public URLs as inert text: %s', (text, expected) =>
   expect(redactPublicLinks(text)).toBe(expected),
 );
+
+it('removes bare and NIP-27 profile mentions from untrusted posts, including code and markup', () => {
+  const npub = nip19.npubEncode('a'.repeat(64));
+  const nprofile = nip19.nprofileEncode({ pubkey: 'b'.repeat(64) });
+  expect(
+    redactPublicLinks(`Hi ${npub}, **nostr:${nprofile}** and \`${npub}\` https://example.org`),
+  ).toBe('Hi [profile removed], **[profile removed]** and `[profile removed]` [link removed]');
+});

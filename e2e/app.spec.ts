@@ -584,7 +584,7 @@ test('fresh login restores historical DMs from the advertised inbox relay withou
   await login(page, key);
   await page.getByRole('button', { name: 'Chat options' }).click();
   await page.getByRole('button', { name: /Message requests/ }).click();
-  await expect(page.getByTestId('chat-item')).toHaveCount(1, { timeout: 60000 });
+  await expect(page.getByTestId('chat-item')).toHaveCount(2, { timeout: 60000 });
   await page.goto(`/chats/${sender}`);
   await expect(
     page.getByTestId('message-bubble').filter({ hasText: 'Restored from a dedicated DM relay' }),
@@ -855,7 +855,7 @@ test('all 1,200 DM and group threads remain available after reload', async ({ pa
     });
   });
   await page.reload();
-  await expect(page.getByTestId('chat-item')).toHaveCount(1200);
+  await expect(page.getByTestId('chat-item')).toHaveCount(1201);
   await page.getByTestId('chat-item').filter({ hasText: 'DM 0000' }).click();
   await expect(page.getByTestId('message-composer-input')).toBeVisible();
   await page.getByTestId('chat-item').filter({ hasText: 'Group 0001' }).click();
@@ -864,7 +864,7 @@ test('all 1,200 DM and group threads remain available after reload', async ({ pa
   await expect(page.getByTestId('chat-item')).toHaveCount(1);
   await page.getByTestId('chat-item').click();
   await page.getByPlaceholder('Search', { exact: true }).fill('');
-  await expect(page.getByTestId('chat-item')).toHaveCount(1200);
+  await expect(page.getByTestId('chat-item')).toHaveCount(1201);
 });
 
 test('concurrent DM hydration stays in the authenticated sender thread while switching chats', async ({

@@ -12,7 +12,7 @@ import { relay, until } from './relay.js';
 // Run the real executable with production defaults, substituting only local relays
 // and a hosted image URL so the check never publishes a test identity to the internet.
 test(
-  'CLI starts, publishes, answers a DM, stops on SIGTERM and restores its identity',
+  'CLI starts, publishes, answers a DM, survives relay outages, stops on SIGTERM and restores its identity',
   { timeout: 90000 },
   async (t) => {
     const local = await relay();
@@ -38,6 +38,8 @@ test(
           RELAYS: local.url,
           PICTURE_URL: 'https://example.org/dad.png',
           PUBLIC_GROUPS: '',
+          NIP05: 'dad@example.org',
+          COOLDOWN_SECONDS: '0',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -58,6 +60,7 @@ test(
     };
     const identity = await start();
     const profile = [...local.events.values()].find((e) => e.kind === 0);
+    assert.equal(JSON.parse(profile.content).nip05, 'dad@example.org');
     const sender = generateSecretKey();
     local.emit(
       wrapEvent(
@@ -79,6 +82,41 @@ test(
         }),
       'CLI DM response',
     );
+    // Run the actual daemon through complete relay outages, including recovery of
+    // messages received by the relay while the bot had no connection.
+    for (let i = 0; i < 2; i++) {
+      local.online = false;
+      local.disconnect();
+      const message = wrapEvent(
+        {
+          kind: 14,
+          content: `During outage ${i}`,
+          created_at: now(),
+          tags: [['p', profile.pubkey]],
+        },
+        sender,
+        profile.pubkey,
+      );
+      local.emit(message);
+      const attempts = local.connections.length;
+      await until(() => local.connections.length > attempts, 'daemon retry during outage');
+      assert.equal(child.exitCode, null, 'relay outage must not exit the daemon');
+      local.online = true;
+      await until(
+        () =>
+          [...local.events.values()].filter((e) => {
+            if (e.kind !== 1059) return false;
+            try {
+              return unwrapEvent(e, sender).pubkey === profile.pubkey;
+            } catch {
+              return false;
+            }
+          }).length ===
+          i + 2,
+        'DM reply after relay recovery',
+        30000,
+      );
+    }
     await stop();
     assert.equal(await start(), identity);
     await stop();
