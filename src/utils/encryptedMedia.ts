@@ -12,7 +12,7 @@ export interface EncryptedMediaKindInfo {
 
 const MIB = 1024 * 1024;
 // AES-GCM appends a 128-bit authentication tag to the plaintext.
-export const ENCRYPTED_MEDIA_TAG_BYTES = 16;
+const ENCRYPTED_MEDIA_TAG_BYTES = 16;
 
 const ENCRYPTED_MEDIA_TYPES: Record<string, { kind: EncryptedMediaKind; maxBytes: number }> = {
   // Raster formats that are safe to hand to <img> from a decrypted blob. SVG and anything
@@ -51,11 +51,6 @@ export function resolveEncryptedMediaKind(value: unknown): EncryptedMediaKindInf
 // Largest ciphertext a receiver will accept for a given plaintext limit.
 export function getMaxEncryptedBlobBytes(info: EncryptedMediaKindInfo): number {
   return info.maxBytes + ENCRYPTED_MEDIA_TAG_BYTES;
-}
-
-// Everything that can be sent as private media is encrypted; there is no plaintext fallback.
-export function shouldEncryptOutgoingMedia(file: Pick<File, 'type'>): boolean {
-  return resolveEncryptedMediaKind(file.type) !== null;
 }
 
 // Approximate size shown on a media placeholder before it is downloaded.

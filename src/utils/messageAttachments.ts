@@ -9,8 +9,8 @@ import {
 
 const IMETA_TAG_NAME = 'imeta';
 export const IMAGE_ATTACHMENT_PREVIEW_TEXT = 'Picture';
-export const VIDEO_ATTACHMENT_PREVIEW_TEXT = 'Video';
-export const AUDIO_ATTACHMENT_PREVIEW_TEXT = 'Audio';
+const VIDEO_ATTACHMENT_PREVIEW_TEXT = 'Video';
+const AUDIO_ATTACHMENT_PREVIEW_TEXT = 'Audio';
 const FILE_ATTACHMENT_PREVIEW_TEXT = 'File';
 
 // NIP-17 rumor kinds rendered as chat messages.
@@ -369,23 +369,6 @@ export function readImageAttachmentsFromMeta(
   return readMediaAttachmentsFromMeta(meta).filter((attachment) => isImageAttachment(attachment));
 }
 
-// Encrypted attachments that cannot be shown at all (unsupported image, video, audio or file types).
-export function readUnsupportedEncryptedAttachmentsFromMeta(
-  meta:
-    | {
-        attachments?: unknown;
-      }
-    | null
-    | undefined
-): MessageAttachmentMetadata[] {
-  return readMediaAttachmentsFromMeta(meta).filter(
-    (attachment) =>
-      isEncryptedAttachment(attachment) &&
-      !isImageAttachment(attachment) &&
-      !isPlayableEncryptedAttachment(attachment)
-  );
-}
-
 // URLs that should not be shown as message text: rendered images and every encrypted blob
 // (an encrypted blob URL is meaningless without the key).
 export function readHiddenAttachmentUrls(
@@ -440,13 +423,9 @@ export function buildMessageReplyPreviewContent(
 ): MessageReplyPreviewContent {
   const imageAttachment = readImageAttachmentsFromMeta(meta)[0] ?? null;
   const previewText = buildImageAttachmentPreviewText(text, meta);
-  if (!imageAttachment) {
-    return { text: previewText };
-  }
-
-  // An encrypted blob URL only points at ciphertext, and reply previews are rendered as text,
-  // so encrypted images contribute their preview text only. No decryption data is copied here.
-  if (imageAttachment.encryption) {
+  // An encrypted blob URL only points at ciphertext, so encrypted images contribute their
+  // preview text only. No decryption data is copied into reply previews.
+  if (!imageAttachment || imageAttachment.encryption) {
     return { text: previewText };
   }
 

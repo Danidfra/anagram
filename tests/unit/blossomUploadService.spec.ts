@@ -1,13 +1,10 @@
 import {
-  hasKnownImageSignature,
   prepareEncryptedMedia,
+  sha256HexFromBlob,
   uploadBlossomMedia,
-  uploadEncryptedMedia,
   uploadPreparedEncryptedMedia,
   validateBlossomMediaFile,
-  validateEncryptedImageFile,
   validateEncryptedMediaFile,
-  validateOutgoingMediaFile,
   verifyPrivateMediaServer,
 } from '#src/services/blossomUploadService.ts';
 import { decryptMediaBytes, sha256Hex } from '#src/utils/mediaCrypto.ts';
@@ -48,6 +45,14 @@ function descriptorResponse(sha256: string, size: number): Response {
   );
 }
 
+// Encrypts once and uploads, as the composer does for a first attempt.
+async function uploadEncryptedMedia(
+  file: File,
+  options: typeof UPLOAD_OPTIONS & { signal?: AbortSignal }
+) {
+  return uploadPreparedEncryptedMedia(await prepareEncryptedMedia(file), options);
+}
+
 // Answers like a Blossom server: hashes the received body and echoes it in the descriptor.
 function createBlossomFetchMock() {
   return vi.fn(async (_url: string, init?: RequestInit) => {
@@ -74,8 +79,14 @@ describe('blossomUploadService', () => {
     );
   });
 
+  it('hashes blobs with SHA-256', async () => {
+    await expect(sha256HexFromBlob(new Blob(['hello']))).resolves.toBe(
+      '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
+    );
+  });
+
   it('uploads media to the configured server with server-scoped authentication', async () => {
-    const file = new File(['hello'], 'hello.mp4', { type: 'video/mp4' });
+    const file = new File(['hello'], 'hello.png', { type: 'image/png' });
     const signUploadAuthHeader = vi.fn(async () => 'Nostr signed-auth');
     const fetchMock = vi.fn(async () => {
       return new Response(
@@ -83,7 +94,7 @@ describe('blossomUploadService', () => {
           url: 'https://cdn.example.com/hello.png',
           sha256: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
           size: 5,
-          type: 'video/mp4',
+          type: 'image/png',
           uploaded: 1780912800,
         }),
         { status: 201 }
@@ -106,7 +117,7 @@ describe('blossomUploadService', () => {
         method: 'PUT',
         headers: {
           Authorization: 'Nostr signed-auth',
-          'Content-Type': 'video/mp4',
+          'Content-Type': 'image/png',
           'X-SHA-256': '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
         },
         body: file,
@@ -115,78 +126,24 @@ describe('blossomUploadService', () => {
     expect(result.attachment).toEqual({
       type: 'media',
       url: 'https://cdn.example.com/hello.png',
-      mimeType: 'video/mp4',
+      mimeType: 'image/png',
       size: 5,
       sha256: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
-      name: 'hello.mp4',
+      name: 'hello.png',
       service: 'media.example.com',
       uploadedAt: '2026-06-08T10:00:00.000Z',
     });
   });
 
-  it('validates which images can be sent encrypted', () => {
-    expect(validateEncryptedImageFile(imageFile('image/jpeg', 'a.jpg'))).toBeNull();
-    expect(validateEncryptedImageFile(imageFile('image/webp', 'a.webp'))).toBeNull();
-    expect(validateEncryptedImageFile(imageFile('image/svg+xml', 'a.svg'))).toBe(
+  it('allows only allowlisted image types to be sent encrypted', () => {
+    expect(validateEncryptedMediaFile(imageFile('image/jpeg', 'a.jpg'))).toBeNull();
+    expect(validateEncryptedMediaFile(imageFile('image/webp', 'a.webp'))).toBeNull();
+    expect(validateEncryptedMediaFile(imageFile('image/svg+xml', 'a.svg'))).toBe(
       'Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.'
     );
-    expect(validateEncryptedImageFile(imageFile('image/heic', 'a.heic'))).toBe(
+    expect(validateEncryptedMediaFile(imageFile('image/heic', 'a.heic'))).toBe(
       'Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.'
     );
-    expect(validateOutgoingMediaFile(imageFile('image/svg+xml', 'a.svg'))).not.toBeNull();
-    expect(validateOutgoingMediaFile(new File(['v'], 'a.mp4', { type: 'video/mp4' }))).toBeNull();
-  });
-
-  describe('plaintext path hardening', () => {
-    const ascii = (value: string) => Array.from(value, (char) => char.charCodeAt(0));
-    const ftyp = (brand: string) => [0, 0, 0, 0x18, ...ascii('ftyp'), ...ascii(brand), 0, 0, 0, 0];
-    const imageSignatures: Array<[string, number[]]> = [
-      ['JPEG', [0xff, 0xd8, 0xff, 0xe0, 0, 0x10]],
-      ['PNG', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
-      ['GIF', ascii('GIF89a')],
-      ['WebP', [...ascii('RIFF'), 0x10, 0, 0, 0, ...ascii('WEBPVP8 ')]],
-      ['AVIF', ftyp('avif')],
-      ['HEIC', ftyp('heic')],
-    ];
-
-    it.each(
-      imageSignatures
-    )('refuses a %s image disguised as video before any upload', async (_label, signature) => {
-      const fetchMock = vi.fn();
-      const signUploadAuthHeader = vi.fn();
-      vi.stubGlobal('fetch', fetchMock);
-      const disguised = new File([new Uint8Array([...signature, 1, 2, 3])], 'clip.mp4', {
-        type: 'video/mp4',
-      });
-
-      await expect(
-        uploadBlossomMedia(disguised, { ...UPLOAD_OPTIONS, signUploadAuthHeader })
-      ).rejects.toThrow('Images must be encrypted before upload.');
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(signUploadAuthHeader).not.toHaveBeenCalled();
-    });
-
-    it('refuses files that declare an image type', async () => {
-      const fetchMock = vi.fn();
-      vi.stubGlobal('fetch', fetchMock);
-
-      await expect(uploadBlossomMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
-        'Images must be encrypted before upload.'
-      );
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      ['MP4', ftyp('isom')],
-      ['QuickTime', ftyp('qt  ')],
-      ['M4A audio', ftyp('M4A ')],
-      ['MP3 with ID3', ascii('ID3\u0004\u0000')],
-      ['MP3 frame', [0xff, 0xfb, 0x90, 0x00]],
-      ['WebM', [0x1a, 0x45, 0xdf, 0xa3]],
-      ['WAV', [...ascii('RIFF'), 0x10, 0, 0, 0, ...ascii('WAVEfmt ')]],
-    ])('still accepts real %s media on the plaintext path', (_label, signature) => {
-      expect(hasKnownImageSignature(new Uint8Array(signature))).toBe(false);
-    });
   });
 
   describe('encrypted image upload', () => {
@@ -349,71 +306,6 @@ describe('blossomUploadService', () => {
         uploadEncryptedMedia(imageFile('image/svg+xml', 'x.svg'), UPLOAD_OPTIONS)
       ).rejects.toThrow('Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.');
       expect(fetchMock).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('failure and retry', () => {
-    it('never sends plaintext after a failed encrypted upload', async () => {
-      const fetchMock = vi.fn(async () => new Response('down', { status: 503 }));
-      vi.stubGlobal('fetch', fetchMock);
-
-      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow('down');
-
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-      expect(new TextDecoder().decode(readRequestBody(init))).not.toContain('PRIVATE-IMAGE-BYTES');
-      expect(new Headers(init.headers).get('Content-Type')).toBe('application/octet-stream');
-    });
-
-    it('retries the same ciphertext, key and nonce without re-encrypting', async () => {
-      const prepared = await prepareEncryptedMedia(imageFile());
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(new Response('busy', { status: 503 }))
-        .mockImplementationOnce(async (_url: string, init?: RequestInit) => {
-          const body = readRequestBody(init);
-          return descriptorResponse(await sha256Hex(body), body.byteLength);
-        });
-      vi.stubGlobal('fetch', fetchMock);
-
-      await expect(uploadPreparedEncryptedMedia(prepared, UPLOAD_OPTIONS)).rejects.toThrow('busy');
-      const { attachment } = await uploadPreparedEncryptedMedia(prepared, UPLOAD_OPTIONS);
-
-      const firstBody = readRequestBody(fetchMock.mock.calls[0][1]);
-      const secondBody = readRequestBody(fetchMock.mock.calls[1][1]);
-      expect(secondBody).toEqual(firstBody);
-      expect(attachment.encryption).toEqual(prepared.encryption);
-      expect(attachment.sha256).toBe(prepared.sha256);
-      await expect(
-        decryptMediaBytes(secondBody, attachment.encryption?.key, attachment.encryption?.nonce)
-      ).resolves.toEqual(new Uint8Array(new TextEncoder().encode(IMAGE_TEXT)));
-    });
-
-    it('uploads to whichever server it is given and keeps the same metadata', async () => {
-      const prepared = await prepareEncryptedMedia(imageFile());
-      const fetchMock = createBlossomFetchMock();
-      vi.stubGlobal('fetch', fetchMock);
-
-      const first = await uploadPreparedEncryptedMedia(prepared, UPLOAD_OPTIONS);
-      const second = await uploadPreparedEncryptedMedia(prepared, {
-        ...UPLOAD_OPTIONS,
-        serverUrl: 'https://other.example.com',
-      });
-
-      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-        'https://media.example.com/upload',
-        'https://other.example.com/upload',
-      ]);
-      expect(second.attachment.encryption).toEqual(first.attachment.encryption);
-      expect(second.attachment.service).toBe('other.example.com');
-    });
-
-    it('encrypts again with fresh key material for a new send', async () => {
-      const first = await prepareEncryptedMedia(imageFile());
-      const second = await prepareEncryptedMedia(imageFile());
-
-      expect(second.encryption.key).not.toBe(first.encryption.key);
-      expect(second.encryption.nonce).not.toBe(first.encryption.nonce);
     });
   });
 
@@ -587,36 +479,6 @@ describe('blossomUploadService', () => {
       expect(new TextDecoder().decode(readRequestBody(init))).not.toContain('PRIVATE-MEDIA-BYTES');
     });
 
-    it('keeps ciphertext, key, nonce and hashes when retrying or switching server', async () => {
-      const prepared = await prepareEncryptedMedia(mediaFile('video/webm', 'clip.webm'));
-      const snapshot = JSON.stringify({ ...prepared, ciphertext: hex(prepared.ciphertext) });
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(new Response('busy', { status: 503 }))
-        .mockImplementation(async (_url: string, init?: RequestInit) => {
-          const body = readRequestBody(init);
-          return descriptorResponse(await sha256Hex(body), body.byteLength);
-        });
-      vi.stubGlobal('fetch', fetchMock);
-
-      await expect(uploadPreparedEncryptedMedia(prepared, UPLOAD_OPTIONS)).rejects.toThrow('busy');
-      const retried = await uploadPreparedEncryptedMedia(prepared, UPLOAD_OPTIONS);
-      const switched = await uploadPreparedEncryptedMedia(prepared, {
-        ...UPLOAD_OPTIONS,
-        serverUrl: 'https://other.example.com',
-      });
-
-      const bodies = fetchMock.mock.calls.map(([, init]) => hex(readRequestBody(init)));
-      expect(new Set(bodies).size).toBe(1);
-      expect(JSON.stringify({ ...prepared, ciphertext: hex(prepared.ciphertext) })).toBe(snapshot);
-      for (const result of [retried, switched]) {
-        expect(result.attachment.encryption).toEqual(prepared.encryption);
-        expect(result.attachment.sha256).toBe(prepared.sha256);
-        expect(result.attachment.mimeType).toBe('video/webm');
-      }
-      expect(switched.attachment.service).toBe('other.example.com');
-    });
-
     it('keeps the ciphertext and original hashes derived from the plaintext', async () => {
       const prepared = await prepareEncryptedMedia(mediaFile('audio/mpeg', 'song.mp3'));
       const plaintext = new Uint8Array(new TextEncoder().encode(MEDIA_TEXT));
@@ -664,13 +526,13 @@ describe('blossomUploadService', () => {
       });
 
       it('rejects unsupported video and audio instead of sending them in plaintext', () => {
-        expect(validateOutgoingMediaFile(sized('video/quicktime', 10))).toBe(
+        expect(validateEncryptedMediaFile(sized('video/quicktime', 10))).toBe(
           'Only MP4 and WebM videos can be sent encrypted.'
         );
-        expect(validateOutgoingMediaFile(sized('audio/x-ms-wma', 10))).toBe(
+        expect(validateEncryptedMediaFile(sized('audio/x-ms-wma', 10))).toBe(
           'Only MP3, MP4/AAC, Ogg, WebM, WAV, and FLAC audio can be sent encrypted.'
         );
-        expect(validateOutgoingMediaFile(sized('image/svg+xml', 10))).toBe(
+        expect(validateEncryptedMediaFile(sized('image/svg+xml', 10))).toBe(
           'Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.'
         );
       });

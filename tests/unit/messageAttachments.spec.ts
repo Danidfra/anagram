@@ -8,12 +8,13 @@ import {
   buildNip92ImetaTag,
   extractMediaAttachmentsFromTags,
   isChatMessageRumorKind,
+  isImageAttachment,
+  isPlayableEncryptedAttachment,
   normalizeMessageAttachment,
   parseNip17FileMessageAttachment,
   readHiddenAttachmentUrls,
   readImageAttachmentsFromMeta,
   readPlayableEncryptedAttachmentsFromMeta,
-  readUnsupportedEncryptedAttachmentsFromMeta,
   redactFileMessageSecretTags,
   resolveChatMessageRumorKind,
   resolveSafeInlineImageMimeType,
@@ -316,7 +317,11 @@ describe('message attachment helpers', () => {
       const meta = { attachments: [encryptedAttachment, svg, html, video] };
 
       expect(readImageAttachmentsFromMeta(meta)).toEqual([encryptedAttachment]);
-      expect(readUnsupportedEncryptedAttachmentsFromMeta(meta)).toEqual([svg, html, video]);
+      // Unsupported encrypted types are neither inline images nor playable media.
+      for (const unsupported of [svg, html, video]) {
+        expect(isImageAttachment(unsupported)).toBe(false);
+        expect(isPlayableEncryptedAttachment(unsupported)).toBe(false);
+      }
       expect(resolveSafeInlineImageMimeType('image/svg+xml')).toBeNull();
       expect(resolveSafeInlineImageMimeType('text/html')).toBeNull();
       expect(resolveSafeInlineImageMimeType('application/xhtml+xml')).toBeNull();
@@ -334,7 +339,10 @@ describe('message attachment helpers', () => {
 
       expect(readPlayableEncryptedAttachmentsFromMeta(meta)).toEqual([mp4, webm, mp3]);
       expect(readImageAttachmentsFromMeta(meta)).toEqual([encryptedAttachment]);
-      expect(readUnsupportedEncryptedAttachmentsFromMeta(meta)).toEqual([mov, mkv]);
+      for (const unsupported of [mov, mkv]) {
+        expect(isImageAttachment(unsupported)).toBe(false);
+        expect(isPlayableEncryptedAttachment(unsupported)).toBe(false);
+      }
     });
 
     it('never treats a plaintext attachment as playable encrypted media', () => {

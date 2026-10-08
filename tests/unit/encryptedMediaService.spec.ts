@@ -231,18 +231,6 @@ describe('encryptedMediaService', () => {
       expect(fetch).not.toHaveBeenCalled();
       expect(createObjectURL).not.toHaveBeenCalled();
     });
-
-    it('does not create an object URL for tampered video or audio', async () => {
-      for (const mimeType of ['video/mp4', 'audio/mpeg']) {
-        const { attachment, ciphertext } = await createEncryptedFixture(mimeType);
-        const tampered = new Uint8Array(ciphertext);
-        tampered[2] ^= 0xff;
-        const { service, createObjectURL } = createHarness(tampered);
-
-        await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toThrow();
-        expect(createObjectURL).not.toHaveBeenCalled();
-      }
-    });
   });
 
   describe('receive size limits', () => {

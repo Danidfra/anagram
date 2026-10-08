@@ -621,12 +621,6 @@ p {
   width: auto;
   margin: 0;
 }
-.media-upload-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-}
 .notices {
   position: fixed;
   bottom: 24px;

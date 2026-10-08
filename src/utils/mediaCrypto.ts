@@ -2,6 +2,8 @@
 // Blobs are encrypted with AES-256-GCM before upload; the key and nonce only travel inside the
 // gift-wrapped rumor, never to the media server.
 
+import { bytesToHex, hexToBytes as decodeHex } from '@noble/hashes/utils.js';
+
 export const MEDIA_ENCRYPTION_ALGORITHM = 'aes-gcm';
 const MEDIA_KEY_BYTES = 32;
 const MEDIA_NONCE_BYTES = 12;
@@ -9,29 +11,17 @@ const MEDIA_NONCE_BYTES = 12;
 const ACCEPTED_MEDIA_NONCE_BYTES = [12, 16];
 const AES_GCM_TAG_BITS = 128;
 
-function bytesToHex(bytes: Uint8Array): string {
-  let hex = '';
-  for (const byte of bytes) {
-    hex += byte.toString(16).padStart(2, '0');
-  }
-  return hex;
-}
-
+// Strict hex decoding that fails closed: anything that is not even-length hex yields null.
 function hexToBytes(value: unknown): Uint8Array<ArrayBuffer> | null {
-  if (typeof value !== 'string') {
+  if (typeof value !== 'string' || !value.trim()) {
     return null;
   }
 
-  const normalized = value.trim().toLowerCase();
-  if (normalized.length === 0 || normalized.length % 2 !== 0 || !/^[a-f0-9]+$/u.test(normalized)) {
+  try {
+    return new Uint8Array(decodeHex(value.trim()));
+  } catch {
     return null;
   }
-
-  const bytes = new Uint8Array(normalized.length / 2);
-  for (let index = 0; index < bytes.length; index += 1) {
-    bytes[index] = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
-  }
-  return bytes;
 }
 
 export function normalizeSha256Hex(value: unknown): string | null {

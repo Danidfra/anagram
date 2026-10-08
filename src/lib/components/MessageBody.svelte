@@ -86,6 +86,10 @@
     const normalized = normalizeMessageAttachment(attachment);
     return normalized?.encryption ? normalized : null;
   }
+  // A different blob or key re-creates the media component instead of reusing its decrypted URL.
+  function encryptedIdentity(attachment: MessageAttachmentMetadata) {
+    return `${attachment.sha256}:${attachment.encryption?.key}:${attachment.encryption?.nonce}`;
+  }
   function closeViewer() {
     viewerRequest += 1;
     imageUrl = '';
@@ -281,14 +285,14 @@
       {#each message.meta.attachments ?? [] as attachment}
         {#if attachment.encryption !== undefined}
           {@const encrypted = readEncryptedAttachment(attachment)}
-          {#if encrypted && isImageAttachment(encrypted)}<EncryptedImage
-              attachment={encrypted}
-              alt={encrypted.name ?? 'Attachment'}
-              onopen={() => void openEncryptedImage(encrypted)}
-            />{:else if encrypted && isPlayableEncryptedAttachment(encrypted)}<EncryptedMedia
-              attachment={encrypted}
-              autoLoad
-            />{:else}<p class="encrypted-unsupported" data-testid="message-encrypted-file-unsupported">
+          {#if encrypted && isImageAttachment(encrypted)}{#key encryptedIdentity(encrypted)}<EncryptedImage
+                attachment={encrypted}
+                alt={encrypted.name ?? 'Attachment'}
+                onopen={() => void openEncryptedImage(encrypted)}
+              />{/key}{:else if encrypted && isPlayableEncryptedAttachment(encrypted)}{#key encryptedIdentity(encrypted)}<EncryptedMedia
+                attachment={encrypted}
+                autoLoad
+              />{/key}{:else}<p class="encrypted-unsupported" data-testid="message-encrypted-file-unsupported">
               <Icon name="lock" />{$translate('message.encryptedAttachmentUnsupported', {
                 type: attachment.mimeType,
               })}

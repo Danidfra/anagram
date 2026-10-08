@@ -22,7 +22,7 @@
   import {
     prepareEncryptedMedia,
     uploadPreparedEncryptedMedia,
-    validateOutgoingMediaFile,
+    validateEncryptedMediaFile,
   } from '#src/services/blossomUploadService.ts';
   import {
     createPrivateMediaUploadSession,
@@ -908,7 +908,7 @@
   function prepareUpload(file?: File) {
     // An upload that is waiting, running or offering Retry is never replaced by another file.
     if (!file || !$state.selected || busy || pendingFile) return;
-    const validationError = validateOutgoingMediaFile(file);
+    const validationError = validateEncryptedMediaFile(file);
     if (validationError) {
       Notify.create({ type: 'warning', message: validationError });
       if (fileInput) fileInput.value = '';
@@ -1922,7 +1922,7 @@
                   {$translate('mediaDataStorage.serverUrlInvalid')}
                 </p>{/if}
             {/if}
-            <div class="media-upload-actions">
+            <div>
               <button
                 class="outline"
                 data-testid="composer-media-upload-cancel"
