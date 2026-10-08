@@ -49,6 +49,29 @@ export function publicMessageRoots(events: PublicGroupMessage[]): PublicGroupMes
   }
   return [...roots.values()];
 }
+// Resolve an available signed version without scanning the room's history.
+// An exact original remains authoritative; missing originals may be resolved
+// through edit references, but conflicting authors/timestamps are ambiguous.
+export function publicMessageReference(
+  events: PublicGroupMessage[],
+  id: string,
+  address: string,
+  author?: string,
+): PublicGroupMessage | undefined {
+  const candidates = events.filter(
+    (event) =>
+      validRoomMessage(event, address) &&
+      (event.id === id || editTarget(event) === id || editRoot(event) === id),
+  );
+  const exact = candidates.find((event) => event.id === id);
+  if (exact) return !author || exact.pubkey === author ? exact : undefined;
+  // A replacement cannot establish the missing original's author by claiming its ID.
+  if (!author) return undefined;
+  const replacements = candidates.filter((event) => event.pubkey === author);
+  if (new Set(replacements.map((event) => `${event.pubkey}:${event.created_at}`)).size !== 1)
+    return undefined;
+  return publicMessageRoots(replacements)[0];
+}
 export function replyTarget(event: NostrEvent): string | undefined {
   const tag = event.tags.find((tag) => tag[0] === 'q');
   return tag && HEX.test(tag[1]) ? tag[1] : undefined;
@@ -191,10 +214,7 @@ export function publicMessageState(root: PublicGroupMessage, room: PublicRoom, o
     const parent = root.replyEvent;
     const quoteAuthor = current.tags.find((tag) => tag[0] === 'q')?.[3] ?? '';
     const preview =
-      parent &&
-      parent.id === parentId &&
-      validRoomMessage(parent, address) &&
-      (!quoteAuthor || quoteAuthor === parent.pubkey)
+      parent && publicMessageReference([parent], parentId, address, quoteAuthor)
         ? publicMessageState({ ...parent, replyEvent: undefined }, room, own)
         : undefined;
     const visible = preview && roomPolicy(room, preview.authorPublicKey) !== 'blocked';

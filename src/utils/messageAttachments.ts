@@ -185,8 +185,9 @@ export function buildImageAttachmentPreviewText(
 
 export function buildMessageReplyPreviewContent(
   text: string,
-  meta: { attachments?: unknown } | null | undefined,
+  meta: { attachments?: unknown; deleted?: unknown } | null | undefined,
 ): MessageReplyPreviewContent {
+  if (meta?.deleted) return { text: 'Message deleted' };
   const attachments = new Map<string, string>();
   if (Array.isArray(meta?.attachments))
     for (const attachment of meta.attachments) {

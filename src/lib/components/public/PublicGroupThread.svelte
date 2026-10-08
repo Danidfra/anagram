@@ -27,7 +27,12 @@
   import { roomPolicy, publicGroupShareLink } from '#src/stores/nostr/publicGroups.ts';
   import ProfileName from '../ProfileName.svelte';
   import { publicMessageState } from '#src/stores/nostr/publicMessageActions.ts';
-  import { uploadBlossomMedia } from '#src/services/blossomUploadService.ts';
+  import {
+    createComposerUpload,
+    appendUploadLink,
+    draftAttachments,
+  } from '#src/lib/state/composerUpload.ts';
+  import type { MessageAttachmentMetadata } from '#src/types/chat.ts';
   import PublicGroupDialog from './PublicGroupDialog.svelte';
   import PublicMessage from './PublicMessage.svelte';
   import Icon from '../Icon.svelte';
@@ -196,8 +201,32 @@
   let log: HTMLDivElement;
   let lastScrollTop = 0;
   let fileInput: HTMLInputElement;
-  let uploadController: AbortController | undefined;
-  let pendingFile: File | undefined;
+  const uploadedAttachments = new Map<string, MessageAttachmentMetadata[]>();
+  const uploadContext = () => `${nostr.getLoggedInPublicKeyHex()}:${room?.address ?? ''}`;
+  const uploader = createComposerUpload({
+    context: uploadContext,
+    serverUrl: () => nostr.getBlossomServerUrl(),
+    signUploadAuthHeader: nostr.signBlossomUploadAuthHeader,
+    uploaded: (attachment) => {
+      const key = uploadContext();
+      uploadedAttachments.set(key, [...(uploadedAttachments.get(key) ?? []), attachment]);
+      draft = appendUploadLink(draft, attachment.url);
+      if (fileInput) fileInput.value = '';
+    },
+    error: (cause) => {
+      error = (cause as Error).message;
+    },
+  });
+  const uploadState = uploader.state;
+  function cancelUpload() {
+    uploader.cancel();
+    if (fileInput) fileInput.value = '';
+  }
+  $: {
+    room?.address;
+    own;
+    uploader.checkContext();
+  }
   let mediaNotice = false;
   let creatorName = '';
   async function explainMediaTrust() {
@@ -213,38 +242,6 @@
         creatorName = profile?.name ?? '';
     } catch {
       // The cached profile or shortened public key remains clickable offline.
-    }
-  }
-  async function upload() {
-    if (
-      !pendingFile ||
-      !room ||
-      sending ||
-      $state.stale ||
-      $state.history ||
-      roomPolicy(room, own) !== 'trusted'
-    )
-      return;
-    const target = room.address;
-    sending = true;
-    error = '';
-    uploadController = new AbortController();
-    try {
-      const result = await uploadBlossomMedia(pendingFile, {
-        serverUrl: nostr.getBlossomServerUrl(),
-        signal: uploadController.signal,
-        signUploadAuthHeader: nostr.signBlossomUploadAuthHeader,
-      });
-      if (uploadController.signal.aborted || room?.address !== target) return;
-      await runtime.send(result.attachment.url, result.attachment, reply?.messageId);
-      reply = null;
-      pendingFile = undefined;
-      nearBottom = true;
-    } catch (cause) {
-      if (!uploadController.signal.aborted) error = (cause as Error).message;
-    } finally {
-      sending = false;
-      if (fileInput) fileInput.value = '';
     }
   }
   $: room = $state.room;
@@ -323,6 +320,7 @@
     sending = true;
     error = '';
     const originalDraft = draft;
+    const uploadKey = uploadContext();
     const text = serializeMentionDraft(originalDraft, $mentionProfiles);
     try {
       if (nostr.containsSessionSecret(text))
@@ -331,7 +329,12 @@
         await runtime.editMessage(editing.id, text);
         cancelContext();
       } else {
-        await runtime.send(text, undefined, reply?.messageId);
+        await runtime.send(
+          text,
+          draftAttachments(text, uploadedAttachments.get(uploadKey)),
+          reply?.messageId,
+        );
+        uploadedAttachments.delete(uploadKey);
         if (draft === originalDraft) draft = '';
         reply = null;
       }
@@ -361,7 +364,7 @@
     return () => {
       window.removeEventListener('online', reconnect);
       document.removeEventListener('visibilitychange', reconnect);
-      uploadController?.abort();
+      uploader.cancel();
       mediaNotice = false;
       runtime.stopView();
     };
@@ -394,7 +397,7 @@
       >
     {/snippet}
   </ThreadHeader>
-  {#if room.pinned && !$state.history && !pinned?.meta.deleted}
+  {#if room.pinned && !$state.history}
     <PinnedMessage
       text={pinned
         ? pinned.meta.deleted
@@ -539,19 +542,18 @@
         > to be added to the trusted member list.
       </p>
     </ModalFrame>{/if}
-  {#if pendingFile}<ModalFrame
+  {#if $uploadState.file}<ModalFrame
       title={$translate('message.photoOrVideo')}
       label="upload"
-      busy={sending}
-      onclose={() => (pendingFile = undefined)}
+      onclose={cancelUpload}
     >
       <MediaUploadConfirmation
-        fileName={pendingFile.name}
+        fileName={$uploadState.file.name}
         serverUrl={nostr.getBlossomServerUrl()}
-        busy={sending}
+        busy={$uploadState.busy}
         publicUpload
-        oncancel={() => (pendingFile = undefined)}
-        onconfirm={() => void upload()}
+        oncancel={cancelUpload}
+        onconfirm={() => void uploader.upload()}
       />
       {#if error}<p role="alert" class="error">{error}</p>{/if}
     </ModalFrame>{/if}
@@ -580,7 +582,7 @@
     attachLabel="Attach public media"
     maxlength={8000}
     onsend={() => void send()}
-    onfile={(file) => (pendingFile = file)}
+    onfile={(file) => uploader.choose(file)}
   />
 {:else}<div class="welcome-empty">
     <button class="outline" onclick={() => goto('/chats')}>Back to chats</button>

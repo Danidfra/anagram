@@ -146,6 +146,7 @@ export function createContactRelayRuntime({
       },
       {
         cacheUsage: NostrSubscriptionCacheUsage.ONLY_RELAY,
+        allowPartialResults: true,
       },
       relaySet,
     );
@@ -191,7 +192,7 @@ export function createContactRelayRuntime({
 
     const since = readContactRelayListEventSince(existingContact?.meta);
     const relaySet = createReadyRelaySet(ndk, relayUrls);
-    const [relayListEvent, directMessageReceiveRelayEvent] = await Promise.all([
+    const results = await Promise.allSettled([
       fetchEventWithRelayTimeout(
         ndk,
         {
@@ -201,6 +202,7 @@ export function createContactRelayRuntime({
         },
         {
           cacheUsage: NostrSubscriptionCacheUsage.ONLY_RELAY,
+          allowPartialResults: true,
         },
         relaySet,
       ),
@@ -212,11 +214,17 @@ export function createContactRelayRuntime({
         },
         {
           cacheUsage: NostrSubscriptionCacheUsage.ONLY_RELAY,
+          allowPartialResults: true,
         },
         relaySet,
       ),
     ]);
+    const [relayListEvent, directMessageReceiveRelayEvent] = results.map((result) =>
+      result.status === 'fulfilled' ? result.value : null,
+    );
     if (!relayListEvent && !directMessageReceiveRelayEvent) {
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
       return null;
     }
 

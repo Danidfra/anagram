@@ -92,3 +92,79 @@ it('upgrades existing history, indexes edit/reaction references and pages equal 
   ).toBeNull();
   expect(getAll).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  'reconciles late edit ancestry locally while preserving latest deletion=%s',
+  async (deleted) => {
+    vi.stubGlobal('window', { indexedDB: new IDBFactory() });
+    const chat = 'a'.repeat(64),
+      author = 'b'.repeat(64),
+      first = 'c'.repeat(64),
+      middle = 'd'.repeat(64),
+      last = 'e'.repeat(64);
+    const at = '2026-01-01T00:00:00.000Z';
+    await chatDataService.createChat({ public_key: chat, type: 'user', name: 'Test' });
+    const original = await chatDataService.createMessage({
+      chat_public_key: chat,
+      author_public_key: author,
+      message: 'First',
+      event_id: first,
+      created_at: at,
+      meta: {},
+    });
+    const latest = await chatDataService.createMessage({
+      chat_public_key: chat,
+      author_public_key: author,
+      message: 'Latest',
+      event_id: last,
+      created_at: at,
+      meta: {
+        edited: { editedAt: at, previousEventIds: [middle] },
+        ...(deleted ? { deleted: { deletedAt: at } } : {}),
+      },
+    });
+    const list = vi.spyOn(chatDataService, 'listMessages');
+    const result = await chatDataService.reconcileMessageEditPredecessor(latest!.id, {
+      eventId: middle,
+      previousEventId: first,
+      chat,
+      author,
+      createdAt: at,
+    });
+    expect(result?.message).toBe('Latest');
+    expect(Boolean(result?.meta.deleted)).toBe(deleted);
+    expect((await chatDataService.getMessageByEventIdOrEditReference(first))?.id).toBe(latest!.id);
+    expect(await chatDataService.getMessageById(original!.id)).toBeNull();
+    expect(list).not.toHaveBeenCalled();
+  },
+);
+it.each(['author', 'chat', 'createdAt'])(
+  'does not reconcile a late edit with the wrong %s',
+  async (field) => {
+    vi.stubGlobal('window', { indexedDB: new IDBFactory() });
+    const chat = 'a'.repeat(64),
+      author = 'b'.repeat(64),
+      first = 'c'.repeat(64),
+      middle = 'd'.repeat(64),
+      last = 'e'.repeat(64);
+    const at = '2026-01-01T00:00:00.000Z';
+    await chatDataService.createChat({ public_key: chat, type: 'user', name: 'Test' });
+    const latest = await chatDataService.createMessage({
+      chat_public_key: chat,
+      author_public_key: author,
+      message: 'Latest',
+      event_id: last,
+      created_at: at,
+      meta: { edited: { editedAt: at, previousEventIds: [middle] } },
+    });
+    await chatDataService.reconcileMessageEditPredecessor(latest!.id, {
+      eventId: middle,
+      previousEventId: first,
+      chat,
+      author,
+      createdAt: at,
+      [field]: field === 'createdAt' ? '2026-01-02T00:00:00.000Z' : 'f'.repeat(64),
+    });
+    expect(await chatDataService.getMessageByEventIdOrEditReference(first)).toBeNull();
+  },
+);

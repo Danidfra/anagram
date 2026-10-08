@@ -1395,3 +1395,248 @@ it('returns a short history page without waiting for a stalled replica or claimi
   expect(get(runtime.state).more).toBe(true);
   expect(get(runtime.state).error).toBe('');
 });
+
+it.each([false, true])(
+  'resolves cached edited reply parents, including deleted ones (%s)',
+  async (deleted) => {
+    const key = generateSecretKey(),
+      metadata = room(key, 'edited-reply');
+    const group = parsePublicRoom(metadata);
+    const original = finalizeEvent(
+      { kind: 9, created_at: 20, content: 'Original', tags: [['a', group.address]] },
+      key,
+    );
+    const replacement = finalizeEvent(
+      {
+        kind: 9,
+        created_at: 20,
+        content: 'Edited parent',
+        tags: [
+          ['a', group.address],
+          ['e', original.id, '', 'edit'],
+        ],
+      },
+      key,
+    );
+    const latest = finalizeEvent(
+      {
+        kind: 9,
+        created_at: 20,
+        content: 'Latest parent',
+        tags: [
+          ['a', group.address],
+          ['e', replacement.id, '', 'edit'],
+          ['e', original.id],
+        ],
+      },
+      key,
+    );
+    const reply = finalizeEvent(
+      {
+        kind: 9,
+        created_at: 21,
+        content: 'Reply',
+        tags: [
+          ['a', group.address],
+          ['q', original.id, '', getPublicKey(key)],
+        ],
+      },
+      key,
+    );
+    const removal = finalizeEvent(
+      {
+        kind: 5,
+        created_at: 22,
+        content: '',
+        tags: [
+          ['h', group.address],
+          ['e', latest.id],
+        ],
+      },
+      key,
+    );
+    const { runtime, events, subscriptions } = setup([
+      metadata,
+      replacement,
+      latest,
+      reply,
+      ...(deleted ? [removal] : []),
+    ]);
+    const { publicMessageState } = await import('#src/stores/nostr/publicMessageActions.ts');
+    const displayedReply = () =>
+      get(runtime.state)
+        .messages.map((e) => publicMessageState(e, group))
+        .find((m) => m.text === 'Reply');
+    await runtime.open(encodeRoomLink(group));
+    await vi.waitFor(() =>
+      expect(displayedReply()?.meta.reply?.text).toBe(
+        deleted ? 'Message deleted' : 'Latest parent',
+      ),
+    );
+    expect(displayedReply()?.meta.reply?.eventId).toBe(original.id);
+    // Restoring the cached thread must also resolve the old reference offline.
+    events.splice(0, events.length, metadata);
+    await runtime.open(encodeRoomLink(group));
+    expect(displayedReply()?.meta.reply?.text).toBe(deleted ? 'Message deleted' : 'Latest parent');
+    // No unbounded history/filter reads were introduced for preview hydration.
+    expect(
+      subscriptions.flat().every((f) => f.ids || f['#e'] || f.limit || f.since !== undefined),
+    ).toBe(true);
+  },
+);
+
+it('accepts a verified pinned event without EOSE and closes its lookup subscriptions', async () => {
+  const key = generateSecretKey(),
+    address = `34550:${getPublicKey(key)}:pin-without-eose`;
+  const pin = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Received without EOSE', tags: [['a', address]] },
+    key,
+  );
+  const metadata = room(key, 'pin-without-eose', [['pinned', pin.id]]);
+  const { runtime, events, listeners } = setup(
+    [metadata],
+    key,
+    (_url, filters) => !filters.some((f) => f.ids?.includes(pin.id)),
+  );
+  await runtime.open(encodeRoomLink(parsePublicRoom(metadata)));
+  await vi.waitFor(() => expect(get(runtime.state).loading).toBe(false));
+  events.push(pin);
+  const before = get(runtime.state).more;
+  expect((await runtime.pinnedMessage())?.text).toBe(pin.content);
+  expect([...listeners].some((l) => l.filters.some((f) => f.ids?.includes(pin.id)))).toBe(false);
+  expect(get(runtime.state).more).toBe(before);
+}, 3000);
+
+it('fetches a pin with many retained edit versions when the original has disappeared', async () => {
+  const key = generateSecretKey(),
+    address = `34550:${getPublicKey(key)}:many-pin-edits`;
+  const original = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Original', tags: [['a', address]] },
+    key,
+  );
+  let previous = original;
+  const edits = Array.from({ length: 12 }, (_, n) => {
+    previous = finalizeEvent(
+      {
+        kind: 9,
+        created_at: 20,
+        content: `Available edit ${n}`,
+        tags: [
+          ['a', address],
+          ['e', previous.id, '', 'edit'],
+          ['e', original.id],
+        ],
+      },
+      key,
+    );
+    return previous;
+  });
+  const recent = Array.from({ length: 55 }, (_, n) =>
+    finalizeEvent(
+      { kind: 9, created_at: 100 + n, content: `Recent ${n}`, tags: [['a', address]] },
+      key,
+    ),
+  );
+  const metadata = room(key, 'many-pin-edits', [['pinned', original.id]]);
+  const { runtime } = setup([metadata, ...edits, ...recent]);
+  await runtime.open(encodeRoomLink(parsePublicRoom(metadata)));
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(50));
+  expect((await runtime.pinnedMessage())?.text).toMatch(/^Available edit /);
+  expect(get(runtime.state).messages).toHaveLength(50);
+  expect((await runtime.jumpToMessage(original.id))?.content).toMatch(/^Available edit /);
+});
+
+it('does not accept invalid, wrong-room or blocked pin events before EOSE', async () => {
+  const key = generateSecretKey(),
+    other = generateSecretKey();
+  const address = `34550:${getPublicKey(key)}:pin-verification`;
+  const pin = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Expected', tags: [['a', address]] },
+    key,
+  );
+  const metadata = room(key, 'pin-verification', [
+    ['pinned', pin.id],
+    ['blocked', getPublicKey(other)],
+  ]);
+  const { runtime, listeners } = setup(
+    [metadata],
+    key,
+    (_url, fs) => !fs.some((f) => f.ids?.includes(pin.id)),
+  );
+  await runtime.open(encodeRoomLink(parsePublicRoom(metadata)));
+  await vi.waitFor(() => expect(get(runtime.state).loading).toBe(false));
+  let settled = false;
+  const pending = runtime.pinnedMessage().then(
+    (value) => {
+      settled = true;
+      return value;
+    },
+    (error) => {
+      settled = true;
+      return error;
+    },
+  );
+  await vi.waitFor(() =>
+    expect([...listeners].some((l) => l.filters.some((f) => f.ids?.includes(pin.id)))).toBe(true),
+  );
+  const lookups = [...listeners].filter((l) => l.filters.some((f) => f.ids?.includes(pin.id)));
+  const wrongRoom = finalizeEvent(
+    {
+      kind: 9,
+      created_at: 20,
+      content: 'Wrong room',
+      tags: [
+        ['a', `${address}-other`],
+        ['e', pin.id, '', 'edit'],
+      ],
+    },
+    key,
+  );
+  const blocked = finalizeEvent(
+    {
+      kind: 9,
+      created_at: 20,
+      content: 'Blocked',
+      tags: [
+        ['a', address],
+        ['e', pin.id, '', 'edit'],
+      ],
+    },
+    other,
+  );
+  for (const event of [{ ...pin, content: 'Tampered signature' }, wrongRoom, blocked]) {
+    for (const l of lookups) l.options.onEvent?.(new ClientEvent(undefined, event));
+  }
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  for (const l of lookups) l.options.onClose?.();
+  expect(await pending).toBeInstanceOf(Error);
+});
+
+it('does not let another author replace an owner-controlled pin through a claimed edit', async () => {
+  const owner = generateSecretKey(),
+    attacker = generateSecretKey();
+  const address = `34550:${getPublicKey(owner)}:pin-author-audit`;
+  const missing = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Real owner announcement', tags: [['a', address]] },
+    owner,
+  );
+  const metadata = room(owner, 'pin-author-audit', [['pinned', missing.id]]);
+  const claimedEdit = finalizeEvent(
+    {
+      kind: 9,
+      created_at: 20,
+      content: 'Unrelated author announcement',
+      tags: [
+        ['a', address],
+        ['e', missing.id, '', 'edit'],
+      ],
+    },
+    attacker,
+  );
+  const { runtime } = setup([metadata, claimedEdit]);
+  await runtime.open(encodeRoomLink(parsePublicRoom(metadata)));
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(1));
+  const pin = await runtime.pinnedMessage();
+  expect(pin).toBeNull();
+});

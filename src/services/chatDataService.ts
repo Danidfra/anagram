@@ -1324,6 +1324,77 @@ class ChatDataService {
     }
   }
 
+  // Reconcile a late intermediate edit without replacing the newer text or scanning history.
+  async reconcileMessageEditPredecessor(
+    messageId: number,
+    incoming: {
+      eventId: string;
+      previousEventId: string;
+      chat: string;
+      author: string;
+      createdAt: string;
+    },
+  ): Promise<MessageRow | null> {
+    const db = await this.getDatabase();
+    const transaction = db.transaction(MESSAGES_STORE, 'readwrite');
+    const store = transaction.objectStore(MESSAGES_STORE);
+    const latest = await requestToPromise<MessageRecord | undefined>(store.get(messageId));
+    const references = (record: MessageRecord) => {
+      const edited = record.meta.edited as { previousEventIds?: string[] } | undefined;
+      return edited?.previousEventIds ?? [];
+    };
+    const matches = (record: MessageRecord) =>
+      record.chat_public_key === incoming.chat &&
+      record.author_public_key === incoming.author &&
+      areMessageEditTimestampsEqual(record.created_at, incoming.createdAt);
+    if (
+      !latest ||
+      !matches(latest) ||
+      !references(latest).includes(incoming.eventId) ||
+      incoming.previousEventId === latest.event_id ||
+      incoming.previousEventId === incoming.eventId
+    ) {
+      await waitForTransaction(transaction);
+      return latest ? toMessageRow(latest) : null;
+    }
+    const [exact, edited] = await Promise.all([
+      requestToPromise<MessageRecord | undefined>(
+        store.index(MESSAGES_EVENT_ID_INDEX).get(incoming.previousEventId),
+      ),
+      requestToPromise<MessageRecord | undefined>(
+        store.index(MESSAGES_EDIT_IDS_INDEX).get(incoming.previousEventId),
+      ),
+    ]);
+    const ancestor = exact ?? edited;
+    if (ancestor && !matches(ancestor)) {
+      await waitForTransaction(transaction);
+      return toMessageRow(latest);
+    }
+    const next: MessageRecord = {
+      ...latest,
+      meta: {
+        ...latest.meta,
+        edited: {
+          ...(latest.meta.edited as Record<string, unknown>),
+          previousEventIds: [
+            ...new Set([
+              ...references(latest),
+              incoming.previousEventId,
+              ...(ancestor ? references(ancestor) : []),
+              ...(ancestor?.event_id && ancestor.event_id !== latest.event_id
+                ? [ancestor.event_id]
+                : []),
+            ]),
+          ],
+        },
+      },
+    };
+    if (ancestor && ancestor.id !== latest.id) store.delete(ancestor.id);
+    store.put(withReactionIndex(next));
+    await waitForTransaction(transaction);
+    return toMessageRow(next);
+  }
+
   async updateMessageEventId(messageId: number, eventId: string): Promise<MessageRow | null> {
     const normalizedMessageId = Number(messageId);
     const normalizedEventId = normalizeEventId(eventId);

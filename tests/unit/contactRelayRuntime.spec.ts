@@ -203,6 +203,23 @@ describe('contactRelayRuntime', () => {
     expect(ndk.fetchEvent.mock.calls[1][0]).not.toHaveProperty('since');
   });
 
+  it('keeps a received relay list when the separate DM relay lookup fails', async () => {
+    const { deps, ndk } = createDeps();
+    const relayList = new ClientEvent({} as never, {
+      created_at: 42,
+      id: RELAY_EVENT_ID,
+      kind: NostrKind.RelayList,
+      pubkey: USER_PUBKEY,
+      tags: [['r', DEFAULT_RELAY_URL]],
+    });
+    ndk.fetchEvent.mockImplementation(async (filter) => {
+      if (filter.kinds[0] === NostrKind.RelayList) return relayList;
+      throw new Error('DM relay lookup timed out');
+    });
+    const result = await createContactRelayRuntime(deps).fetchContactRelayList(USER_PUBKEY);
+    expect(result).toEqual({ createdAt: 42, eventId: RELAY_EVENT_ID, relayEntries: [makeRelay()] });
+  });
+
   it('merges direct message receive relays into fetched contact relay entries as read relays', async () => {
     const { deps, ndk } = createDeps();
     serviceMocks.contactsService.getContactByPublicKey.mockResolvedValue(

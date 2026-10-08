@@ -13,11 +13,8 @@
 </p>
 <p>{$translate('message.mediaUpload.usingBlossomServer', { server: serverUrl })}</p>
 <p>{fileName}</p>
-<button class="outline" disabled={busy} onclick={oncancel}>{$translate('common.cancel')}</button>
+<p>The uploaded link will be added to your message. Add text, then send when ready.</p>
+<button class="outline" onclick={oncancel}>{$translate('common.cancel')}</button>
 <button class="primary" disabled={busy} onclick={onconfirm}
-  >{busy
-    ? $translate('Uploading…')
-    : publicUpload
-      ? 'Upload and send'
-      : $translate('common.ok')}</button
+  >{busy ? $translate('Uploading…') : $translate('Upload')}</button
 >

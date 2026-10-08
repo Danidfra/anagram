@@ -444,7 +444,7 @@ test('uses cached author photos and shared media rendering for redirected Blosso
       document.body.style.setProperty('--theme-accent-light', '#3e7140');
       document.body.style.setProperty('--theme-accent-dark', '#77aa79');
     }, dark);
-    const row = page.getByTestId('public-chat-item');
+    const row = page.getByTestId('public-chat-item').filter({ hasText: 'Media room' });
     await expect(row).toHaveAttribute('aria-current', 'page');
     await expect(row.locator('strong')).toHaveCSS('color', 'rgb(255, 255, 255)');
   }
@@ -472,7 +472,16 @@ test('uses cached author photos and shared media rendering for redirected Blosso
   await page
     .locator('input[type=file]')
     .setInputFiles({ name: 'photo.png', mimeType: 'image/png', buffer: image });
-  await page.getByRole('button', { name: 'Upload and send', exact: true }).click();
+  await page.getByRole('button', { name: 'Upload', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'upload', exact: true })).toHaveCount(0);
+  await expect(page.getByTestId('public-message')).toHaveCount(0);
+  await expect(page.getByTestId('message-composer-input')).toHaveValue(
+    'https://blossom.example.org/photo.png',
+  );
+  await page
+    .getByTestId('message-composer-input')
+    .fill('A public caption\nhttps://blossom.example.org/photo.png');
+  await page.getByTestId('message-send-button').click();
   const message = page.getByTestId('public-message');
   await expect(message.locator('img[src="https://avatars.example.org/owner.png"]')).toBeVisible();
   const media = message.locator('img[src="https://blossom.example.org/photo.png"]');
@@ -486,7 +495,7 @@ test('uses cached author photos and shared media rendering for redirected Blosso
   await expect(statusDialog).toContainText('published');
   await expect(statusDialog.getByRole('tab')).toHaveCount(0);
   await page.getByRole('button', { name: 'Close relay details', exact: true }).click();
-  await expect(message.locator('.message-text')).toHaveCount(0);
+  await expect(message.locator('.message-text')).toContainText('A public caption');
   await media.click();
   await expect(page.getByRole('dialog', { name: 'Image attachment' })).toBeVisible();
   await page.getByRole('button', { name: 'Close image', exact: true }).click();
@@ -1480,6 +1489,20 @@ test('an edited public pin resolves and jumps after the original has disappeared
   await publish(
     finalizeEvent(
       {
+        kind: 9,
+        created_at: now - 5,
+        content: 'Reply to the announcement',
+        tags: [
+          ['a', address],
+          ['q', original.id, '', owner.pubkey],
+        ],
+      },
+      owner.key,
+    ),
+  );
+  await publish(
+    finalizeEvent(
+      {
         kind: 34550,
         created_at: now,
         content: '',
@@ -1503,8 +1526,14 @@ test('an edited public pin resolves and jumps after the original has disappeared
   });
   await navigateInApp(page, `/public/${link}`);
   const card = page.getByTestId('pinned-message');
-  const message = page.getByTestId('public-message').filter({ hasText: 'Welcome to Anagram!' });
+  const message = page
+    .getByTestId('public-message')
+    .filter({ hasText: 'Welcome to Anagram!', hasNotText: 'Reply to the announcement' });
   await expect(message).toBeVisible();
+  const reply = page.getByTestId('public-message').filter({ hasText: 'Reply to the announcement' });
+  await expect(reply.locator('.reply-preview')).toContainText('Welcome to Anagram!');
+  await reply.locator('.reply-preview').click();
+  await expect(message).toHaveClass(/highlighted/);
   await expect(card).toContainText('Welcome to Anagram!', { timeout: 5000 });
   await page.getByRole('button', { name: 'Go to pinned message' }).click();
   await expect(message).toHaveClass(/highlighted/);
@@ -1512,7 +1541,98 @@ test('an edited public pin resolves and jumps after the original has disappeared
   await expect(page.getByRole('menuitem', { name: 'Unpin message', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await page.reload();
+  await expect(reply.locator('.reply-preview')).toContainText('Welcome to Anagram!');
   await expect(card).toContainText('Welcome to Anagram!', { timeout: 5000 });
   await page.getByRole('button', { name: 'Go to pinned message' }).click();
   await expect(message).toHaveClass(/highlighted/);
+});
+
+test('an old pin with many edits loads from a relay that never completes its lookup', async ({
+  page,
+}) => {
+  const lookups = new Set<string>();
+  let received = 0;
+  await page.routeWebSocket(relay, (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((raw) => {
+      const frame = JSON.parse(String(raw));
+      if (frame[0] === 'REQ' && frame.slice(2).some((f: { ids?: string[] }) => f.ids))
+        lookups.add(frame[1]);
+      server.send(raw);
+    });
+    server.onMessage((raw) => {
+      const frame = JSON.parse(String(raw));
+      if (lookups.has(frame[1])) {
+        if (frame[0] === 'EOSE') return;
+        if (frame[0] === 'EVENT') received++;
+      }
+      socket.send(raw);
+    });
+  });
+  const owner = await login(page);
+  const slug = `pin-no-eose-${owner.pubkey.slice(0, 12)}`;
+  const address = `34550:${owner.pubkey}:${slug}`;
+  const now = Math.floor(Date.now() / 1000);
+  const original = finalizeEvent(
+    { kind: 9, created_at: now - 200, content: 'Original', tags: [['a', address]] },
+    owner.key,
+  );
+  let previous = original;
+  for (let n = 0; n < 12; n++) {
+    previous = finalizeEvent(
+      {
+        kind: 9,
+        created_at: original.created_at,
+        content: `Available announcement ${n}`,
+        tags: [
+          ['a', address],
+          ['e', previous.id, '', 'edit'],
+          ['e', original.id],
+        ],
+      },
+      owner.key,
+    );
+    await publish(previous);
+  }
+  for (let n = 0; n < 55; n++)
+    await publish(
+      finalizeEvent(
+        { kind: 9, created_at: now - 100 + n, content: `Recent post ${n}`, tags: [['a', address]] },
+        owner.key,
+      ),
+    );
+  await publish(
+    finalizeEvent(
+      {
+        kind: 34550,
+        created_at: now,
+        content: '',
+        tags: [
+          ['d', slug],
+          ['name', 'Pin without completion'],
+          ['anagram-room', '1'],
+          ['relay', relay],
+          ['pinned', original.id],
+        ],
+      },
+      owner.key,
+    ),
+  );
+  const link = nip19.naddrEncode({
+    kind: 34550,
+    pubkey: owner.pubkey,
+    identifier: slug,
+    relays: [relay],
+  });
+  await navigateInApp(page, `/public/${link}`);
+  const card = page.getByTestId('pinned-message');
+  await expect(card).toContainText('Available announcement', { timeout: 5000 });
+  expect(received).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Go to pinned message' }).click();
+  await expect(
+    page.getByTestId('public-message').filter({ hasText: 'Available announcement' }),
+  ).toHaveClass(/highlighted/);
+  await page.reload();
+  await expect(card).toContainText('Available announcement', { timeout: 5000 });
+  await expect(page.getByText(/Public group relay checks did not complete/)).toHaveCount(0);
 });

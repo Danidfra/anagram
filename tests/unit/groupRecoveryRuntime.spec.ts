@@ -1,3 +1,4 @@
+import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import NostrClient, { ClientEvent, NostrPrivateKeySigner } from '#src/lib/nostr/client.ts';
 import { contactsService } from '#src/services/contactsService.ts';
@@ -22,6 +23,8 @@ function fixture() {
   const events: ClientEvent[] = [];
   const storedOn = new Map<string, Set<string>>();
   const unavailable = new Set<string>();
+  const stalled = new Set<string>();
+  const stopped = vi.fn();
   const rejectWrites = new Set<string>();
   const unretained = new Set<string>();
   const persistEpoch = vi.fn(async () => {});
@@ -49,9 +52,10 @@ function fixture() {
       on: (name: string, callback: Function) => {
         listeners[name] = callback;
       },
-      stop: vi.fn(),
+      stop: stopped,
       start: () =>
         queueMicrotask(() => {
+          if (stalled.has(options.relayUrls[0])) return;
           if (unavailable.has(options.relayUrls[0])) {
             listeners.closed?.();
             return;
@@ -76,6 +80,7 @@ function fixture() {
   vi.spyOn(contactsService, 'getContactByPublicKey').mockImplementation(async () => contact);
   vi.spyOn(contactsService, 'updateContact').mockImplementation(async (_id, update) => {
     contact = { ...contact!, ...update };
+    contact.meta = inputSanitizerService.normalizeContactMetadata(contact.meta);
     return contact;
   });
   const dependencies = {
@@ -109,6 +114,8 @@ function fixture() {
     owner,
     events,
     unavailable,
+    stalled,
+    stopped,
     rejectWrites,
     unretained,
     persistEpoch,
@@ -122,6 +129,42 @@ function fixture() {
   };
 }
 describe('group recovery journal', () => {
+  it('does not let a delayed recovery read roll back a concurrent verified update', async () => {
+    const f = fixture();
+    const secret = await f.runtime.create(phrase, 'Group', '', ['wss://relay.example/']);
+    const getContact = vi.mocked(contactsService.getContactByPublicKey);
+    const original = getContact.getMockImplementation()!;
+    let resume!: () => void;
+    let reached!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    getContact.mockImplementationOnce(original).mockImplementationOnce(async (...args) => {
+      const contact = await original(...args);
+      reached();
+      await gate;
+      return contact;
+    });
+    const reading = f.runtime.current(secret.group_pubkey);
+    void reading.catch(() => {});
+    await paused;
+    let next;
+    try {
+      next = await f.runtime.update(secret.group_pubkey, [f.owner.pubkey], false, true);
+    } finally {
+      resume();
+    }
+    expect((await reading).recovery_state_id).toBe(next.recovery_state_id);
+    await expect(
+      f.runtime.assertCanSend(
+        secret.group_pubkey,
+        new NostrPrivateKeySigner(next.epoch_privkey!).pubkey,
+      ),
+    ).resolves.toBeUndefined();
+  });
   it('issues a missing owner ticket for the current epoch without changing membership or publishing a new state', async () => {
     const f = fixture();
     const secret = await f.runtime.create(phrase, 'Group', '', ['wss://relay.example/']);
@@ -170,7 +213,7 @@ describe('group recovery journal', () => {
     ).rejects.toThrow('not a group member');
     expect(f.persistEpoch).not.toHaveBeenCalled();
   });
-  it('does not issue tickets for a stale epoch or with incomplete relay coverage', async () => {
+  it('does not issue tickets for a stale epoch or when no relay completes recovery', async () => {
     const f = fixture();
     const secret = await f.runtime.create(phrase, 'Group', '', ['wss://relay.example/']);
     const oldEpoch = new NostrPrivateKeySigner(secret.epoch_privkey!).pubkey;
@@ -185,7 +228,7 @@ describe('group recovery journal', () => {
         secret.group_pubkey,
         new NostrPrivateKeySigner(next.epoch_privkey!).pubkey,
       ),
-    ).rejects.toThrow('Could not verify group state');
+    ).rejects.toThrow('No relay completed');
     expect(f.persistEpoch).not.toHaveBeenCalled();
   });
   it('returns no owner ticket for an ordinary member and cancels issuance on an account change', async () => {
@@ -213,17 +256,33 @@ describe('group recovery journal', () => {
   it('retains the latest verified state after reload even if account hydration replays an older backup', async () => {
     const f = fixture();
     const original = await f.runtime.create(phrase, 'Group', '', ['wss://relay.example/']);
-    const next = await f.runtime.update(original.group_pubkey, [f.owner.pubkey, NostrPrivateKeySigner.generate().pubkey]);
+    const next = await f.runtime.update(original.group_pubkey, [
+      f.owner.pubkey,
+      NostrPrivateKeySigner.generate().pubkey,
+    ]);
     await f.dependencies.saveContact(original.group_pubkey, JSON.stringify(original));
     const reloaded = createGroupRecoveryRuntime(f.dependencies);
-    expect((await reloaded.current(original.group_pubkey)).recovery_state_id).toBe(next.recovery_state_id);
+    expect((await reloaded.current(original.group_pubkey)).recovery_state_id).toBe(
+      next.recovery_state_id,
+    );
     await f.dependencies.saveContact(original.group_pubkey, JSON.stringify(original));
-    expect((await reloaded.secretFor(original.group_pubkey)).recovery_state_id).toBe(next.recovery_state_id);
-    await expect(reloaded.current(original.group_pubkey, original.recovery_state_id)).rejects.toThrow('state changed');
+    expect((await reloaded.secretFor(original.group_pubkey)).recovery_state_id).toBe(
+      next.recovery_state_id,
+    );
+    await expect(
+      reloaded.current(original.group_pubkey, original.recovery_state_id),
+    ).rejects.toThrow('state changed');
     // A delayed/incomplete older relay snapshot must not roll back a verified head.
-    f.events.splice(f.events.findIndex((event) => event.id === next.recovery_state_id), 1);
-    await expect(reloaded.current(original.group_pubkey)).rejects.toThrow('state changed');
-    expect((await reloaded.secretFor(original.group_pubkey)).recovery_state_id).toBe(next.recovery_state_id);
+    f.events.splice(
+      f.events.findIndex((event) => event.id === next.recovery_state_id),
+      1,
+    );
+    expect((await reloaded.current(original.group_pubkey)).recovery_state_id).toBe(
+      next.recovery_state_id,
+    );
+    expect((await reloaded.secretFor(original.group_pubkey)).recovery_state_id).toBe(
+      next.recovery_state_id,
+    );
   });
   it('recovers every epoch on a fresh account without the original owner backup', async () => {
     const f = fixture();
@@ -287,18 +346,91 @@ describe('group recovery journal', () => {
       f.events.filter((event) => event.tags.some((tag) => tag[1] === GROUP_RECOVERY_TAG)),
     ).toHaveLength(0);
   });
-  it('keeps the established relay set mandatory for co-owner updates', async () => {
+  it.each(['offline', 'stalled'])(
+    'updates membership and rotates keys with one %s replica',
+    async (failure) => {
+      const f = fixture();
+      const urls = ['wss://relay.example/', 'wss://second.example/'];
+      const group = await f.runtime.create(phrase, 'Group', '', urls);
+      const member = NostrPrivateKeySigner.generate().pubkey;
+      await f.runtime.update(group.group_pubkey, [f.owner.pubkey, member]);
+      (failure === 'stalled' ? f.stalled : f.unavailable).add(urls[1]);
+      f.rejectWrites.add(urls[1]);
+      f.publish.mockClear();
+      f.stopped.mockClear();
+      const start = Date.now();
+      const next = await f.runtime.update(group.group_pubkey, [f.owner.pubkey]);
+      expect(Date.now() - start).toBeLessThan(2500);
+      expect(next.epoch_number).toBe(1);
+      expect(next.recovery_state!.members).toEqual([f.owner.pubkey]);
+      expect(next.recovery_state!.relays).toEqual(urls);
+      expect(f.publish.mock.calls.some(([, relays]) => relays.includes(urls[1]))).toBe(true);
+      expect(f.stopped).toHaveBeenCalled();
+      // A fresh runtime must be able to restore the whole chain from the healthy replica.
+      const restored = await createGroupRecoveryRuntime(f.dependencies).inspect(phrase, urls);
+      expect(restored.heads[0].id).toBe(next.recovery_state_id);
+      // Repair a replica once it returns, using original signed history.
+      f.stalled.clear();
+      f.unavailable.clear();
+      f.rejectWrites.clear();
+      await f.runtime.refresh(group.group_pubkey);
+      const repaired = await createGroupRecoveryRuntime(f.dependencies).inspect(phrase, [urls[1]]);
+      expect(repaired.heads[0].id).toBe(next.recovery_state_id);
+    },
+  );
+
+  it('ordinary sending checks local keys without requiring a recovery relay read', async () => {
     const f = fixture();
-    const group = await f.runtime.create(phrase, 'Group', '', [
-      'wss://relay.example/',
-      'wss://second.example/',
-    ]);
-    f.unavailable.add('wss://second.example/');
+    const group = await f.runtime.create(phrase, 'Group', '', ['wss://relay.example/']);
+    f.unavailable.add('wss://relay.example/');
+    const subscribe = vi.mocked(f.dependencies.ndk.subscribe);
+    subscribe.mockClear();
+    const epoch = new NostrPrivateKeySigner(group.epoch_privkey!).pubkey;
+    await f.runtime.assertCanSend(group.group_pubkey, epoch);
+    // The same check works after a reload with the encrypted group snapshot.
+    await createGroupRecoveryRuntime(f.dependencies).assertCanSend(group.group_pubkey, epoch);
+    expect(subscribe).not.toHaveBeenCalled();
+    await expect(f.runtime.assertCanSend(group.group_pubkey, f.owner.pubkey)).rejects.toThrow(
+      'epoch changed',
+    );
+  });
+
+  it('a stalled publish cannot hold up an acknowledged update', async () => {
+    const f = fixture();
+    const urls = ['wss://relay.example/', 'wss://second.example/'];
+    const group = await f.runtime.create(phrase, 'Group', '', urls);
+    const publish = f.publish.getMockImplementation()!;
+    let release!: () => void;
+    f.publish.mockImplementation(async (event, relays) => {
+      if (relays.includes(urls[1]))
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      return publish(event, relays);
+    });
+    const next = await f.runtime.update(group.group_pubkey, [f.owner.pubkey], false, true);
+    expect(next.epoch_number).toBe(1);
+    // Delayed continuations must not publish more records under another account.
+    f.changeAccount(NostrPrivateKeySigner.generate().pubkey);
     f.publish.mockClear();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+
+  it('fails a management update if every replica rejects its publication', async () => {
+    const f = fixture();
+    const urls = ['wss://relay.example/', 'wss://second.example/'];
+    const group = await f.runtime.create(phrase, 'Group', '', urls);
+    urls.forEach((url) => f.rejectWrites.add(url));
+    f.persistEpoch.mockClear();
     await expect(
       f.runtime.update(group.group_pubkey, [f.owner.pubkey], false, true),
-    ).rejects.toThrow('Could not verify group state');
-    expect(f.publish).not.toHaveBeenCalled();
+    ).rejects.toThrow('No recovery relay saved');
+    expect(f.persistEpoch).not.toHaveBeenCalled();
+    expect((await f.runtime.secretFor(group.group_pubkey)).recovery_state_id).toBe(
+      group.recovery_state_id,
+    );
   });
   it('never replaces an existing journal while selecting initial relays', async () => {
     const f = fixture();
@@ -317,7 +449,7 @@ describe('group recovery journal', () => {
       .mockImplementationOnce(publish)
       .mockImplementationOnce(async () => ({ error: null, relayStatuses: [] }));
     await expect(f.runtime.create(phrase, 'Group', '', ['wss://relay.example/'])).rejects.toThrow(
-      'every recovery relay',
+      'No recovery relay saved',
     );
     expect(f.persistEpoch).not.toHaveBeenCalled();
   });
@@ -340,6 +472,18 @@ describe('group recovery journal', () => {
     expect(left.epoch_number).toBe(right.epoch_number);
     expect(left.epoch_privkey).not.toBe(right.epoch_privkey);
     await expect(f.runtime.assertCurrent(group.group_pubkey)).rejects.toThrow('changed');
+    await expect(
+      f.runtime.assertCanSend(
+        group.group_pubkey,
+        new NostrPrivateKeySigner(left.epoch_privkey!).pubkey,
+      ),
+    ).rejects.toThrow('state changed');
+    await expect(
+      createGroupRecoveryRuntime(f.dependencies).assertCanSend(
+        group.group_pubkey,
+        new NostrPrivateKeySigner(right.epoch_privkey!).pubkey,
+      ),
+    ).rejects.toThrow('state changed');
     await expect(f.runtime.update(group.group_pubkey, [f.owner.pubkey, a])).rejects.toThrow(
       'Conflicting group recovery updates',
     );
@@ -377,12 +521,20 @@ describe('group recovery journal', () => {
     const f = fixture();
     const group = await f.runtime.create(phrase, 'Group', '', ['wss://relay.example/']);
     await f.runtime.update(group.group_pubkey, [f.owner.pubkey], false, true);
-    const originalIds = f.events
-      .filter((event) => event.tags.some((tag) => tag[0] === 't' && tag[1] === GROUP_RECOVERY_TAG))
-      .map((event) => event.id);
+    const originalIds = [
+      ...new Set(
+        f.events
+          .filter((event) =>
+            event.tags.some((tag) => tag[0] === 't' && tag[1] === GROUP_RECOVERY_TAG),
+          )
+          .map((event) => event.id),
+      ),
+    ];
     f.publish.mockClear();
     await f.runtime.moveRelays(group.group_pubkey, ['wss://new.example/']);
-    const calls = f.publish.mock.calls;
+    const calls = f.publish.mock.calls.filter(([, relays]) =>
+      relays.includes('wss://new.example/'),
+    );
     // Relays return history newest-first; crossing a second can change its order.
     // Every original record must still be copied before the new relay announcement.
     expect(
@@ -399,6 +551,31 @@ describe('group recovery journal', () => {
     const secret = await f.runtime.secretFor(group.group_pubkey);
     expect(secret.recovery_state!.relays).toEqual(['wss://new.example/']);
     expect(secret.epoch_number).toBe(1);
+  });
+  it('moves recovery using one healthy new relay when another new replica fails', async () => {
+    const f = fixture();
+    const group = await f.runtime.create(phrase, 'Group', '', ['wss://relay.example/']);
+    f.rejectWrites.add('wss://failed.example/');
+    await f.runtime.moveRelays(group.group_pubkey, ['wss://failed.example/', 'wss://new.example/']);
+    const restored = await createGroupRecoveryRuntime(f.dependencies).inspect(phrase, [
+      'wss://new.example/',
+    ]);
+    expect(restored.heads[0].state.relays).toEqual(['wss://failed.example/', 'wss://new.example/']);
+  });
+  it('does not advertise a relay move if no new replica saves the complete history', async () => {
+    const f = fixture();
+    const group = await f.runtime.create(phrase, 'Group', '', ['wss://relay.example/']);
+    f.rejectWrites.add('wss://failed.example/');
+    f.publish.mockClear();
+    await expect(
+      f.runtime.moveRelays(group.group_pubkey, ['wss://failed.example/']),
+    ).rejects.toThrow('No recovery relay saved');
+    expect(f.publish.mock.calls.some(([, relays]) => relays.includes('wss://relay.example/'))).toBe(
+      false,
+    );
+    expect((await f.runtime.secretFor(group.group_pubkey)).recovery_state_id).toBe(
+      group.recovery_state_id,
+    );
   });
   it('follows successive signed relay moves from an original seed backup', async () => {
     const f = fixture();

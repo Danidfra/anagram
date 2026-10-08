@@ -412,6 +412,7 @@ export function createMessageMutationRuntime({
       return null;
     }
 
+    await refreshReplyPreviewsForTargetMessage(updatedRow, options);
     const uiThrottleMs = normalizeThrottleMs(options.uiThrottleMs);
     if (uiThrottleMs > 0) {
       queuePrivateMessagesUiRefresh({
@@ -779,7 +780,7 @@ export function createMessageMutationRuntime({
 
     const targetMessage =
       await chatDataService.getMessageByEventIdOrEditReference(normalizedTargetEventId);
-    if (!targetMessage) {
+    if (!targetMessage || targetMessage.chat_public_key !== chatPubkey) {
       queueMissingMessageDependencyRepair(chatPubkey, normalizedTargetEventId, {
         reason: 'reply-target-missing',
         referenceCreatedAt: options.referenceCreatedAt,

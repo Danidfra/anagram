@@ -13,6 +13,7 @@ const serviceMocks = vi.hoisted(() => ({
   chatDataService: {
     updateChat: vi.fn(async () => {}),
     applyMessageEdit: vi.fn(),
+    reconcileMessageEditPredecessor: vi.fn(),
     createChat: vi.fn(),
     createMessage: vi.fn(),
     getIncomingMessageContext: vi.fn(),
@@ -1789,5 +1790,79 @@ describe('privateMessagesIngestRuntime', () => {
       }),
     );
     expect(deps.showIncomingMessageBrowserNotification).not.toHaveBeenCalled();
+  });
+  it('reconciles a late intermediate edit without replacing newer content', async () => {
+    const deps = createDeps(),
+      runtime = createPrivateMessagesIngestRuntime(deps);
+    const sender = 'a'.repeat(64),
+      recipient = 'b'.repeat(64),
+      originalId = 'c'.repeat(64),
+      middleId = 'd'.repeat(64),
+      latestId = 'e'.repeat(64);
+    const time = '2023-11-14T22:13:20.000Z';
+    const original = {
+      id: 98,
+      chat_public_key: sender,
+      author_public_key: sender,
+      message: 'Original',
+      event_id: originalId,
+      created_at: time,
+      meta: {},
+    };
+    const latest = {
+      ...original,
+      id: 99,
+      message: 'Latest',
+      event_id: latestId,
+      meta: { edited: { editedAt: time, previousEventIds: [middleId] } },
+    };
+    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
+      id: sender,
+      public_key: sender,
+      type: 'user',
+      name: 'Alice',
+      last_message: 'Latest',
+      last_message_at: time,
+      unread_count: 0,
+      meta: {},
+    });
+    serviceMocks.chatDataService.getMessageByEventId.mockImplementation(async (id) =>
+      id === originalId ? original : id === latestId ? latest : null,
+    );
+    serviceMocks.chatDataService.getMessageByEventIdOrEditReference.mockImplementation(
+      async (id) =>
+        id === middleId ? latest : serviceMocks.chatDataService.getMessageByEventId(id),
+    );
+    serviceMocks.chatDataService.reconcileMessageEditPredecessor.mockResolvedValue(latest);
+    ndkMocks.giftUnwrap.mockResolvedValue(
+      makeRumorEvent({
+        recipientPubkey: recipient,
+        senderPubkey: sender,
+        eventId: middleId,
+        content: 'Middle',
+        tags: [
+          ['p', recipient],
+          ['e', originalId, '', 'edit'],
+        ],
+      }),
+    );
+    await runtime.queuePrivateMessageIngestion(makeWrappedEvent(), recipient, { uiThrottleMs: 25 });
+    await runtime.getPrivateMessagesIngestQueue();
+    expect(serviceMocks.chatDataService.reconcileMessageEditPredecessor).toHaveBeenCalledWith(
+      latest.id,
+      {
+        eventId: middleId,
+        previousEventId: originalId,
+        chat: sender,
+        author: sender,
+        createdAt: time,
+      },
+    );
+    expect(serviceMocks.chatDataService.applyMessageEdit).not.toHaveBeenCalled();
+    expect(deps.logInboundEvent).toHaveBeenCalledWith(
+      'message-persisted',
+      expect.objectContaining({ persistence: 'ignored-edit-predecessor' }),
+    );
+    runtime.resetPrivateMessagesIngestRuntimeState();
   });
 });

@@ -49,6 +49,8 @@ export interface ContactMetadata {
   blocked?: boolean;
   blocked_at?: string;
   group_private_key_encrypted?: string;
+  // Locally observed recovery branches that must survive reloads.
+  group_recovery_conflicts?: string[];
   owner_public_key?: string;
   group_members?: ContactGroupMember[];
 }

@@ -463,6 +463,13 @@ class InputSanitizerService {
     if (groupPrivateKeyEncrypted) {
       meta.group_private_key_encrypted = groupPrivateKeyEncrypted;
     }
+    if (Array.isArray(value.group_recovery_conflicts)) {
+      meta.group_recovery_conflicts = [...new Set(
+        value.group_recovery_conflicts.slice(0, 4096).filter(
+          (id): id is string => typeof id === 'string' && /^[a-f0-9]{64}$/.test(id)
+        )
+      )];
+    }
 
     if (ownerPublicKey) {
       meta.owner_public_key = ownerPublicKey;

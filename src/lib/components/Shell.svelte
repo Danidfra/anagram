@@ -38,7 +38,7 @@
   import GroupSeedBackup from './GroupSeedBackup.svelte';
   import GroupRestore from './GroupRestore.svelte';
   let groupFlow: 'choose' | 'details' | 'backup' | 'restore' = 'choose';
-  import { onMount, tick } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { locale, translate } from '#src/i18n.ts';
   import { goto } from '$app/navigation';
   import { page as routeState } from '$app/state';
@@ -52,7 +52,12 @@
   import { useCallStore } from '#src/stores/callStore.ts';
   import { useCallRoomStore } from '#src/stores/callRoomStore.ts';
   import { contactsService } from '#src/services/contactsService.ts';
-  import { uploadBlossomMedia } from '#src/services/blossomUploadService.ts';
+  import {
+    createComposerUpload,
+    appendUploadLink,
+    draftAttachments,
+  } from '#src/lib/state/composerUpload.ts';
+  import type { MessageAttachmentMetadata } from '#src/types/chat.ts';
   import { getPublicProfile, type PublicProfile } from '#src/lib/state/publicProfiles.ts';
   import { observe } from '#src/lib/state/store.ts';
   import {
@@ -207,7 +212,35 @@
   let fileInput: HTMLInputElement;
   let composerInput: HTMLTextAreaElement;
   let attachmentMenu = false;
-  let pendingFile: File | null = null;
+  const uploadedAttachments = new Map<string, MessageAttachmentMetadata[]>();
+  const uploadContext = () => `${nostr.getLoggedInPublicKeyHex()}:${$state.selected?.id ?? ''}`;
+  const uploader = createComposerUpload({
+    context: uploadContext,
+    serverUrl: () => nostr.getBlossomServerUrl(),
+    signUploadAuthHeader: nostr.signBlossomUploadAuthHeader,
+    uploaded: (attachment) => {
+      const key = uploadContext();
+      uploadedAttachments.set(key, [...(uploadedAttachments.get(key) ?? []), attachment]);
+      draft = appendUploadLink(draft, attachment.url);
+      chats.setComposerDraft(currentId, draft);
+      if (fileInput) fileInput.value = '';
+      modal = '';
+      void tick().then(() => composerInput?.focus());
+    },
+    error: fail,
+  });
+  const uploadState = uploader.state;
+  $: {
+    $state.selected?.id;
+    uploader.checkContext();
+  }
+  $: if (modal === 'upload' && !$uploadState.file) modal = '';
+  onDestroy(() => uploader.cancel());
+  function cancelUpload() {
+    uploader.cancel();
+    modal = '';
+    if (fileInput) fileInput.value = '';
+  }
   let inspectedMessage: Message | null = null;
   let contextMessage = '';
   let contextPosition = { x: 0, y: 0 };
@@ -576,6 +609,8 @@
     if (!chat || !draft.trim() || busy) return;
     busy = true;
     const text = serializeMentionDraft(draft, mentionProfiles);
+    const uploadKey = uploadContext();
+    const attachments = draftAttachments(text, uploadedAttachments.get(uploadKey));
     const editedMessage = editing;
     const originalReply = reply;
     draft = '';
@@ -583,7 +618,8 @@
     nearBottom = true;
     try {
       if (editedMessage) await messages.editMessage(chat.id, editedMessage.id, text);
-      else await messages.sendMessage(chat.id, text, originalReply);
+      else await messages.sendMessage(chat.id, text, originalReply, { attachments });
+      uploadedAttachments.delete(uploadKey);
       if (currentId === chat.id) {
         if (editedMessage) finishEditing();
         else reply = null;
@@ -597,6 +633,7 @@
           await contactsService.updateSendMessagesToAppRelays(chat.publicKey, true);
           await messages.sendMessage(chat.id, text, reply, {
             relayUrls: relays.relays,
+            attachments,
             continueFromMessageId: e.localMessageId ?? undefined,
           });
         } catch (cause) {
@@ -868,29 +905,8 @@
   }
   function prepareUpload(file?: File) {
     if (!file || !$state.selected || busy) return;
-    pendingFile = file;
+    uploader.choose(file);
     modal = 'upload';
-  }
-  async function commitUpload() {
-    const file = pendingFile,
-      chat = $state.selected;
-    if (!file || !chat) return;
-    busy = true;
-    try {
-      const result = await uploadBlossomMedia(file, {
-        serverUrl: nostr.getBlossomServerUrl(),
-        signUploadAuthHeader: nostr.signBlossomUploadAuthHeader,
-      });
-      await messages.sendMediaAttachment(chat.id, result.attachment, reply);
-      reply = null;
-      modal = '';
-      pendingFile = null;
-    } catch (e) {
-      fail(e);
-    } finally {
-      busy = false;
-      fileInput.value = '';
-    }
   }
   function openRequests() {
     menu = false;
@@ -1290,10 +1306,11 @@
           privateGroup={$state.selected.type === 'group'}
           onopen={openProfile}
           oncopy={$state.selected.type === 'user'
-            ? () => void act(async () => {
-                await navigator.clipboard.writeText(nostr.encodeNpub($state.selected!.publicKey));
-                Notify.create({ message: $translate('common.copiedLabel', { label: 'npub' }) });
-              })
+            ? () =>
+                void act(async () => {
+                  await navigator.clipboard.writeText(nostr.encodeNpub($state.selected!.publicKey));
+                  Notify.create({ message: $translate('common.copiedLabel', { label: 'npub' }) });
+                })
             : undefined}
           onback={() => {
             mobileThread = false;
@@ -1335,7 +1352,7 @@
             >
           {/snippet}
         </ThreadHeader>
-        {#if groupPin?.group === pinGroup && groupPin?.eventId && !groupPin.deleted}
+        {#if groupPin?.group === pinGroup && groupPin?.eventId}
           <PinnedMessage
             text={groupPin.text}
             onopen={() => void openPinnedMessage()}
@@ -1380,9 +1397,14 @@
         >
           {#if $state.selected.type === 'user' && $state.selected.publicKey === nostr.getLoggedInPublicKeyHex() && !$state.thread.pagination?.hasOlder && !loadingOlder}
             <blockquote class="self-chat-quote">
-              <i>“I often have long conversations with myself, and I am so clever that sometimes I
-              don't understand a single word of what I am saying”</i>
-              <br><br><small>DMs to yourself are end-to-end encrypted with no metadata exposed, just like DMs to others.</small>
+              <i
+                >“I often have long conversations with myself, and I am so clever that sometimes I
+                don't understand a single word of what I am saying”</i
+              >
+              <br /><br /><small
+                >DMs to yourself are end-to-end encrypted with no metadata exposed, just like DMs to
+                others.</small
+              >
             </blockquote>
           {/if}
           {#each $state.thread.items as message, index (message.id)}
@@ -1518,7 +1540,7 @@
                   ? 'Group call'
                   : $state.selected?.name}
       label={modal}
-      onclose={() => (modal = '')}
+      onclose={() => (modal === 'upload' ? cancelUpload() : (modal = ''))}
     >
       {#if modal === 'info' && inspectedMessage}<MessageInfo
           message={inspectedMessage}
@@ -1536,14 +1558,11 @@
           }}
         />
       {:else if modal === 'upload'}<MediaUploadConfirmation
-          fileName={pendingFile?.name ?? ''}
+          fileName={$uploadState.file?.name ?? ''}
           serverUrl={nostr.getBlossomServerUrl()}
-          {busy}
-          oncancel={() => {
-            pendingFile = null;
-            modal = '';
-          }}
-          onconfirm={() => void commitUpload()}
+          busy={$uploadState.busy}
+          oncancel={cancelUpload}
+          onconfirm={() => void uploader.upload()}
         />
       {:else if modal === 'contact'}<label
           >Public key or NIP-05 address<input

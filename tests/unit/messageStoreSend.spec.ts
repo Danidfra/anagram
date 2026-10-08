@@ -1,3 +1,4 @@
+import { UNKNOWN_REPLY_MESSAGE_TEXT } from '#src/stores/nostr/constants.ts';
 import { createPinia, setActivePinia } from '#src/lib/state/store.ts';
 import { MissingContactRelaysError, useMessageStore } from '#src/stores/messageStore.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +12,7 @@ const serviceMocks = vi.hoisted(() => ({
     createMessage: vi.fn(),
     getChatByPublicKey: vi.fn(),
     getMessageById: vi.fn(),
+    getMessageByEventIdOrEditReference: vi.fn().mockResolvedValue(null),
     listLatestMessages: vi.fn(),
     init: vi.fn().mockResolvedValue(undefined),
   },
@@ -117,6 +119,7 @@ describe('messageStore send', () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     serviceMocks.chatDataService.init.mockResolvedValue(undefined);
+    serviceMocks.chatDataService.getMessageByEventIdOrEditReference.mockResolvedValue(null);
     serviceMocks.contactsService.init.mockResolvedValue(undefined);
     serviceMocks.nostrEventDataService.init.mockResolvedValue(undefined);
     serviceMocks.nostrEventDataService.getEventById.mockResolvedValue(null);
@@ -173,6 +176,66 @@ describe('messageStore send', () => {
       ),
     );
     expect(serviceMocks.chatDataService.listLatestMessages).toHaveBeenCalledWith(CHAT_ID, 50);
+  });
+
+  it.each(['deleted', 'another chat'])(
+    'sanitizes cached quotes when the parent is %s',
+    async (reason) => {
+      const target = 'd'.repeat(64);
+      const reply = {
+        eventId: target,
+        messageId: target,
+        authorPublicKey: AUTHOR_PUBLIC_KEY,
+        text: 'Old confidential text',
+        imageUrl: 'https://media.example/old.png',
+        sender: 'them',
+      };
+      serviceMocks.chatDataService.listLatestMessages.mockResolvedValue({
+        rows: [makeMessageRow({ meta: { reply } })],
+        has_more: false,
+      });
+      serviceMocks.chatDataService.getMessageByEventIdOrEditReference.mockResolvedValue(
+        makeMessageRow({
+          event_id: target,
+          chat_public_key: reason === 'another chat' ? 'e'.repeat(64) : CHAT_ID,
+          meta: reason === 'deleted' ? { deleted: true } : {},
+        }),
+      );
+      const store = useMessageStore();
+      await store.loadMessages(CHAT_ID);
+      const preview = store.getMessages(CHAT_ID)[0].meta.reply;
+      expect(preview?.text).toBe(
+        reason === 'deleted' ? 'Message deleted' : UNKNOWN_REPLY_MESSAGE_TEXT,
+      );
+      expect(preview?.imageUrl).toBeUndefined();
+      if (reason === 'another chat') expect(preview?.authorPublicKey).toBeUndefined();
+      expect(serviceMocks.chatDataService.getMessageByEventIdOrEditReference).toHaveBeenCalledWith(
+        target,
+      );
+      expect(serviceMocks.chatDataService.listLatestMessages).toHaveBeenCalledWith(CHAT_ID, 50);
+    },
+  );
+
+  it('publishes a caption and uploaded media together with attachment metadata', async () => {
+    const attachment = { url: 'https://media.example/image.png', mimeType: 'image/png', size: 4 };
+    const text = `A caption\n${attachment.url}`;
+    await useMessageStore().sendMessage(CHAT_ID, text, undefined, { attachments: [attachment] });
+    expect(serviceMocks.chatDataService.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: text,
+        meta: expect.objectContaining({ attachments: [attachment] }),
+      }),
+    );
+    expect(serviceMocks.nostrStore.sendDirectMessage).toHaveBeenCalledWith(
+      CHAT_ID,
+      text,
+      expect.any(Array),
+      expect.objectContaining({
+        additionalTags: [
+          expect.arrayContaining(['imeta', `url ${attachment.url}`, 'm image/png', 'size 4']),
+        ],
+      }),
+    );
   });
 
   afterEach(() => {

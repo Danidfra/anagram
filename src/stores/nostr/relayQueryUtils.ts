@@ -15,7 +15,7 @@ type RelayQueryNdk = Pick<NostrClient, 'fetchEvent' | 'fetchEvents' | 'subscribe
 type RelayQuerySubscriptionOptions = Omit<
   NostrSubscriptionOptions,
   'closeOnEose' | 'onEose' | 'onEvent' | 'onEvents' | 'relaySet' | 'relayUrls'
->;
+> & { allowPartialResults?: boolean };
 
 export class RelayQueryUnavailableError extends Error {
   constructor() {
@@ -46,7 +46,7 @@ function isNdkRelayConnected(ndk: Pick<NostrClient, 'pool'>, relayUrl: string): 
 
 export function createReadyRelaySet(ndk: NostrClient, relayUrls: string[]): NostrRelaySet | null {
   const readyRelayUrls = selectReadyRelayUrls(relayUrls, (relayUrl) =>
-    isNdkRelayConnected(ndk, relayUrl)
+    isNdkRelayConnected(ndk, relayUrl),
   );
   if (readyRelayUrls.length > 0) {
     return NostrRelaySet.fromRelayUrls(readyRelayUrls, ndk, false);
@@ -77,7 +77,7 @@ function runLegacyQueryWithTimeout<T>(promise: Promise<T>, timeoutMs: number): P
       (error: unknown) => {
         globalThis.clearTimeout(timeoutId);
         reject(error);
-      }
+      },
     );
   });
 }
@@ -87,7 +87,7 @@ function fetchRelayEventsWithSubscription(
   filters: NostrFilter | NostrFilter[],
   opts: RelayQuerySubscriptionOptions | undefined,
   relaySet: NostrRelaySet,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<Set<ClientEvent>> {
   return new Promise<Set<ClientEvent>>((resolve, reject) => {
     const eventsByDeduplicationKey = new Map<string, ClientEvent>();
@@ -109,7 +109,9 @@ function fetchRelayEventsWithSubscription(
 
       settled = true;
       subscription?.stop();
-      reject(new RelayQueryTimeoutError(timeoutMs));
+      if (opts?.allowPartialResults && eventsByDeduplicationKey.size)
+        resolve(new Set(eventsByDeduplicationKey.values()));
+      else reject(new RelayQueryTimeoutError(timeoutMs));
     }, timeoutMs);
 
     const finish = (): void => {
@@ -123,8 +125,9 @@ function fetchRelayEventsWithSubscription(
     };
 
     try {
+      const { allowPartialResults: _partial, ...subscriptionOptions } = opts ?? {};
       subscription = ndk.subscribe(filters, {
-        ...opts,
+        ...subscriptionOptions,
         closeOnEose: true,
         relaySet,
         onEvents: (events) => {
@@ -146,7 +149,7 @@ async function fetchRelayEventsWithTimeout(
   filters: NostrFilter | NostrFilter[],
   opts: RelayQuerySubscriptionOptions | undefined,
   relaySet: NostrRelaySet | null | undefined,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<Set<ClientEvent>> {
   if (!relaySet || relaySet.size === 0) {
     throw new RelayQueryUnavailableError();
@@ -169,7 +172,7 @@ export async function fetchEventWithRelayTimeout(
   filter: string | NostrFilter | NostrFilter[],
   opts: RelayQuerySubscriptionOptions | undefined,
   relaySet: NostrRelaySet | null | undefined,
-  timeoutMs = RELAY_QUERY_TIMEOUT_MS
+  timeoutMs = RELAY_QUERY_TIMEOUT_MS,
 ): Promise<ClientEvent | null> {
   if (!relaySet || relaySet.size === 0) {
     throw new RelayQueryUnavailableError();
@@ -190,7 +193,7 @@ export async function fetchEventWithRelayTimeout(
     filters,
     opts,
     relaySet,
-    normalizedTimeoutMs
+    normalizedTimeoutMs,
   );
   let newestEvent: ClientEvent | null = null;
   for (const event of events) {
@@ -207,7 +210,7 @@ export async function fetchEventsWithRelayTimeout(
   filters: NostrFilter | NostrFilter[],
   opts: RelayQuerySubscriptionOptions | undefined,
   relaySet: NostrRelaySet | null | undefined,
-  timeoutMs = RELAY_QUERY_TIMEOUT_MS
+  timeoutMs = RELAY_QUERY_TIMEOUT_MS,
 ): Promise<Set<ClientEvent>> {
   return fetchRelayEventsWithTimeout(ndk, filters, opts, relaySet, timeoutMs);
 }

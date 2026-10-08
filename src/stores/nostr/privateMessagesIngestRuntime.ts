@@ -871,9 +871,16 @@ export function createPrivateMessagesIngestRuntime({
         epochPublicKey ?? '',
       );
       if (conflictingEpochNumber) {
-        if (existingGroupChat) await chatDataService.updateChat(senderPubkeyHex, { meta: {
-          ...existingGroupChat.meta, group_conflicting_epoch: Math.max(Number(existingGroupChat.meta.group_conflicting_epoch ?? -1), epochNumber),
-        } });
+        if (existingGroupChat)
+          await chatDataService.updateChat(senderPubkeyHex, {
+            meta: {
+              ...existingGroupChat.meta,
+              group_conflicting_epoch: Math.max(
+                Number(existingGroupChat.meta.group_conflicting_epoch ?? -1),
+                epochNumber,
+              ),
+            },
+          });
         logConflictingIncomingEpochNumber(
           senderPubkeyHex,
           epochNumber,
@@ -1106,12 +1113,30 @@ export function createPrivateMessagesIngestRuntime({
       const existingEditedMessage = existingOrEditedMessage;
       if (
         existingEditedMessage &&
+        existingEditedMessage.chat_public_key === chatPubkey &&
+        existingEditedMessage.author_public_key === senderPubkeyHex &&
+        isSameNostrSecond(
+          existingEditedMessage.created_at,
+          toIsoTimestampFromUnix(rumorEvent.created_at),
+        ) &&
         messageEditReferencesEventId(existingEditedMessage.meta, rumorEventId)
       ) {
-        let refreshedEditedMessage = await applyPendingIncomingReactionsForMessage(
-          existingEditedMessage,
-          { uiThrottleMs },
-        );
+        const previousEventId = readMessageEditTargetEventId(rumorEvent.tags);
+        const reconciled = previousEventId
+          ? await chatDataService.reconcileMessageEditPredecessor(existingEditedMessage.id, {
+              eventId: rumorEventId,
+              previousEventId,
+              chat: chatPubkey,
+              author: senderPubkeyHex,
+              createdAt: toIsoTimestampFromUnix(rumorEvent.created_at),
+            })
+          : existingEditedMessage;
+        if (!reconciled) throw new Error('Could not reconcile the message edit.');
+        if (previousEventId)
+          queuePrivateMessagesUiRefresh({ throttleMs: uiThrottleMs, reloadMessages: true });
+        let refreshedEditedMessage = await applyPendingIncomingReactionsForMessage(reconciled, {
+          uiThrottleMs,
+        });
         refreshedEditedMessage = await applyPendingIncomingDeletionsForMessage(
           refreshedEditedMessage,
           { uiThrottleMs },

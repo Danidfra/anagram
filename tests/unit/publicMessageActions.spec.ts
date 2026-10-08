@@ -1,7 +1,11 @@
 import { expect, it } from 'vitest';
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools';
 import { parsePublicRoom, roomTags } from '#src/stores/nostr/publicGroups.ts';
-import { publicMessageState, validPublicAction } from '#src/stores/nostr/publicMessageActions.ts';
+import {
+  publicMessageState,
+  publicMessageReference,
+  validPublicAction,
+} from '#src/stores/nostr/publicMessageActions.ts';
 
 function fixture() {
   const owner = generateSecretKey(),
@@ -160,4 +164,53 @@ it('redacts untrusted edited content and reply previews, including blocked and d
   expect(
     publicMessageState({ ...root, activity: [edit] }, { ...room, owner: getPublicKey(other) }).text,
   ).toBe('updated [link removed]');
+});
+
+it('resolves edited references only within their room and expected author', () => {
+  const { root, room, other, action } = fixture();
+  const edited = action(9, 'edited', [['e', root.id, '', 'edit']]);
+  const impostor = action(9, 'impostor', [['e', root.id, '', 'edit']], other);
+  expect(publicMessageReference([impostor], root.id, room.address)).toBeUndefined();
+  expect(publicMessageReference([edited], root.id, room.address, root.pubkey)?.id).toBe(edited.id);
+  expect(publicMessageReference([edited], root.id, `${room.address}-other`)).toBeUndefined();
+  expect(
+    publicMessageReference([edited], root.id, room.address, getPublicKey(other)),
+  ).toBeUndefined();
+  expect(
+    publicMessageReference([{ ...edited, content: 'invalid signature' }], root.id, room.address),
+  ).toBeUndefined();
+  expect(publicMessageReference([edited, impostor], root.id, room.address)).toBeUndefined();
+  expect(publicMessageReference([edited, impostor], root.id, room.address, root.pubkey)?.id).toBe(
+    edited.id,
+  );
+  // A claimed replacement cannot override the actual original's author.
+  expect(
+    publicMessageReference([root, impostor], root.id, room.address, getPublicKey(other)),
+  ).toBeUndefined();
+});
+
+it('applies reply trust, author and deletion rules to edited parents', () => {
+  const { root, room, other, action } = fixture();
+  const parent = action(
+    9,
+    'updated https://hidden.example/test',
+    [['e', root.id, '', 'edit']],
+    other,
+  );
+  const reply = action(9, 'reply', [['q', root.id, '', parent.pubkey]]);
+  expect(publicMessageState({ ...reply, replyEvent: parent }, room).meta.reply?.text).toBe(
+    'updated [link removed]',
+  );
+  expect(
+    publicMessageState({ ...reply, replyEvent: parent }, { ...room, blocked: [parent.pubkey] }).meta
+      .reply?.text,
+  ).toBe('Message unavailable');
+  const wrongAuthor = action(9, 'reply', [['q', root.id, '', root.pubkey]]);
+  expect(publicMessageState({ ...wrongAuthor, replyEvent: parent }, room).meta.reply?.text).toBe(
+    'Message unavailable',
+  );
+  const removed = { ...parent, activity: [action(5, '', [['e', parent.id]], other)] };
+  expect(publicMessageState({ ...reply, replyEvent: removed }, room).meta.reply?.text).toBe(
+    'Message deleted',
+  );
 });

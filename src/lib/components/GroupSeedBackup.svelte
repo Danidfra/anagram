@@ -63,7 +63,8 @@
     <h3>Keep your group recoverable</h3>
     <p>
       These 12 words restore ownership and your group’s message keys. Anyone with a copy can manage
-      the group and read its available history. Keep them private.
+      the group and read its available history. We recommend one owner per group. Keep these words
+      private to avoid conflicting changes.
     </p>
     <ol class="words" aria-label="Recovery words">
       {#each words as word, i}<li><span>{i + 1}</span><strong>{word}</strong></li>{/each}

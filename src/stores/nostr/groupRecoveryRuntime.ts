@@ -21,6 +21,8 @@ import {
   type GroupRecoveryRecord,
 } from './groupRecovery.ts';
 
+class RecoveryUnavailableError extends Error {}
+
 interface Dependencies {
   ndk: NostrClient;
   account: () => string | null;
@@ -61,12 +63,15 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
   // Contact/profile hydration may replay an older encrypted account snapshot.
   // Keep the locally verified journal baseline separately (never cache the master).
   const installed = new Map<string, GroupRecoveryRecord>();
+  // Verified journal records survive lagging replicas within this account session.
+  const observed = new Map<string, Map<string, GroupRecoveryRecord>>();
   let installedAccount: string | null = null;
   function session() {
     const account = d.account();
     if (!account) throw new Error('Sign in before managing a group.');
     if (installedAccount !== account) {
       installed.clear();
+      observed.clear();
       installedAccount = account;
     }
     return () => {
@@ -121,16 +126,18 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     const record = installed.get(group);
     return record ? secretFromState(secret.recovery_entropy, record) : secret;
   }
-  // A timeout/closed socket is not EOSE. Management reads must cover every
-  // configured journal relay; otherwise a newer removal could be missed.
+  // Require real EOSE from responding replicas; an unavailable replica is not
+  // evidence that history is empty and does not veto another completed read.
   async function page(
     group: string,
     relay: string,
     until: number | undefined,
     limit: number,
     probeId?: string,
+    signal?: AbortSignal,
   ) {
     return new Promise<ClientEvent[]>((resolve, reject) => {
+      if (signal?.aborted) return reject(new RecoveryUnavailableError('Recovery read cancelled.'));
       const events = new Map<string, ClientEvent>();
       const sub = d.ndk.subscribe(
         {
@@ -149,10 +156,13 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
         sub.stop();
         if (error) reject(error);
         else resolve([...events.values()]);
       };
+      const abort = () => finish(new RecoveryUnavailableError('Recovery read cancelled.'));
+      signal?.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(
         () =>
           finish(
@@ -185,73 +195,81 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
   async function fetchRecords(
     entropy: string,
     urls: string[],
-    requireAll = true,
     completed?: Set<string>,
+    allowEmpty = false,
   ) {
     const check = session();
     const signer = new NostrPrivateKeySigner(deriveGroupIdentityKey(entropy), d.ndk);
     await d.connect(relays(urls));
     check();
     const events = new Map<string, ClientEvent>();
-    const results = await Promise.allSettled(
-      relays(urls).map(async (relay) => {
-        let until: number | undefined;
-        let limit = 128;
-        const seen = new Set<string>();
-        for (;;) {
-          check();
-          let batch: ClientEvent[];
-          for (let attempt = 0; ; attempt++) {
-            try {
-              batch = await page(signer.pubkey, relay, until, limit);
-              break;
-            } catch (error) {
-              if (
-                attempt >= 2 ||
-                !(error instanceof Error) ||
-                !error.message.includes('relay is unavailable')
-              )
-                throw error;
-              // A user retry can race the socket's close notification. Give the
-              // existing connection guard a chance to reconnect; never infer EOSE.
-              await new Promise((resolve) => setTimeout(resolve, attempt ? 1000 : 250));
-              check();
-            }
-          }
-          check();
-          let fresh = 0;
-          for (const event of batch) {
-            if (!seen.has(event.id)) fresh++;
-            seen.add(event.id);
-            events.set(event.id, event);
-          }
-          if (batch.length < limit) break;
-          const oldest = Math.min(...batch.map((e) => e.created_at));
-          if (oldest === until || fresh === 0) {
-            if (limit >= 8192)
-              throw new Error(
-                'Too many group updates at the same timestamp. Recovery cannot establish complete history.',
-              );
-            limit *= 2;
-          } else {
-            until = oldest;
-            limit = 128;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let ready!: () => void;
+    const available = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    let finished = 0;
+    const reads = relays(urls).map(async (relay) => {
+      let until: number | undefined;
+      let limit = 128;
+      const seen = new Set<string>();
+      for (;;) {
+        check();
+        let batch: ClientEvent[];
+        for (let attempt = 0; ; attempt++) {
+          try {
+            batch = await page(signer.pubkey, relay, until, limit, undefined, controller.signal);
+            break;
+          } catch (error) {
+            if (
+              controller.signal.aborted ||
+              attempt >= 2 ||
+              !(error instanceof Error) ||
+              !error.message.includes('relay is unavailable')
+            )
+              throw error;
+            // Keep the existing reconnect allowance, without holding up a healthy replica.
+            await new Promise((resolve) => setTimeout(resolve, attempt ? 1000 : 250));
+            check();
+            if (controller.signal.aborted) throw error;
+            await d.connect([relay]);
           }
         }
-        completed?.add(relay);
-      }),
-    );
+        check();
+        let fresh = 0;
+        for (const event of batch) {
+          if (!seen.has(event.id)) fresh++;
+          seen.add(event.id);
+          events.set(event.id, event);
+        }
+        if (batch.length < limit) break;
+        const oldest = Math.min(...batch.map((e) => e.created_at));
+        if (oldest === until || fresh === 0) {
+          if (limit >= 8192)
+            throw new Error(
+              'Too many group updates at the same timestamp. Recovery history is incomplete.',
+            );
+          limit *= 2;
+        } else {
+          until = oldest;
+          limit = 128;
+        }
+      }
+      completed?.add(relay);
+      finished++;
+      // Give other healthy replicas a short chance to contribute known conflicts.
+      // Empty replies do not outrun a replica that actually holds this group.
+      if ((seen.size || allowEmpty) && timer === undefined) timer = setTimeout(ready, 300);
+    });
+    await Promise.race([Promise.allSettled(reads), available]);
+    if (timer !== undefined) clearTimeout(timer);
+    controller.abort();
     check();
-    if (
-      (requireAll && results.some((r) => r.status === 'rejected')) ||
-      results.every((r) => r.status === 'rejected')
-    ) {
-      throw new Error(
-        requireAll
-          ? 'Could not verify group state on its recovery relays. Retry before changing membership.'
-          : 'No relay completed the group recovery check. Check your relay connections and try again.',
+    if (!finished)
+      throw new RecoveryUnavailableError(
+        'No relay completed the group recovery check. Check your relay connections and try again.',
       );
-    }
     const records: GroupRecoveryRecord[] = [];
     for (const event of events.values()) {
       const content = await signer.decrypt(
@@ -269,21 +287,52 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
       }
       records.push({ id: event.id, state, event: event.rawEvent() });
     }
-    recoveryHeads(records); // Verify parent closure, even for a read-only restore.
-    return records;
+    const contact = await contactsService.getContactByPublicKey(signer.pubkey);
+    check();
+    // Merge after the asynchronous contact read: another operation may have
+    // verified a newer revision while this read was waiting on storage.
+    const merged = new Map(observed.get(signer.pubkey));
+    for (const record of records) merged.set(record.id, record);
+    const verified = [...merged.values()];
+    const heads = recoveryHeads(verified); // Still require a complete, signed chain back to genesis.
+    const knownConflicts = contact?.meta.group_recovery_conflicts ?? [];
+    if (knownConflicts.some((id) => !merged.has(id)))
+      throw new Error(
+        'Known conflicting group recovery records are missing. Refresh recovery using another relay.',
+      );
+    // Publish the merged graph before yielding again, so overlapping reads
+    // cannot replace it with an older snapshot.
+    observed.set(signer.pubkey, merged);
+    if (contact && (heads.length > 1 || knownConflicts.length)) {
+      await contactsService.updateContact(contact.id, {
+        metaBase: contact.meta,
+        meta: {
+          ...contact.meta,
+          group_recovery_conflicts: heads.length > 1 ? heads.map((head) => head.id) : [],
+        },
+      });
+      check();
+    }
+    return [...observed.get(signer.pubkey)!.values()];
   }
-  async function readJournal(entropy: string, initial: string[], requireInitial = true) {
-    let records = await fetchRecords(entropy, initial, requireInitial);
+  async function readJournal(entropy: string, initial: string[]) {
+    let records = await fetchRecords(entropy, initial);
     // Old backup files and account snapshots can point several moves behind.
     // Preserve every observed branch while following signed relay pointers.
-    const visited = new Set<string>();
+    const visited = new Set<string>([JSON.stringify(relays(initial).sort())]);
     for (let hop = 0; hop < 32; hop++) {
       const urls = [...new Set(recoveryHeads(records).flatMap((r) => r.state.relays))].sort();
       if (!urls.length) return records;
       const key = JSON.stringify(urls);
       if (visited.has(key)) return records;
       visited.add(key);
-      const next = await fetchRecords(entropy, urls);
+      let next: GroupRecoveryRecord[];
+      try {
+        next = await fetchRecords(entropy, urls);
+      } catch (error) {
+        if (error instanceof RecoveryUnavailableError && records.length) return records;
+        throw error;
+      }
       records = [...new Map([...records, ...next].map((record) => [record.id, record])).values()];
     }
     throw new Error('Too many group relay changes to verify safely. Use a recent recovery backup.');
@@ -292,6 +341,7 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     entropy: string,
     state: GroupRecoveryState,
     additionalRelays: string[] = [],
+    historical: GroupRecoveryRecord[] = [],
   ): Promise<GroupRecoveryRecord> {
     const check = session();
     normalizeRecoveryState(state);
@@ -312,21 +362,24 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     });
     check();
     await event.sign(signer);
-    const targets = relays([...state.relays, ...additionalRelays]);
-    const result = await d.publish(event, targets, 'self');
+    const record = { id: event.id, state, event: event.rawEvent() };
+    const chain = [...historical, record];
+    // Try every replica. At least one current recovery relay must acknowledge
+    // the whole chain, not different fragments scattered across different relays.
+    await replicate(chain, state.relays);
     check();
-    const accepted = new Set(
-      result.relayStatuses
-        .filter((s) => s.status === 'published')
-        .map((s) => new URL(s.relay_url).href),
-    );
-    if (targets.some((r) => !accepted.has(new URL(r).href))) {
-      throw new Error(
-        'The group update has not reached every recovery relay. Refresh group recovery before retrying; invitations were not sent.',
-      );
-    }
-    return { id: event.id, state, event: event.rawEvent() };
+    // Advertise a move on old relays only after a new relay holds the full chain.
+    const previous = additionalRelays.filter((url) => !state.relays.includes(url));
+    if (previous.length)
+      void replicate(chain, previous).catch(() => {
+        /* Best-effort pointers. */
+      });
+    const merged = new Map(observed.get(signer.pubkey));
+    for (const entry of chain) merged.set(entry.id, entry);
+    observed.set(signer.pubkey, merged);
+    return record;
   }
+
   function secretFromState(
     entropy: string,
     record: GroupRecoveryRecord,
@@ -352,6 +405,8 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
   ) {
     const check = session();
     const secret = secretFromState(entropy, record);
+    const graph = observed.get(secret.group_pubkey);
+    const heads = recoveryHeads(graph ? [...graph.values()] : [record, ...historical]);
     const ciphertext = await d.encrypt(secret);
     check();
     await d.saveContact(secret.group_pubkey, ciphertext, secret);
@@ -364,6 +419,7 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
         relays: record.state.relays.map((url) => ({ url, read: true, write: true })),
         meta: {
           ...contact.meta,
+          group_recovery_conflicts: heads.length > 1 ? heads.map((head) => head.id) : [],
           group_members: record.state.members
             .filter((p) => p !== d.account())
             .map((public_key) => ({ public_key, name: '', given_name: '', picture: '' })),
@@ -375,11 +431,7 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
       ...historical.filter((r) => r.id !== record.id).sort((a, b) => b.state.epoch - a.state.epoch),
     ]) {
       check();
-      const epochKey = deriveGroupEpochKey(
-        entropy,
-        entry.state.epoch,
-        entry.state.epoch_revision,
-      );
+      const epochKey = deriveGroupEpochKey(entropy, entry.state.epoch, entry.state.epoch_revision);
       // Master recovery grants reading keys. Only an explicitly listed member gets a posting ticket.
       const account = d.account();
       let ticket: ClientEvent | null = null;
@@ -424,7 +476,7 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
   async function selectCreationRelays(entropy: string, candidates: string[]) {
     const check = session();
     const readable = new Set<string>();
-    const existing = await fetchRecords(entropy, candidates, false, readable);
+    const existing = await fetchRecords(entropy, candidates, readable, true);
     if (existing.length)
       throw new Error('This recovery phrase already belongs to a group. Use Restore group.');
     // A relay may permit reading but reject group-authored NIP-78 writes.
@@ -521,7 +573,6 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     const records = await readJournal(
       entropy,
       [...new Set([...initial, ...discovered])].slice(0, 32),
-      false,
     );
     if (!records.length)
       throw new Error(
@@ -581,8 +632,10 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
       members: nextMembers,
       owners: [...new Set([...heads.flatMap((h) => h.state.owners), d.account()!])],
     };
-    const record = await publishState(secret.recovery_entropy!, next);
-    const after = recoveryHeads(await fetchRecords(secret.recovery_entropy!, next.relays));
+    const record = await publishState(secret.recovery_entropy!, next, [], records);
+    const after = recoveryHeads(
+      await readAfterPublish(secret.recovery_entropy!, next.relays, [...records, record]),
+    );
     if (after.length !== 1 || after[0].id !== record.id) {
       throw new Error(
         'Concurrent owner updates detected. Reconcile group recovery before sending invitations.',
@@ -590,25 +643,44 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     }
     return install(secret.recovery_entropy!, record, records);
   }
+  async function readAfterPublish(entropy: string, urls: string[], records: GroupRecoveryRecord[]) {
+    try {
+      return await fetchRecords(entropy, urls);
+    } catch (error) {
+      if (error instanceof RecoveryUnavailableError) return records;
+      throw error;
+    }
+  }
   async function replicate(records: GroupRecoveryRecord[], targets: string[]) {
     const check = session();
-    await d.connect(targets);
-    for (const record of records) {
+    // Other replica attempts keep running after the first complete copy succeeds.
+    // Each continuation checks the originating account before another write.
+    const attempts = relays(targets).map(async (url) => {
+      await d.connect([url]);
       check();
-      if (!record.event)
-        throw new Error('Missing signed recovery record. Refresh before retrying.');
-      const result = await d.publish(new ClientEvent(d.ndk, record.event), targets, 'self');
+      for (const record of records) {
+        check();
+        if (!record.event)
+          throw new Error('Missing signed recovery record. Refresh before retrying.');
+        const result = await d.publish(new ClientEvent(d.ndk, record.event), [url], 'self');
+        check();
+        if (
+          !result.relayStatuses.some(
+            (status) => status.status === 'published' && new URL(status.relay_url).href === url,
+          )
+        )
+          throw new Error('Recovery relay did not acknowledge the update.');
+      }
+    });
+    try {
+      await Promise.any(attempts);
+    } catch {
       check();
-      const accepted = new Set(
-        result.relayStatuses
-          .filter((s) => s.status === 'published')
-          .map((s) => new URL(s.relay_url).href),
+      throw new Error(
+        'No recovery relay saved the complete group update. Check your relays and retry.',
       );
-      if (targets.some((url) => !accepted.has(new URL(url).href)))
-        throw new Error(
-          'Recovery history has not reached every relay. Retry before changing group relays.',
-        );
     }
+    check();
   }
   async function moveRelays(group: string, nextRelayUrls: string[]) {
     return exclusive(group, async () => {
@@ -622,7 +694,6 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
         throw new Error(
           'Another owner changed the group. Refresh recovery before changing relays.',
         );
-      await replicate(records, targets);
       const next: GroupRecoveryState = {
         ...heads[0].state,
         revision: newGroupRevision(),
@@ -630,9 +701,13 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
         relays: targets,
       };
       // Keep a signed pointer on the old relays so an older recovery file can find the new location.
-      const record = await publishState(secret.recovery_entropy!, next, old);
+      const record = await publishState(secret.recovery_entropy!, next, old, records);
       const observed = recoveryHeads(
-        await fetchRecords(secret.recovery_entropy!, [...new Set([...old, ...targets])]),
+        await readAfterPublish(
+          secret.recovery_entropy!,
+          [...new Set([...old, ...targets])],
+          [...records, record],
+        ),
       );
       if (observed.length !== 1 || observed[0].id !== record.id)
         throw new Error(
@@ -724,7 +799,22 @@ export function createGroupRecoveryRuntime(d: Dependencies) {
     return { proof: ticket.sig, invitedAt };
   }
   async function assertCanSend(group: string, epochPublicKey: string) {
-    const secret = await current(group);
+    const check = session();
+    const secret = await secretFor(group);
+    const contact = await contactsService.getContactByPublicKey(group);
+    check();
+    if (contact?.meta.group_recovery_conflicts?.length)
+      throw new Error(
+        'Group ownership state changed. Refresh or reconcile recovery before sending.',
+      );
+    const records = observed.get(group);
+    if (records) {
+      const heads = recoveryHeads([...records.values()]);
+      if (heads.length !== 1 || heads[0].id !== secret.recovery_state_id)
+        throw new Error(
+          'Group ownership state changed. Refresh or reconcile recovery before sending.',
+        );
+    }
     if (
       !secret.recovery_state!.members.includes(d.account()!) ||
       new NostrPrivateKeySigner(secret.epoch_privkey!).pubkey !== epochPublicKey

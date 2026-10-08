@@ -369,4 +369,51 @@ describe('messageMutationRuntime', () => {
     expect(serviceMocks.chatDataService.updateMessageMeta).not.toHaveBeenCalled();
     expect(deps.refreshMessageInLiveState).toHaveBeenCalledWith(originalMessage.id);
   });
+  it('private replies never expose content from another conversation', async () => {
+    const runtime = createMessageMutationRuntime(createDeps());
+    serviceMocks.chatDataService.getMessageByEventId.mockResolvedValue({
+      id: 44,
+      chat_public_key: 'f'.repeat(64),
+      author_public_key: LOGGED_IN_PUBLIC_KEY,
+      message: 'Content from a different private conversation',
+      created_at: '2026-01-01T00:00:00.000Z',
+      event_id: TARGET_EVENT_ID,
+      meta: {},
+    });
+    const preview = await runtime.buildReplyPreviewFromTargetEvent(
+      TARGET_EVENT_ID,
+      CHAT_PUBLIC_KEY,
+      LOGGED_IN_PUBLIC_KEY,
+      null,
+    );
+    expect(preview.text).not.toContain('Content from a different private conversation');
+    expect(preview.authorPublicKey).toBeFalsy();
+  });
+  it('deleted private messages use a tombstone in reply previews', async () => {
+    const runtime = createMessageMutationRuntime(createDeps());
+    serviceMocks.chatDataService.getMessageByEventId.mockResolvedValue({
+      id: 44,
+      chat_public_key: CHAT_PUBLIC_KEY,
+      author_public_key: LOGGED_IN_PUBLIC_KEY,
+      message: 'Deleted content still quoted',
+      created_at: '2026-01-01T00:00:00.000Z',
+      event_id: TARGET_EVENT_ID,
+      meta: {
+        deleted: {
+          deletedAt: '2026-01-02T00:00:00.000Z',
+          deletedByPublicKey: LOGGED_IN_PUBLIC_KEY,
+        },
+      },
+    });
+    expect(
+      (
+        await runtime.buildReplyPreviewFromTargetEvent(
+          TARGET_EVENT_ID,
+          CHAT_PUBLIC_KEY,
+          LOGGED_IN_PUBLIC_KEY,
+          null,
+        )
+      ).text,
+    ).toBe('Message deleted');
+  });
 });

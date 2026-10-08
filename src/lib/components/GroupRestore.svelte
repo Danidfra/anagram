@@ -88,8 +88,8 @@
 
 <section aria-label="Restore private group">
   <p>
-    Use the group’s recovery words to recover ownership and available history, or to become a
-    co-owner.
+    Use the group’s recovery words to recover ownership and available history. We recommend one
+    owner per group; sharing these words gives someone permanent co-owner access.
   </p>
   {#if !found}
     <label

@@ -1,3 +1,4 @@
+import { UNKNOWN_REPLY_MESSAGE_TEXT } from '#src/stores/nostr/constants.ts';
 import { defineStore } from '#src/lib/state/store.ts';
 import { getEmojiEntryByValue } from '#src/data/topEmojis.ts';
 import {
@@ -61,6 +62,7 @@ interface ChatMessagePaginationState {
 }
 
 interface RelaySendOptions {
+  attachments?: MessageAttachmentMetadata[];
   relayUrls?: string[];
   createdAt?: string;
   continueFromMessageId?: number;
@@ -538,7 +540,9 @@ function resolveChatRecipientPublicKeyFromRow(
   chat: Pick<ChatRow, 'public_key' | 'type' | 'meta'>,
 ): string {
   if (chat.type === 'group' && Number(chat.meta.group_conflicting_epoch ?? -1) >= 0) {
-    throw new Error('Conflicting group keys. An owner must reconcile the group before new messages can be sent.');
+    throw new Error(
+      'Conflicting group keys. An owner must reconcile the group before new messages can be sent.',
+    );
   }
   return chat.type === 'group'
     ? typeof chat.meta.current_epoch_public_key === 'string'
@@ -846,7 +850,39 @@ export const useMessageStore = defineStore('messageStore', () => {
     return relayStorePromise;
   }
 
+  async function safeReplyRows(rows: MessageRow[], chatId: string): Promise<MessageRow[]> {
+    const parents = new Map<string, Promise<MessageRow | null>>();
+    return Promise.all(
+      rows.map(async (row) => {
+        const reply = row.meta.reply as MessageReplyPreview | undefined;
+        const id = normalizeEventId(reply?.eventId);
+        if (!reply || !id) return row;
+        if (!parents.has(id))
+          parents.set(id, chatDataService.getMessageByEventIdOrEditReference(id));
+        const parent = await parents.get(id);
+        if (!parent) return row;
+        if (parent.chat_public_key !== chatId)
+          return {
+            ...row,
+            meta: {
+              ...row.meta,
+              reply: {
+                eventId: id,
+                messageId: id,
+                text: UNKNOWN_REPLY_MESSAGE_TEXT,
+                sender: 'them',
+              },
+            },
+          };
+        if (!parent.meta.deleted) return row;
+        const { imageUrl: _image, ...preview } = reply;
+        return { ...row, meta: { ...row.meta, reply: { ...preview, text: 'Message deleted' } } };
+      }),
+    );
+  }
+
   async function hydrateMessageRows(rows: MessageRow[], chatId: string): Promise<Message[]> {
+    rows = await safeReplyRows(rows, chatId);
     const eventIds = rows
       .map((row) => row.event_id)
       .filter(
@@ -901,7 +937,8 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
 
     const nostrEvent = row.event_id ? await nostrEventDataService.getEventById(row.event_id) : null;
-    return mapMessageRowToMessage(row, resolvedChatId, nostrEvent);
+    const [safeRow] = await safeReplyRows([row], resolvedChatId);
+    return mapMessageRowToMessage(safeRow, resolvedChatId, nostrEvent);
   }
 
   function replaceMessageInState(chatId: string, message: Message): void {
@@ -1040,9 +1077,15 @@ export const useMessageStore = defineStore('messageStore', () => {
   async function verifyOwnerGroupState(chat: ChatRow): Promise<void> {
     if (chat.type !== 'group') return;
     const contact = await contactsService.getContactByPublicKey(chat.public_key);
-    if (contact?.meta?.group_private_key_encrypted && contact.meta.owner_public_key === getLoggedInPublicKey()) {
+    if (
+      contact?.meta?.group_private_key_encrypted &&
+      contact.meta.owner_public_key === getLoggedInPublicKey()
+    ) {
       const nostr = await getNostrStore();
-      await nostr.groupRecovery.assertCanSend(chat.public_key, String(chat.meta.current_epoch_public_key ?? ''));
+      await nostr.groupRecovery.assertCanSend(
+        chat.public_key,
+        String(chat.meta.current_epoch_public_key ?? ''),
+      );
     }
   }
 
@@ -1926,6 +1969,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     const mentionMeta = buildMentionMetadata(cleanText, getLoggedInPublicKey());
     const meta = {
       ...mentionMeta,
+      ...(options.attachments?.length ? { attachments: options.attachments } : {}),
       ...(replyTo ? { reply: replyTo } : {}),
     };
 
@@ -1934,6 +1978,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       text: cleanText,
       meta,
       replyTo,
+      additionalTags: options.attachments?.map(buildNip92ImetaTag).filter((tag) => tag.length > 0),
       options,
       shouldSyncLiveMessage: true,
     });
@@ -2445,12 +2490,13 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     const updatedMessage = await hydrateMessageRow(updatedRow, normalizedChatId);
     replaceMessageInState(normalizedChatId, updatedMessage);
+    const nostrStore = await getNostrStore();
+    await nostrStore.refreshReplyPreviewsForTargetMessage(updatedRow);
 
     if (!deletionRecipientPublicKey || deletionRelayUrls.length === 0) {
       return updatedMessage;
     }
 
-    const nostrStore = await getNostrStore();
     const deleteEvent = await nostrStore.sendDirectMessageDeletion(
       deletionRecipientPublicKey,
       existingRow.event_id,

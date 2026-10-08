@@ -507,9 +507,8 @@
     {:else}
       <h3>Group ownership and recovery</h3>
       <p>
-        Your recovery words restore ownership and all recorded epoch keys. Share them privately only
-        with someone who should have permanent co-owner access. Anyone importing them can manage the
-        group.
+        We recommend one owner per group to avoid conflicting changes. Your recovery words restore
+        ownership and message keys. Anyone with a copy can manage the group, so keep them private.
       </p>
       {#if knownOwners.length}
         <p>Known owners</p>

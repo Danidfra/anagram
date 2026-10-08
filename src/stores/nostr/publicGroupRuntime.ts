@@ -7,6 +7,7 @@ import {
   validPublicAction,
   publicMessageState,
   publicMessageRoots,
+  publicMessageReference,
 } from './publicMessageActions.ts';
 import { normalizeMessageSearchText } from '#src/utils/messageSearch.ts';
 import type { Message, MessageAttachmentMetadata, MessageRelayStatus } from '#src/types/chat.ts';
@@ -207,6 +208,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     max = 400,
     accept?: (events: ClientEvent[]) => boolean,
     allowPartial = true,
+    acceptReceived?: (event: ClientEvent) => boolean,
   ): Promise<{ events: ClientEvent[]; complete: boolean }> {
     return new Promise((resolve, reject) => {
       const completed = new Map<string, ClientEvent>();
@@ -223,7 +225,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         remaining = urls.length,
         failed = false,
         completedRelays = 0;
-      const finish = (error?: Error) => {
+      const finish = (error?: Error, received = false) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -232,7 +234,10 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         subscriptions.forEach((sub) => sub.stop());
         error
           ? reject(error)
-          : resolve({ events: [...completed.values()], complete: remaining === 0 && !failed });
+          : resolve({
+              events: [...(received ? observed : completed).values()],
+              complete: !received && remaining === 0 && !failed,
+            });
       };
       const cancel = () => finish(new Error('Public group request cancelled.'));
       const timer = setTimeout(
@@ -265,26 +270,32 @@ export function createPublicGroupRuntime(deps: Dependencies) {
             partialTimer = setTimeout(() => finish(), 500);
           }
         };
-        subscriptions.push(
-          deps.client.subscribe(filters, {
-            relayUrls: [url],
-            onEvent: (event) => {
-              if (settled || ended) return;
-              if (observed.size >= max && !observed.has(event.id))
-                finish(new Error('Too many public group events. Narrow the history request.'));
-              else {
-                if (!observed.has(event.id)) observed.set(event.id, event);
-                const observedEvent = observed.get(event.id)!;
-                const relay = deps.client.pool.getRelay(url, false);
-                if (!observedEvent.onRelays.some((item) => item.url === url))
-                  observedEvent.onRelays.push(relay);
-                events.set(event.id, observedEvent);
-              }
-            },
-            onEose: () => end(true),
-            onClose: () => end(false),
-          }),
-        );
+        const subscription = deps.client.subscribe(filters, {
+          relayUrls: [url],
+          onEvent: (event) => {
+            if (settled || ended) return;
+            if (observed.size >= max && !observed.has(event.id))
+              finish(new Error('Too many public group events. Narrow the history request.'));
+            else {
+              if (!observed.has(event.id)) observed.set(event.id, event);
+              const observedEvent = observed.get(event.id)!;
+              const relay = deps.client.pool.getRelay(url, false);
+              if (!observedEvent.onRelays.some((item) => item.url === url))
+                observedEvent.onRelays.push(relay);
+              events.set(event.id, observedEvent);
+              // Exact-message lookups can use a verified event immediately.
+              // This never supplies EOSE evidence for history/policy queries.
+              if (acceptReceived?.(observedEvent)) finish(undefined, true);
+            }
+          },
+          onEose: () => end(true),
+          onClose: () => end(false),
+        });
+        subscriptions.push(subscription);
+        if (settled) {
+          subscription.stop();
+          break;
+        }
       }
     });
   }
@@ -359,8 +370,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     address: string,
     events: PublicGroupMessage[],
     db = data!,
+    includeReplies = true,
   ): Promise<PublicGroupMessage[]> {
-    events = publicMessageRoots(events);
+    if (includeReplies) events = publicMessageRoots(events);
     const activity = await db.actionsFor(
       address,
       events.map((event) => event.id!),
@@ -392,33 +404,55 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         ],
       };
     });
+    if (!includeReplies) return decorated;
     const parents = [...new Set(events.map(replyTarget).filter(Boolean) as string[])].slice(
       0,
       ROOM_WINDOW,
     );
+    if (!parents.length) return decorated;
     const references = new Map(
       await Promise.all(parents.map(async (id) => [id, await db.message(address, id)] as const)),
     );
-    const parentActions = await db.actionsFor(
+    const replacements = await db.actionsFor(
       address,
-      parents,
-      new Map([...references].flatMap(([id, event]) => (event ? [[id, event.pubkey]] : []))),
+      parents.filter((id) => !references.get(id)),
     );
-    return decorated.map((event) => {
-      const parent = references.get(replyTarget(event) ?? '');
-      return {
-        ...event,
-        replyEvent: parent
-          ? {
-              ...parent,
-              activity: parentActions.filter((action) =>
-                actionTargets(action).includes(parent.id!),
-              ),
-            }
-          : undefined,
-      };
+    const resolved = decorated.map((event) => {
+      const id = replyTarget(event);
+      const original = id ? references.get(id) : undefined;
+      const author = event.tags.find((tag) => tag[0] === 'q')?.[3];
+      const parent = id
+        ? publicMessageReference(
+            original ? [original] : [...events, ...replacements],
+            id,
+            address,
+            author,
+          )
+        : undefined;
+      return { event, parent };
     });
+    // Reuse normal edit/deletion hydration for previews, without recursively
+    // loading the replies of their parents or issuing network/history reads.
+    const hydrated = new Map(
+      (
+        await hydrate(
+          address,
+          [
+            ...new Map(
+              resolved.flatMap(({ parent }) => (parent ? [[parent.id!, parent] as const] : [])),
+            ).values(),
+          ],
+          db,
+          false,
+        )
+      ).map((parent) => [parent.id!, parent]),
+    );
+    return resolved.map(({ event, parent }) => ({
+      ...event,
+      replyEvent: parent ? hydrated.get(parent.id!) : undefined,
+    }));
   }
+
   async function cacheEvents(address: string, events: PublicGroupMessage[], db = data!) {
     const roots = events.filter((event) => validRoomMessage(event, address) && !editTarget(event));
     const actions = events.filter((event) => validPublicAction(event, address));
@@ -1047,18 +1081,22 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     fetchMissing = true,
   ) {
     if (!context.active() || !/^[a-f0-9]{64}$/.test(id)) return null;
+    const room =
+      get(state).ancestors.find((room) => room.address === context.address) ?? get(state).room!;
+    // Only the owner can set the pin. Without its original event, accept only
+    // owner-authored replacements; other authors need the original for verification.
+    const author = room.pinned === id ? room.owner : undefined;
     const matches = (event: PublicGroupMessage) =>
       validRoomMessage(event, context.address) &&
-      (event.id === id || editTarget(event) === id || editRoot(event) === id);
-    const replacement = (events: PublicGroupMessage[]) => {
-      const candidates = events.filter(
-        (event) => matches(event) && context.textFor(event) !== null,
+      (event.id === id ||
+        (event.pubkey === author && (editTarget(event) === id || editRoot(event) === id)));
+    const replacement = (events: PublicGroupMessage[]) =>
+      publicMessageReference(
+        events.filter((event) => context.textFor(event) !== null),
+        id,
+        context.address,
+        author,
       );
-      // Use the same available signed anchor as the timeline. Do not guess if
-      // different authors claim to replace an original we have never received.
-      if (new Set(candidates.map((event) => event.pubkey)).size !== 1) return undefined;
-      return publicMessageRoots(candidates)[0];
-    };
     let target = await context.db.message(context.address, id);
     if (!target)
       target = replacement([
@@ -1074,8 +1112,10 @@ export function createPublicGroupRuntime(deps: Dependencies) {
           { kinds: [9], '#a': [context.address], '#e': [id], limit: 64 },
         ],
         await relayUrls(room.relays),
-        8,
+        65, // One original plus the bounded replacement query.
         (events) => events.some((event) => matches(event.rawEvent())),
+        true,
+        (event) => matches(event.rawEvent()) && context.textFor(event.rawEvent()) !== null,
       );
       if (!context.active()) return null;
       const saved = await cacheEvents(
@@ -1405,7 +1445,11 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       validate,
     );
   }
-  async function send(text: string, attachment?: MessageAttachmentMetadata, replyId?: string) {
+  async function send(
+    text: string,
+    attachment?: MessageAttachmentMetadata | MessageAttachmentMetadata[],
+    replyId?: string,
+  ) {
     const snapshot = get(state),
       room = snapshot.room,
       owner = account,
@@ -1418,8 +1462,12 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       roomPolicy(room, owner) === 'blocked'
     )
       throw new Error('Posting is unavailable in this public group.');
-    await post(room, text, attachment ? [attachment] : [], replyId, () =>
-      assertPostingPolicy(room, owner, token),
+    await post(
+      room,
+      text,
+      Array.isArray(attachment) ? attachment : attachment ? [attachment] : [],
+      replyId,
+      () => assertPostingPolicy(room, owner, token),
     );
   }
   async function forwardMessage(address: string, message: Pick<Message, 'text' | 'meta'>) {

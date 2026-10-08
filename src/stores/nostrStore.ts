@@ -2448,6 +2448,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     reconnectDeveloperRelay,
     rerunStartupStep: (stepId: StartupStepId, seedRelayUrls?: string[]) =>
       rerunStartupStep(stepId, seedRelayUrls),
+    refreshReplyPreviewsForTargetMessage,
     repairMissingMessageDependency: async (
       chatPublicKey: string,
       targetEventId: string,

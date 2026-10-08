@@ -10,7 +10,9 @@ Private groups use Nostr NIP-171 (currently in draft) over NIP-17, NIP-44 and NI
 - Use the highest valid epoch. 
 - Conflicting keys for the same epoch prevent sending until an owner resolves them.
 - Owners can restore groups using the master-key.
-- Ownership can be shared or transferred by sharing the master-key.
+- One owner per group is recommended. Sharing the master-key grants permanent co-owner access.
+- Recovery changes try all configured relays and need one relay to save the complete update. Unavailable replicas do not block a healthy one; known conflicts still require reconciliation.
+- Ordinary sending uses locally verified membership and epoch keys. An unavailable relay may hold an unseen newer change.
 
 ## Messages
 
