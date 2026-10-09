@@ -10,7 +10,9 @@ import {
   threadMessage,
 } from '../parity/helpers';
 
-test('copying the event ID in message info confirms inside the dialog', async ({ browser }) => {
+test('copying the event ID in message info shows the app toast and keeps the dialog open', async ({
+  browser,
+}) => {
   const user = await bootstrapUser(browser, TEST_ACCOUNTS.messageInfoCopyUser);
   try {
     const { page, context } = user;
@@ -21,7 +23,9 @@ test('copying the event ID in message info confirms inside the dialog', async ({
     await action(page, 'Message info fixture', 'Nostr info');
     const dialog = page.getByRole('dialog');
     await dialog.getByRole('button', { name: 'Copy event ID' }).click();
-    await expect(dialog.getByRole('status')).toHaveText('Event ID copied.');
+    await expect(page.locator('.notices > div', { hasText: 'Event ID copied.' })).toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(page.getByText('Event ID copied.')).toHaveCount(1);
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(eventId);
   } finally {
     await disposeUsers(user);

@@ -1,22 +1,31 @@
 <script lang="ts">
   import type { Message, MessageRelayStatus } from '#src/types/chat.ts';
   import { translate } from '#src/i18n.ts';
+  import { Notify } from '#src/lib/platform/ui.ts';
   export let message: Message;
   export let onretry: (status: MessageRelayStatus) => Promise<void>;
   let error = '';
-  let notice = '';
   let busy = false;
   async function act(fn: () => Promise<void>) {
     if (busy) return;
     busy = true;
     error = '';
-    notice = '';
     try {
       await fn();
     } catch (cause) {
       error = String(cause);
     } finally {
       busy = false;
+    }
+  }
+  async function copyEventId() {
+    try {
+      await navigator.clipboard.writeText(message.eventId ?? '');
+      Notify.create({
+        message: $translate('common.copiedLabel', { label: $translate('message.eventId') }),
+      });
+    } catch {
+      Notify.create({ type: 'negative', message: 'Could not copy the event ID.' });
     }
   }
 </script>
@@ -29,17 +38,7 @@
   <dt>{$translate('message.eventId')}</dt>
   <dd>{message.eventId || 'Not published yet'}</dd>
 </dl>
-<button
-  class="outline"
-  disabled={!message.eventId}
-  onclick={() =>
-    act(async () => {
-      await navigator.clipboard.writeText(message.eventId ?? '');
-      // App notices render behind this modal dialog; confirm in place.
-      notice = $translate('common.copiedLabel', { label: $translate('message.eventId') });
-    })}>Copy event ID</button
->
-{#if notice}<p role="status">{notice}</p>{/if}
+<button class="outline" disabled={!message.eventId} onclick={copyEventId}>Copy event ID</button>
 {#each message.nostrEvent?.relay_statuses ?? [] as status}<p>
     {status.relay_url} — {status.status}
     {#if message.sender === 'me' && status.status === 'failed' && (status.scope === 'recipient' || status.scope === 'self')}<button
