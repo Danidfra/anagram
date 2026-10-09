@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { messagePress } from '#src/lib/actions/messagePress.ts';
+  import {
+    isQuickReplyIgnoredTarget,
+    messageSwipeReply,
+  } from '#src/lib/actions/messageQuickReply.ts';
   import type { Message } from '#src/types/chat.ts';
   import { locale } from '#src/i18n.ts';
   import { chatTime } from '#src/utils/chatDate.ts';
@@ -26,6 +30,8 @@
     onretry?: ((url: string) => Promise<void>) | undefined;
     onauthor: (key: string) => void;
     onactions?: ((event: MouseEvent) => void) | undefined;
+    // Quick reply (mouse double-click, touch swipe); omitted rows have no gesture.
+    onreply?: (() => void) | undefined;
     children: Snippet;
   }
 
@@ -48,8 +54,23 @@
     onretry = undefined,
     onauthor,
     onactions = undefined,
+    onreply = undefined,
     children,
   }: Props = $props();
+  // dblclick is a MouseEvent without pointerType; remember the input that
+  // started it so touch-generated double taps never reply.
+  let pointerType = '';
+  function quickReply(event: MouseEvent) {
+    if (
+      !onreply ||
+      pointerType !== 'mouse' ||
+      event.button !== 0 ||
+      message.meta.deleted ||
+      isQuickReplyIgnoredTarget(event.target)
+    )
+      return;
+    onreply();
+  }
 </script>
 
 {#snippet name()}{#if authorLabel}{@render authorLabel()}{:else}{author.name}{/if}{/snippet}
@@ -66,6 +87,12 @@
   data-chat-public-key={message.chatId}
   data-author-public-key={message.authorPublicKey}
   data-day-label={dayLabel}
+  onpointerdown={(event) => (pointerType = event.pointerType)}
+  ondblclick={quickReply}
+  use:messageSwipeReply={{
+    disabled: !onreply || Boolean(message.meta.deleted),
+    onreply: () => onreply?.(),
+  }}
 >
   {#if bubbleLayout}
     {#if !senderContinues}<button
