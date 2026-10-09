@@ -121,23 +121,23 @@
   async function copyPrivateKey() {
     if (copyingPrivateKey) return;
     copyingPrivateKey = true;
-    error = '';
-    notice = '';
+    // Feedback never includes the key itself.
+    const fail = (message: string) => Notify.create({ type: 'negative', message });
     try {
       const stored = localStorage.getItem(PRIVATE_KEY_STORAGE_KEY)?.trim();
       if (!stored || localStorage.getItem(AUTH_METHOD_STORAGE_KEY) !== 'nsec') {
-        error = 'No private key is stored locally for this account.';
+        fail('No private key is stored locally for this account.');
         return;
       }
       const signer = new NostrPrivateKeySigner(stored);
       if (signer.pubkey !== pubkey || signer.pubkey !== nostr.getLoggedInPublicKeyHex()) {
-        error = 'The stored private key does not match this account.';
+        fail('The stored private key does not match this account.');
         return;
       }
       await navigator.clipboard.writeText(nip19.nsecEncode(signer.secretKey));
-      notice = 'Private key copied.';
+      Notify.create({ message: 'Private key copied.' });
     } catch {
-      error = 'Could not copy the private key.';
+      fail('Could not copy the private key.');
     } finally {
       copyingPrivateKey = false;
     }
