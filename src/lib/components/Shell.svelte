@@ -1068,6 +1068,11 @@
       busy = false;
     }
   }
+  function addContactOnEnter(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || event.isComposing || busy || !identifier) return;
+    event.preventDefault();
+    void addContact();
+  }
   function openProfile() {
     groupMembers = ($state.selected?.meta.group_members ?? [])
       .map((member) => nostr.encodeNpub(member.public_key))
@@ -1881,8 +1886,14 @@
             if (!contactName.trim()) contactName = profile.name;
             modalError = '';
           }}
+          onkeydown={addContactOnEnter}
         />
-        <label>{$translate('Name (optional)')}<input bind:value={contactName} /></label>
+        <label
+          >{$translate('Name (optional)')}<input
+            bind:value={contactName}
+            onkeydown={addContactOnEnter}
+          /></label
+        >
         <button class="primary" disabled={busy || !identifier} onclick={addContact}
           >{$translate('contacts.addContactAction')}</button
         >
