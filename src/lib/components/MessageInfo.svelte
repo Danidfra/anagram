@@ -4,11 +4,13 @@
   export let message: Message;
   export let onretry: (status: MessageRelayStatus) => Promise<void>;
   let error = '';
+  let notice = '';
   let busy = false;
   async function act(fn: () => Promise<void>) {
     if (busy) return;
     busy = true;
     error = '';
+    notice = '';
     try {
       await fn();
     } catch (cause) {
@@ -29,9 +31,15 @@
 </dl>
 <button
   class="outline"
-  onclick={() => act(() => navigator.clipboard.writeText(message.eventId ?? ''))}
-  >Copy event ID</button
+  disabled={!message.eventId}
+  onclick={() =>
+    act(async () => {
+      await navigator.clipboard.writeText(message.eventId ?? '');
+      // App notices render behind this modal dialog; confirm in place.
+      notice = $translate('common.copiedLabel', { label: $translate('message.eventId') });
+    })}>Copy event ID</button
 >
+{#if notice}<p role="status">{notice}</p>{/if}
 {#each message.nostrEvent?.relay_statuses ?? [] as status}<p>
     {status.relay_url} — {status.status}
     {#if message.sender === 'me' && status.status === 'failed' && (status.scope === 'recipient' || status.scope === 'self')}<button
