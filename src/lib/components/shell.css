@@ -1062,6 +1062,12 @@ input[type='range'] {
 .message-row:focus-within .message-menu-trigger {
   opacity: 1;
 }
+/* Touch tablets have no hover to reveal the trigger (phones are handled below). */
+@media (hover: none) {
+  .message-menu-trigger {
+    opacity: 1;
+  }
+}
 @media (min-width: 768px) {
   .bubble-layout .message-row.own {
     align-items: flex-start;
