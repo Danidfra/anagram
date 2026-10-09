@@ -608,6 +608,7 @@
     const chat = $state.selected;
     if (!chat || !draft.trim() || busy) return;
     busy = true;
+    const typed = draft;
     const text = serializeMentionDraft(draft, mentionProfiles);
     const uploadKey = uploadContext();
     const attachments = draftAttachments(text, uploadedAttachments.get(uploadKey));
@@ -640,7 +641,10 @@
           fail(cause);
         }
       } else {
-        if (currentId === chat.id) draft = text;
+        // Restore what the user typed (@handles, not nostr: URIs) and keep it
+        // as the chat's draft, which was cleared optimistically above.
+        if (currentId === chat.id) draft = typed;
+        if (!editedMessage) chats.setComposerDraft(chat.id, typed);
         fail(e);
       }
     } finally {
