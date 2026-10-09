@@ -140,11 +140,17 @@ export function messageSwipeReply(node: HTMLElement, options: MessageSwipeReplyO
   const cancel = (event: PointerEvent) => {
     if (gesture && event.pointerId === gesture.id) finish(false);
   };
+  // Touch pointers start implicitly captured by the touched descendant (text,
+  // bubble). Capturing on the row fires a bubbling lostpointercapture for that
+  // descendant; only losing the row's own capture ends the swipe.
+  const lostCapture = (event: PointerEvent) => {
+    if (event.target === node) cancel(event);
+  };
   node.addEventListener('pointerdown', down);
   node.addEventListener('pointermove', move);
   node.addEventListener('pointerup', up);
   node.addEventListener('pointercancel', cancel);
-  node.addEventListener('lostpointercapture', cancel);
+  node.addEventListener('lostpointercapture', lostCapture);
   return {
     update(next: MessageSwipeReplyOptions) {
       options = next;
@@ -160,7 +166,7 @@ export function messageSwipeReply(node: HTMLElement, options: MessageSwipeReplyO
       node.removeEventListener('pointermove', move);
       node.removeEventListener('pointerup', up);
       node.removeEventListener('pointercancel', cancel);
-      node.removeEventListener('lostpointercapture', cancel);
+      node.removeEventListener('lostpointercapture', lostCapture);
     },
   };
 }

@@ -1306,3 +1306,60 @@ test('quick reply: mouse double-click and touch swipe toward the inline end', as
   await release(end);
   await expect(replyContext).toContainText('Swipe reply fixture');
 });
+
+test.describe('quick reply with real touch input', () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  test('a swipe that starts on message text replies; drags and long press keep their behavior', async ({
+    page,
+  }) => {
+    await login(page);
+    await contact(page, getPublicKey(generateSecretKey()), 'Touch reply fixture');
+    await page.getByTestId('message-composer-input').fill('Touch swipe fixture text');
+    await page.getByTestId('message-send-button').click();
+    const message = page.getByTestId('message-bubble').filter({ hasText: 'Touch swipe fixture' });
+    await expect(message).toBeVisible();
+    const replyContext = page.locator('.composer-context');
+    const menu = page.getByTestId('message-context-menu');
+    // CDP touches run the browser's real touch pipeline, including implicit
+    // pointer capture on the touched element and touch-action handling.
+    const cdp = await page.context().newCDPSession(page);
+    async function touchDrag(dx: number, dy: number, holdMs = 0) {
+      const text = message.locator('.message-text');
+      await expect(text).toBeVisible();
+      let box = await text.boundingBox();
+      await expect.poll(async () => (box = await text.boundingBox())).not.toBeNull();
+      box = box!;
+      const x = box.x + 8,
+        y = box.y + box.height / 2;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      if (holdMs) await page.waitForTimeout(holdMs);
+      for (let step = 1; dx || dy ? step <= 12 : false; step++)
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: x + (dx * step) / 12, y: y + (dy * step) / 12 }],
+        });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    }
+
+    await touchDrag(0, 90);
+    await touchDrag(30, 0);
+    await expect(replyContext).toHaveCount(0);
+    await touchDrag(96, 0);
+    await expect(replyContext).toContainText('Touch swipe fixture text');
+    await page.getByRole('button', { name: 'Cancel reply or edit' }).click();
+
+    await touchDrag(0, 0, 700);
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(replyContext).toHaveCount(0);
+
+    await page.evaluate(() => {
+      document.documentElement.dir = 'rtl';
+    });
+    await touchDrag(96, 0);
+    await expect(replyContext).toHaveCount(0);
+    await touchDrag(-96, 0);
+    await expect(replyContext).toContainText('Touch swipe fixture text');
+  });
+});
