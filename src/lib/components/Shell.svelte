@@ -259,8 +259,10 @@
     contextMessage = message.id;
   }
   function closeMessageActions() {
+    // Other close paths (choosing an action, outside click, scroll) leave the
+    // trigger behind; only a menu that is still open returns focus to it.
+    if (contextMessage) contextTrigger?.focus({ preventScroll: true });
     contextMessage = '';
-    contextTrigger?.focus({ preventScroll: true });
     contextTrigger = null;
   }
   let groupPin: PrivateGroupPin | null = null;
