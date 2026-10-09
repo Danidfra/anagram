@@ -1852,6 +1852,7 @@
                   ? 'Group call'
                   : $state.selected?.name}
       label={modal}
+      {busy}
       onclose={() => (modal === 'upload' ? cancelUpload() : (modal = ''))}
     >
       {#if modal === 'info' && inspectedMessage}<MessageInfo
