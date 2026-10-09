@@ -190,6 +190,8 @@
   let groupMembers = '';
   let groupAbout = '';
   let modalError = '';
+  // Errors belong to the dialog that raised them; never carry them into the next one.
+  $: if (!modal) modalError = '';
   let contacts: ContactRecord[] = [];
   // Profile hydration may cache a contact before its request is accepted.
   // Use the inbox classification so acceptance/replies update this list live.
@@ -833,7 +835,7 @@
         await goto(`/contacts/${found.normalizedPubkey}`);
       } else if (chat) await open(chat);
     } catch (e) {
-      modalError = String(e);
+      modalError = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
     }
@@ -898,7 +900,7 @@
       const chat = chats.chats.find((c) => c.publicKey === result.groupPublicKey);
       if (chat) await open(chat);
     } catch (e) {
-      modalError = String(e);
+      modalError = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
     }
