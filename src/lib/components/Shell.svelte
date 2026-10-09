@@ -174,6 +174,12 @@
   let reply: MessageReplyPreview | null = null;
   let editing: Message | null = null;
   let beforeEdit: { draft: string; reply: MessageReplyPreview | null } | null = null;
+  function cancelComposerContext() {
+    if (editing) finishEditing();
+    else reply = null;
+    // The cancel button unmounts with the banner; keep the user in the composer.
+    void tick().then(() => composerInput?.focus());
+  }
   function finishEditing() {
     if (beforeEdit) {
       draft = beforeEdit.draft;
@@ -1493,14 +1499,7 @@
               >{$translate('Block')}</button
             >
           </div>{/if}
-        <ComposerContext
-          {reply}
-          editing={Boolean(editing)}
-          oncancel={() => {
-            if (editing) finishEditing();
-            else reply = null;
-          }}
-        />
+        <ComposerContext {reply} editing={Boolean(editing)} oncancel={cancelComposerContext} />
         <MessageComposer
           bind:draft
           bind:input={composerInput}
@@ -1511,6 +1510,7 @@
           attachDisabled={Boolean(editing)}
           onsend={() => void send()}
           onfile={prepareUpload}
+          oncancel={reply || editing ? cancelComposerContext : undefined}
           {mentionProfiles}
           onchange={() => {
             if (!editing) chats.setComposerDraft(currentId, draft);
