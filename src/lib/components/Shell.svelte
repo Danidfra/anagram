@@ -28,6 +28,10 @@
   import DateDivider from './DateDivider.svelte';
   import MediaUploadConfirmation from './MediaUploadConfirmation.svelte';
   import { chatDate } from '#src/utils/chatDate.ts';
+  import {
+    formatUnreadChatBadgeLabel,
+    formatUnreadDocumentTitle,
+  } from '#src/utils/unreadChatBadge.ts';
   import { messagePresentation, messageMenuPosition } from '#src/utils/messagePresentation.ts';
   import {
     isAndroidRelayNotificationSupported,
@@ -1304,7 +1308,7 @@
   onblur={() => (resizing = false)}
 />
 <svelte:head
-  ><title>{unreadChats ? `(${unreadChats}) ` : ''}{$translate('Anagram')}</title></svelte:head
+  ><title>{formatUnreadDocumentTitle($translate('Anagram'), unreadChats)}</title></svelte:head
 >
 {#if section === 'settings'}
   {#await import('./settings/SettingsShell.svelte') then component}<component.default
@@ -1512,7 +1516,7 @@
             aria-label={item}
             onclick={() => nav(item as typeof section)}
             ><Icon name={item} />{#if item === 'chats' && unreadChats}<span class="badge nav-badge"
-                >{unreadChats}</span
+                >{formatUnreadChatBadgeLabel(unreadChats)}</span
               >{/if}</button
           >{/each}
       </nav>
