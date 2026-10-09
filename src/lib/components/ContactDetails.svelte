@@ -97,6 +97,7 @@
     }
   }
   async function share() {
+    notice = '';
     try {
       const QRCode = await import('qrcode');
       qr = await QRCode.toDataURL(shareAddress, { width: 280, margin: 1 });
@@ -309,6 +310,9 @@
     />{/if}
   <p class="share-address">{shareAddress}</p>
   <button class="primary" onclick={() => copy(shareAddress)}>{$translate('common.copy')}</button>
+  <!-- The page's status line sits behind this modal dialog. -->
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if notice}<p role="status">{notice}</p>{/if}
 </dialog>
 
 <style>

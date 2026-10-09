@@ -99,6 +99,7 @@
   }
   async function share() {
     error = '';
+    notice = '';
     try {
       const QR = await import('qrcode');
       qr = await QR.toDataURL(`nostr:${npub}`, { width: 300, margin: 2 });
@@ -310,4 +311,7 @@
       >{$translate('common.closeDialog')}</button
     >
   </div>
+  <!-- The page's status line sits behind this modal dialog. -->
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if notice}<p role="status">{notice}</p>{/if}
 </dialog>
