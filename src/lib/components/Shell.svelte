@@ -29,6 +29,11 @@
   import MediaUploadConfirmation from './MediaUploadConfirmation.svelte';
   import { chatDate } from '#src/utils/chatDate.ts';
   import {
+    isRtlDocument,
+    sidebarKeyDelta,
+    sidebarWidthFromPointer,
+  } from '#src/utils/sidebarResize.ts';
+  import {
     formatUnreadChatBadgeLabel,
     formatUnreadDocumentTitle,
   } from '#src/utils/unreadChatBadge.ts';
@@ -931,7 +936,7 @@
           ? MIN_DESKTOP_SIDEBAR_WIDTH
           : event.key === 'End'
             ? MAX_DESKTOP_SIDEBAR_WIDTH
-            : sidebarWidth + (event.key === 'ArrowLeft' ? -16 : 16),
+            : sidebarWidth + sidebarKeyDelta(event.key, isRtlDocument()),
       );
     }
   }
@@ -1302,7 +1307,7 @@
       contextMessage = '';
   }}
   onpointermove={(e) => {
-    if (resizing) resizeTo(e.clientX);
+    if (resizing) resizeTo(sidebarWidthFromPointer(e.clientX, innerWidth, isRtlDocument()));
   }}
   onpointerup={() => (resizing = false)}
   onblur={() => (resizing = false)}
