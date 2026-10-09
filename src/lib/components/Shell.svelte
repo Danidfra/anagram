@@ -213,6 +213,7 @@
   let menu = false;
   let emoji = false;
   let searching = false;
+  let searchToggle: HTMLButtonElement | undefined;
   let forward: Message | null = null;
   let scrollArea: HTMLDivElement;
   let fileInput: HTMLInputElement;
@@ -1352,8 +1353,10 @@
                 ><Icon name="video" /></button
               >{/if}
             <button
+              bind:this={searchToggle}
               class="icon-button"
               aria-label="Search conversation"
+              aria-expanded={searching}
               onclick={() => (searching = !searching)}><Icon name="search" /></button
             ><button class="icon-button" aria-label="Contact profile" onclick={openProfile}
               ><Icon name="contacts" /></button
@@ -1374,7 +1377,11 @@
               onsearch={(query) => messages.searchMessages($state.selected!.id, query)}
               onselect={jump}
               onclear={() => (highlightedMessage = '')}
-              onclose={() => (searching = false)}
+              onclose={() => {
+                searching = false;
+                // The search field unmounts; return focus to the button that opened it.
+                void tick().then(() => searchToggle?.focus());
+              }}
             />
           {/key}
         {/if}
