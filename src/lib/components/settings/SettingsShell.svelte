@@ -18,6 +18,7 @@
     MAX_DESKTOP_SIDEBAR_WIDTH,
   } from '#src/utils/themeStorage.ts';
   import './settings.css';
+  import { formatUnreadChatBadgeLabel } from '#src/utils/unreadChatBadge.ts';
   const route = toStore(() => page.url.pathname);
   const nostr = useNostrStore(),
     update = useAppUpdateStore();
@@ -137,7 +138,7 @@
           aria-label={target}
           onclick={() => goto(`/${target}`)}
           ><Icon name={target} />{#if target === 'chats' && $state.unread}<span
-              class="badge nav-badge">{$state.unread}</span
+              class="badge nav-badge">{formatUnreadChatBadgeLabel($state.unread)}</span
             >{/if}</button
         >{/each}
     </nav>
