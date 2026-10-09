@@ -5,6 +5,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { translate } from '#src/i18n.ts';
+  import { Notify } from '#src/lib/platform/ui.ts';
   import { useNostrStore } from '#src/stores/nostrStore.ts';
   import { NostrPrivateKeySigner, nip19 } from '#src/lib/nostr/client.ts';
   import { AUTH_METHOD_STORAGE_KEY, PRIVATE_KEY_STORAGE_KEY } from '#src/stores/nostr/constants.ts';
@@ -99,7 +100,6 @@
   }
   async function share() {
     error = '';
-    notice = '';
     try {
       const QR = await import('qrcode');
       qr = await QR.toDataURL(`nostr:${npub}`, { width: 300, margin: 2 });
@@ -111,9 +111,11 @@
   async function copy(value = hex ? pubkey : npub) {
     try {
       await navigator.clipboard.writeText(value);
-      notice = $translate('common.copiedLabel', { label: $translate('contacts.publicKey') });
+      Notify.create({
+        message: $translate('common.copiedLabel', { label: $translate('contacts.publicKey') }),
+      });
     } catch {
-      error = 'Could not copy the public key.';
+      Notify.create({ type: 'negative', message: 'Could not copy the public key.' });
     }
   }
   async function copyPrivateKey() {
@@ -311,7 +313,4 @@
       >{$translate('common.closeDialog')}</button
     >
   </div>
-  <!-- The page's status line sits behind this modal dialog. -->
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if notice}<p role="status">{notice}</p>{/if}
 </dialog>

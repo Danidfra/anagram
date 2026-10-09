@@ -3,6 +3,7 @@
   import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onMount } from 'svelte';
   import { translate } from '#src/i18n.ts';
+  import { Notify } from '#src/lib/platform/ui.ts';
   import { contactsService } from '#src/services/contactsService.ts';
   import { useNostrStore } from '#src/stores/nostrStore.ts';
   import { observe } from '#src/lib/state/store.ts';
@@ -91,13 +92,14 @@
   async function copy(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      notice = $translate('common.copiedLabel', { label: $translate('contacts.publicKey') });
+      Notify.create({
+        message: $translate('common.copiedLabel', { label: $translate('contacts.publicKey') }),
+      });
     } catch {
-      error = 'Could not copy the public key.';
+      Notify.create({ type: 'negative', message: 'Could not copy the public key.' });
     }
   }
   async function share() {
-    notice = '';
     try {
       const QRCode = await import('qrcode');
       qr = await QRCode.toDataURL(shareAddress, { width: 280, margin: 1 });
@@ -310,9 +312,6 @@
     />{/if}
   <p class="share-address">{shareAddress}</p>
   <button class="primary" onclick={() => copy(shareAddress)}>{$translate('common.copy')}</button>
-  <!-- The page's status line sits behind this modal dialog. -->
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if notice}<p role="status">{notice}</p>{/if}
 </dialog>
 
 <style>
