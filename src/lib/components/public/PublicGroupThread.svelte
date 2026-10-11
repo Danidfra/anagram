@@ -303,21 +303,32 @@
     if (older ? !$state.more : !$state.hasNewer) return;
     paging = true;
     nearBottom = false;
-    const rows = [...log.querySelectorAll<HTMLElement>('[data-event-id]')];
-    const anchor = rows.find(
-      (row) => row.getBoundingClientRect().bottom > log.getBoundingClientRect().top,
-    );
-    const offset = anchor?.getBoundingClientRect().top;
+    const node = log;
+    let anchor: HTMLElement | undefined;
+    let offset: number | undefined;
+    let previousTop = node.scrollTop;
+    function rememberPosition() {
+      anchor = [...node.querySelectorAll<HTMLElement>('[data-event-id]')].find(
+        (row) => row.getBoundingClientRect().bottom > node.getBoundingClientRect().top,
+      );
+      offset = anchor?.getBoundingClientRect().top;
+      previousTop = node.scrollTop;
+    }
+    rememberPosition();
+    node.addEventListener('scroll', rememberPosition, { passive: true });
     const revision = jumpRevision;
     try {
       await (older ? runtime.older() : runtime.newer());
       await tick();
-      if (revision !== jumpRevision) return;
+      if (revision !== jumpRevision || log !== node) return;
+      node.removeEventListener('scroll', rememberPosition);
       const retained =
         anchor && log.querySelector<HTMLElement>(`[data-event-id="${anchor.dataset.eventId}"]`);
       if (retained && offset !== undefined)
-        log.scrollTop += retained.getBoundingClientRect().top - offset;
+        log.scrollTop +=
+          retained.getBoundingClientRect().top - offset + (log.scrollTop - previousTop);
     } finally {
+      node.removeEventListener('scroll', rememberPosition);
       paging = false;
     }
   }

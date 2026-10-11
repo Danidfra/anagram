@@ -144,6 +144,8 @@
     thread: {
       items: chats.selectedChatId ? messages.getMessages(chats.selectedChatId) : [],
       pagination: chats.selectedChatId ? messages.getPaginationState(chats.selectedChatId) : null,
+      remote:
+        nostr.groupHistoryState.chat === chats.selectedChatId ? nostr.groupHistoryState : null,
     },
     unread: chats.unreadChatCount,
     loaded: chats.isLoaded,
@@ -278,7 +280,6 @@
   let groupPin: PrivateGroupPin | null = null;
   let pinBusy = false;
   let pinRevision = 0;
-  let pinRepairKey = '';
   $: pinGroup = $state.selected?.type === 'group' ? $state.selected.publicKey : '';
   $: void refreshGroupPin(pinGroup, $state.contactVersion, $state.thread.items);
   $: canPin = Boolean(groupPin?.group === pinGroup && groupPin?.canPin);
@@ -289,22 +290,8 @@
     const result = await nostr.privateGroupPins.read(group).catch(() => null);
     if (revision !== pinRevision || group !== pinGroup) return;
     groupPin = result;
-    const repairKey = `${nostr.getLoggedInPublicKeyHex()}:${group}:${result?.eventId}`;
-    if (result?.eventId && !result.available && pinRepairKey !== repairKey) {
-      pinRepairKey = repairKey;
-      void nostr
-        .repairMissingMessageDependency(group, result.eventId, {
-          reason: 'reply-open',
-          immediate: true,
-          referenceCreatedAt: result.createdAt,
-        })
-        .then(() => {
-          if (group === pinGroup)
-            void refreshGroupPin(group, $state.contactVersion, $state.thread.items);
-        })
-        .catch(() => {});
-    }
   }
+
   async function setGroupPin(eventId: string | null) {
     if (!pinGroup || pinBusy) return;
     const group = pinGroup;
@@ -655,12 +642,13 @@
   let olderLoad: { chatId: string } | null = null;
   $: loadingOlder = Boolean(
     (olderLoad !== null && olderLoad.chatId === $state.selected?.id) ||
-    $state.thread.pagination?.isLoadingOlder,
+    $state.thread.pagination?.isLoadingOlder ||
+    $state.thread.remote?.loading,
   );
   function canLoadOlder() {
     return Boolean(
       $state.selected &&
-      $state.thread.pagination?.hasOlder &&
+      ($state.thread.pagination?.hasOlder || $state.thread.remote?.hasOlder) &&
       !loadingOlder &&
       olderLoad?.chatId !== $state.selected.id,
     );
@@ -674,16 +662,36 @@
     nearBottom = false;
     contextMessage = '';
     node.focus({ preventScroll: true });
-    const top = node.getBoundingClientRect().top;
-    const anchor = [...node.querySelectorAll<HTMLElement>('.message-row')].find(
-      (row) => row.getBoundingClientRect().bottom > top + 38,
-    );
-    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : null;
-    const previousTop = node.scrollTop,
+    let anchor: HTMLElement | undefined;
+    let anchorOffset: number | null = null;
+    let previousTop = node.scrollTop,
       previousHeight = node.scrollHeight;
+    function rememberPosition() {
+      const top = node.getBoundingClientRect().top;
+      anchor = [...node.querySelectorAll<HTMLElement>('.message-row')].find(
+        (row) => row.getBoundingClientRect().bottom > top + 38,
+      );
+      anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : null;
+      previousTop = node.scrollTop;
+      previousHeight = node.scrollHeight;
+    }
+    rememberPosition();
+    // Track the row the user is reading now, not the row they left when the
+    // request started. Prepending can change author headers on that old row.
+    node.addEventListener('scroll', rememberPosition, { passive: true });
     const current = () =>
       chats.selectedChatId === chatId && scrollArea === node && node.isConnected;
     try {
+      if (!$state.thread.pagination?.hasOlder && $state.selected?.type === 'group') {
+        messages.pinMessageWindow(chatId);
+        const first = messages.getMessages(chatId)[0];
+        await nostr.loadOlderGroupHistory(
+          chatId,
+          first ? Date.parse(first.sentAt) / 1000 : Date.now() / 1000,
+        );
+        if (!current()) return;
+        await messages.loadMessages(chatId, true);
+      }
       await messages.loadOlderMessages(chatId);
       // The Vue-to-Svelte bridge batches notifications. Wait for the actual
       // window, not a fixed number of frames: busy/backgrounded tabs can take
@@ -693,13 +701,18 @@
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       await tick();
       if (!current()) return;
+      node.removeEventListener('scroll', rememberPosition);
       if (anchor?.isConnected && anchorOffset !== null)
         node.scrollTop +=
-          anchor.getBoundingClientRect().top - node.getBoundingClientRect().top - anchorOffset;
-      else node.scrollTop = previousTop + Math.max(0, node.scrollHeight - previousHeight);
+          anchor.getBoundingClientRect().top -
+          node.getBoundingClientRect().top -
+          anchorOffset +
+          (node.scrollTop - previousTop);
+      else node.scrollTop += Math.max(0, node.scrollHeight - previousHeight);
       scrollTop = node.scrollTop;
       scheduleVisibleReactions();
     } finally {
+      node.removeEventListener('scroll', rememberPosition);
       if (olderLoad === operation) olderLoad = null;
     }
   }
@@ -1402,7 +1415,14 @@
           publicKey={$state.selected.publicKey}
           onmount={mountThread}
           firstDay={$state.thread.items[0] ? date($state.thread.items[0].sentAt) : ''}
-          hasOlder={Boolean($state.thread.pagination?.hasOlder)}
+          hasOlder={Boolean($state.thread.pagination?.hasOlder || $state.thread.remote?.hasOlder)}
+          historyStatus={$state.thread.remote?.loading
+            ? $state.thread.remote.phase === 'keys'
+              ? $translate('chat.historyKeys')
+              : $translate('chat.historyMessages')
+            : $state.thread.remote?.failed
+              ? $translate('chat.historyRetry')
+              : ''}
           hasNewer={Boolean($state.thread.pagination?.hasNewer)}
           loading={loadingOlder}
           bind:nearBottom

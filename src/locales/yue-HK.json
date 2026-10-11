@@ -875,5 +875,8 @@
   "message.upload": "上載",
   "contacts.addContactAction": "加入聯絡人",
   "chat.dadBotIntro": "同Dad Bot 講任何嘢，佢就會回覆一個笑話。",
-  "chat.dadBotExamples": "為 Nostr 同 Anagram 建立實用機械人好容易，而且可以發揮好大作用。喺呢度睇吓一啲例子："
+  "chat.dadBotExamples": "為 Nostr 同 Anagram 建立實用機械人好容易，而且可以發揮好大作用。喺呢度睇吓一啲例子：",
+  "chat.historyKeys": "正在還原群組金鑰…",
+  "chat.historyMessages": "正在載入訊息…",
+  "chat.historyRetry": "部分記錄未能載入。向上捲動或選擇「更多」重試。"
 }

@@ -875,5 +875,8 @@
   "message.upload": "Yükle",
   "contacts.addContactAction": "Kişi Ekle",
   "chat.dadBotIntro": "Dad Bot’a bir şey yazın, size bir şakayla yanıt versin.",
-  "chat.dadBotExamples": "Nostr ve Anagram için yararlı botlar geliştirmek kolaydır ve inanılmaz olanaklar sunar. Bazı örneklere buradan bakabilirsiniz:"
+  "chat.dadBotExamples": "Nostr ve Anagram için yararlı botlar geliştirmek kolaydır ve inanılmaz olanaklar sunar. Bazı örneklere buradan bakabilirsiniz:",
+  "chat.historyKeys": "Grup anahtarları kurtarılıyor…",
+  "chat.historyMessages": "Mesajlar yükleniyor…",
+  "chat.historyRetry": "Geçmişin bir kısmı yüklenemedi. Yeniden denemek için yukarı kaydırın veya Daha fazla seçeneğini seçin."
 }

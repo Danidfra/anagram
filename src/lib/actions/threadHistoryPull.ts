@@ -22,7 +22,11 @@ export function threadHistoryPull(node: HTMLElement, options: HistoryPullOptions
   function wheel(event: WheelEvent) {
     if (event.ctrlKey) return;
     if (options.loading()) {
-      if (event.cancelable) event.preventDefault();
+      // Loading gates requests, never native scrolling. Consume the gesture so
+      // its remaining momentum cannot request another page when loading ends.
+      wheelAt = event.timeStamp;
+      wheelEligible = false;
+      wheelDistance = 0;
       return;
     }
     const fresh = event.timeStamp < wheelAt || event.timeStamp - wheelAt > 180;
@@ -64,7 +68,7 @@ export function threadHistoryPull(node: HTMLElement, options: HistoryPullOptions
   }
   function touchMove(event: TouchEvent) {
     if (options.loading()) {
-      if (event.cancelable) event.preventDefault();
+      touch = null;
       return;
     }
     if (!touch) return;

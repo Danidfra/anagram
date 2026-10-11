@@ -2823,6 +2823,7 @@ export const useMessageStore = defineStore('messageStore', () => {
   });
 
   return {
+    pinMessageWindow,
     messagesByChat,
     paginationStateByChat,
     init,

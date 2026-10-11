@@ -875,5 +875,8 @@
   "message.upload": "Envoyer",
   "contacts.addContactAction": "Ajouter un contact",
   "chat.dadBotIntro": "Dites quelque chose au Dad Bot et il vous répondra avec une blague.",
-  "chat.dadBotExamples": "Créer des bots utiles pour Nostr et Anagram est facile et offre des possibilités incroyables. Découvrez quelques exemples ici :"
+  "chat.dadBotExamples": "Créer des bots utiles pour Nostr et Anagram est facile et offre des possibilités incroyables. Découvrez quelques exemples ici :",
+  "chat.historyKeys": "Récupération des clés du groupe…",
+  "chat.historyMessages": "Chargement des messages…",
+  "chat.historyRetry": "Une partie de l’historique n’a pas pu être chargée. Faites défiler vers le haut ou choisissez Plus pour réessayer."
 }

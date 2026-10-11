@@ -875,5 +875,8 @@
   "message.upload": "Hochladen",
   "contacts.addContactAction": "Kontakt hinzufügen",
   "chat.dadBotIntro": "Schreib dem Dad Bot irgendetwas und er antwortet mit einem Witz.",
-  "chat.dadBotExamples": "Nützliche Bots für Nostr und Anagram zu entwickeln ist einfach und eröffnet unglaublich viele Möglichkeiten. Hier findest du einige Beispiele:"
+  "chat.dadBotExamples": "Nützliche Bots für Nostr und Anagram zu entwickeln ist einfach und eröffnet unglaublich viele Möglichkeiten. Hier findest du einige Beispiele:",
+  "chat.historyKeys": "Gruppenschlüssel werden wiederhergestellt…",
+  "chat.historyMessages": "Nachrichten werden geladen…",
+  "chat.historyRetry": "Ein Teil des Verlaufs konnte nicht geladen werden. Scrolle nach oben oder wähle Mehr, um es erneut zu versuchen."
 }

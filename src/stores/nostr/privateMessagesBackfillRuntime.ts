@@ -1,3 +1,4 @@
+import { createGroupHistoryRuntime } from '#src/stores/nostr/groupHistoryRuntime.ts';
 import { createThreadHistoryRuntime } from '#src/stores/nostr/threadHistoryRuntime.ts';
 import { MESSAGE_HYDRATION_VERSION } from '#src/lib/nostr/hydrationVersion.ts';
 import { messageInbox } from '#src/lib/nostr/inbox.ts';
@@ -61,6 +62,8 @@ interface MissingMessageDependencyRepairState {
   seedRelayUrls: string[];
   timerId: ReturnType<typeof globalThis.setTimeout> | null;
   attemptIndex: number;
+  minimumWindowIndex: number;
+  controller: AbortController | null;
   runningPromise: Promise<boolean> | null;
   cancelled: boolean;
 }
@@ -70,6 +73,7 @@ function getAggressiveMissingMessageDependencyRepairAttemptIndex(): number {
 }
 
 interface PrivateMessagesBackfillRuntimeDeps {
+  replayPendingGroupPage?: (recipients: string[], until: number) => Promise<void>;
   ensureLiveRecipientSubscription?: () => Promise<void>;
   beginStartupInternalTask: (
     parentStepId: StartupStepId,
@@ -146,6 +150,7 @@ interface PrivateMessagesBackfillRuntimeDeps {
 }
 
 export function createPrivateMessagesBackfillRuntime({
+  replayPendingGroupPage = async () => {},
   ensureLiveRecipientSubscription = async () => {},
   beginStartupInternalTask,
   buildFilterSinceDetails,
@@ -178,7 +183,6 @@ export function createPrivateMessagesBackfillRuntime({
   let privateMessagesBackfillRunToken = 0;
   let historyAbort: AbortController | null = null;
   const coverage = createHistoryCoverage(getLoggedInPublicKeyHex);
-  const historyRecipients = new Set<string>();
   const historyRelaySeeds = new Set<string>();
   const missingMessageDependencyRepairs = new Map<string, MissingMessageDependencyRepairState>();
 
@@ -272,11 +276,11 @@ export function createPrivateMessagesBackfillRuntime({
 
     clearMissingMessageDependencyRepairTimer(existingState);
     existingState.cancelled = true;
+    existingState.controller?.abort();
     missingMessageDependencyRepairs.delete(targetEventId);
   }
 
   function stopPrivateMessagesBackfill(reason = 'replace'): void {
-    historyRecipients.clear();
     historyRelaySeeds.clear();
     historyAbort?.abort();
     historyAbort = null;
@@ -304,13 +308,14 @@ export function createPrivateMessagesBackfillRuntime({
     signal?: AbortSignal;
     foreground?: boolean;
     reprocess?: boolean;
+    timeoutMs?: number;
   }): Promise<{ eventCount: number; relayUrls: string[]; oldest: number }> {
     const runToken = privateMessagesBackfillRunToken;
     let eventCount = 0;
     let oldestEvent = Infinity;
     const cancelled = () =>
       options.signal?.aborted ||
-      runToken !== privateMessagesBackfillRunToken ||
+      (!options.signal && runToken !== privateMessagesBackfillRunToken) ||
       options.loggedInPubkeyHex !== getLoggedInPublicKeyHex();
     const completedRelays: string[] = [];
     const readyRelays =
@@ -349,7 +354,7 @@ export function createPrivateMessagesBackfillRuntime({
             const aborted = () => finish(new Error('Thread history cancelled'));
             const deadline = setTimeout(
               () => finish(new Error('Message history relay timed out')),
-              30000,
+              options.timeoutMs ?? 30000,
             );
             options.signal?.addEventListener('abort', aborted, { once: true });
             if (cancelled()) {
@@ -438,8 +443,8 @@ export function createPrivateMessagesBackfillRuntime({
                   limit: pageLimit(),
                 },
               );
-              if (!settled && !receivedEose) historySubscriptions.add(subscription);
-              else subscription.stop();
+              if (settled || receivedEose) subscription.stop();
+              else if (!options.signal) historySubscriptions.add(subscription);
             } catch (error) {
               finish(error);
             }
@@ -466,6 +471,7 @@ export function createPrivateMessagesBackfillRuntime({
     since: number;
     until?: number;
     reprocess?: boolean;
+    signal?: AbortSignal;
   }): Promise<void> {
     if (!options.relayUrls.length) return;
     const until = options.until ?? Math.floor(Date.now() / 1000);
@@ -492,6 +498,7 @@ export function createPrivateMessagesBackfillRuntime({
     since: number;
     until?: number;
     reprocess?: boolean;
+    signal?: AbortSignal;
   }): Promise<void> {
     if (!options.relayUrls.length) return;
     const until = options.until ?? Math.floor(Date.now() / 1000);
@@ -532,7 +539,7 @@ export function createPrivateMessagesBackfillRuntime({
     };
   }
 
-  function resolveInitialMissingMessageDependencyRepairAttemptIndex(
+  function resolveInitialMissingMessageDependencyRepairWindowIndex(
     options: RepairMissingMessageDependencyOptions,
   ): number {
     if (options.reason === 'reply-target-missing') {
@@ -628,7 +635,7 @@ export function createPrivateMessagesBackfillRuntime({
 
     const { since, until, windowSeconds } = buildMissingMessageDependencyRepairBounds(
       state.referenceCreatedAt,
-      state.attemptIndex,
+      Math.max(state.minimumWindowIndex, state.attemptIndex),
     );
     if (since >= until) {
       logSubscription('private-messages', 'dependency-repair-skip', {
@@ -662,31 +669,67 @@ export function createPrivateMessagesBackfillRuntime({
       repairTarget.recipientPubkeys,
       relayUrls,
     );
-    for (const { publicKey: recipientPubkey, relayUrls: recipientRelayUrls } of repairRoutes) {
-      if (repairTarget.groupPublicKey) {
-        await runGroupEpochHistoryRestoreWindow({
-          loggedInPubkeyHex,
-          groupPublicKey: repairTarget.groupPublicKey,
-          recipientPubkey,
-          relayUrls: recipientRelayUrls,
-          since,
-          until,
-          reprocess: true,
-        });
-      } else {
-        await runPrivateMessagesForRecipientRestoreWindow({
-          loggedInPubkeyHex,
-          recipientPubkey,
-          relayUrls: recipientRelayUrls,
-          since,
-          until,
-          reprocess: true,
-        });
+    // A relay owns its epoch scan: a slow or failed replica must not hold up
+    // older epochs on healthy replicas. Keep at most one query per relay here.
+    const routesByRelay = new Map<string, string[]>();
+    for (const route of repairRoutes) {
+      for (const relayUrl of route.relayUrls) {
+        const recipients = routesByRelay.get(relayUrl) ?? [];
+        recipients.push(route.publicKey);
+        routesByRelay.set(relayUrl, recipients);
       }
-
-      if (await hasStoredDependencyTarget(state.targetEventId)) {
-        return true;
-      }
+    }
+    const controller = new AbortController();
+    state.controller = controller;
+    const runToken = privateMessagesBackfillRunToken;
+    const cancelled = () =>
+      state.cancelled ||
+      controller.signal.aborted ||
+      runToken !== privateMessagesBackfillRunToken ||
+      loggedInPubkeyHex !== getLoggedInPublicKeyHex();
+    try {
+      await Promise.all(
+        [...routesByRelay].map(async ([relayUrl, recipients]) => {
+          for (const recipientPubkey of recipients) {
+            if (cancelled()) return;
+            try {
+              const options = {
+                loggedInPubkeyHex,
+                recipientPubkey,
+                relayUrls: [relayUrl],
+                since,
+                until,
+                reprocess: true,
+                signal: controller.signal,
+              };
+              if (repairTarget.groupPublicKey) {
+                await runGroupEpochHistoryRestoreWindow({
+                  ...options,
+                  groupPublicKey: repairTarget.groupPublicKey,
+                });
+              } else {
+                await runPrivateMessagesForRecipientRestoreWindow(options);
+              }
+            } catch (error) {
+              if (cancelled()) return;
+              logSubscription('private-messages', 'dependency-repair-query-error', {
+                targetEventId: formatSubscriptionLogValue(state.targetEventId),
+                recipientPubkey: formatSubscriptionLogValue(recipientPubkey),
+                relayUrl,
+                error,
+              });
+            }
+            if (cancelled()) return;
+            if (await hasStoredDependencyTarget(state.targetEventId)) {
+              controller.abort();
+              return;
+            }
+          }
+        }),
+      );
+    } finally {
+      controller.abort();
+      if (state.controller === controller) state.controller = null;
     }
 
     return hasStoredDependencyTarget(state.targetEventId);
@@ -819,6 +862,20 @@ export function createPrivateMessagesBackfillRuntime({
       return true;
     }
 
+    const chat = await chatDataService.getChatByPublicKey(normalizedChatPublicKey);
+    if (chat?.type === 'group') {
+      // Passive reply/reaction/pin discovery must not silently scan group archives.
+      if (options.reason !== 'reply-open' || options.force !== true) return false;
+      if (targetReference !== normalizedTargetEventId) {
+        targetHistory.stop();
+        targetReference = normalizedTargetEventId;
+      }
+      await targetHistory.load(
+        normalizedChatPublicKey,
+        options.referenceCreatedAt ?? Math.floor(Date.now() / 1000),
+      );
+      return hasStoredDependencyTarget(normalizedTargetEventId);
+    }
     let state = missingMessageDependencyRepairs.get(normalizedTargetEventId) ?? null;
     if (!state) {
       state = {
@@ -829,7 +886,9 @@ export function createPrivateMessagesBackfillRuntime({
         scheduledAt: null,
         seedRelayUrls: mergeSeedRelayUrls([], options.seedRelayUrls),
         timerId: null,
-        attemptIndex: resolveInitialMissingMessageDependencyRepairAttemptIndex(options),
+        attemptIndex: 0,
+        minimumWindowIndex: resolveInitialMissingMessageDependencyRepairWindowIndex(options),
+        controller: null,
         runningPromise: null,
         cancelled: false,
       };
@@ -863,12 +922,16 @@ export function createPrivateMessagesBackfillRuntime({
     });
 
     if (options.force === true && state.runningPromise === null) {
-      state.attemptIndex = resolveInitialMissingMessageDependencyRepairAttemptIndex(options);
+      state.attemptIndex = 0;
+      state.minimumWindowIndex = resolveInitialMissingMessageDependencyRepairWindowIndex(options);
     }
 
     if (state.runningPromise) {
       return state.runningPromise;
     }
+
+    // Repeated references to the same missing message must respect backoff.
+    if (state.timerId !== null && options.force !== true) return false;
 
     if (options.immediate === false) {
       scheduleMissingMessageDependencyRepair(
@@ -906,10 +969,12 @@ export function createPrivateMessagesBackfillRuntime({
     if (!chat || chat.type !== 'group' || chat.meta.deleted_locally === true) return;
     const recipients = resolveGroupChatEpochEntries(chat).map((entry) => entry.epoch_public_key);
     if (!recipients.includes(epoch)) return;
-    await ensureLiveRecipientSubscription();
-    const relays = await resolvePrivateMessageReadRelayUrls(options.seedRelayUrls);
     if (owner !== getLoggedInPublicKeyHex()) return;
-    startPrivateMessagesStartupBackfill(owner, [owner, ...recipients], relays, 0);
+    groupHistory.invalidate(group);
+    await ensureLiveRecipientSubscription();
+    // Key discovery enables live delivery. Historical messages are requested by
+    // the selected thread coordinator, never by each recovered ticket.
+    void options;
   }
 
   async function restorePrivateMessagesForRecipient(
@@ -945,13 +1010,11 @@ export function createPrivateMessagesBackfillRuntime({
 
     const signature = `${normalizedPubkey}:${normalizedRecipientPubkeys.join(',')}:${relaySignature(relayUrls)}:${liveSince}`;
     if (privateMessagesBackfillPromise) {
-      normalizedRecipientPubkeys.forEach((key) => historyRecipients.add(key));
       relayUrls.forEach((url) => historyRelaySeeds.add(url));
       return;
     }
 
     stopPrivateMessagesBackfill('replace');
-    normalizedRecipientPubkeys.forEach((key) => historyRecipients.add(key));
     relayUrls.forEach((url) => historyRelaySeeds.add(url));
     const runToken = ++privateMessagesBackfillRunToken;
     const controller = new AbortController();
@@ -985,18 +1048,10 @@ export function createPrivateMessagesBackfillRuntime({
       onDiscoveryError: (error) =>
         logSubscription('private-messages', 'backfill-discovery-retry', { error }),
       discover: async () => {
-        const chats = await chatDataService.listChats();
         if (cancelled()) return [];
-        const recipients = [
-          ...new Set([
-            ...historyRecipients,
-            ...chats
-              .filter((chat) => chat.type === 'group')
-              .flatMap((chat) =>
-                resolveGroupChatEpochEntries(chat).map((entry) => entry.epoch_public_key),
-              ),
-          ]),
-        ];
+        // Account-inbox discovery restores chats and encrypted epoch tickets.
+        // Epoch message archives belong exclusively to demand-driven thread paging.
+        const recipients = [normalizedPubkey];
         const routes = await resolvePrivateMessageRelayScopes(
           recipients,
           await resolvePrivateMessageReadRelayUrls([...historyRelaySeeds]),
@@ -1155,27 +1210,103 @@ export function createPrivateMessagesBackfillRuntime({
         requestLabel: 'selected-thread-history',
       });
     },
-    onError: () => logSubscription('private-messages', 'selected-thread-history-retry'),
+    onError: (error) =>
+      logSubscription('private-messages', 'selected-thread-history-retry', { error }),
   });
 
-  function prioritizeThreadHistory(chatPublicKey: string | null, refresh = false): void {
-    threadHistory.select(
-      chatPublicKey ? inputSanitizerService.normalizeHexKey(chatPublicKey) : null,
-      refresh,
-    );
+  const groupHistoryDeps: Parameters<typeof createGroupHistoryRuntime>[0] = {
+    owner: getLoggedInPublicKeyHex,
+    context: async (chatPublicKey) => {
+      const chat = await chatDataService.getChatByPublicKey(chatPublicKey);
+      if (chat?.type !== 'group' || chat.meta.deleted_locally === true) return null;
+      const relays = await resolvePrivateMessageReadRelayUrls();
+      return {
+        routes: await resolvePrivateMessageRelayScopes(
+          resolveGroupChatEpochEntries(chat).map((entry) => entry.epoch_public_key),
+          relays,
+        ),
+        discoveryRelays: relays,
+      };
+    },
+    query: async (query) => queryGroupHistoryPage(query),
+    onError: (error) => logSubscription('private-messages', 'group-page-retry', { error }),
+  };
+  async function queryGroupHistoryPage(
+    {
+      owner,
+      recipients,
+      relayUrl,
+      pager,
+      signal,
+      discovery,
+    }: Parameters<typeof groupHistoryDeps.query>[0],
+    reprocess = false,
+  ) {
+    if (!discovery) await replayPendingGroupPage(recipients, pager.until);
+    if (signal.aborted || owner !== getLoggedInPublicKeyHex())
+      throw new Error('Group page cancelled');
+    return runPrivateMessagesBackfillWindow({
+      loggedInPubkeyHex: owner,
+      recipientPubkeys: recipients,
+      relayUrls: [relayUrl],
+      since: pager.since,
+      until: pager.until,
+      pager,
+      signal,
+      foreground: true,
+      requireReady: false,
+      signature: `group-page:${owner}:${relayUrl}`,
+      timeoutMs: 10000,
+      reprocess,
+      requestLabel: discovery ? 'group-page-keys' : 'group-page-messages',
+    });
   }
+  const groupHistory = createGroupHistoryRuntime(groupHistoryDeps);
+  const targetHistory = createGroupHistoryRuntime({
+    ...groupHistoryDeps,
+    query: (query) => queryGroupHistoryPage(query, true),
+  });
+  let targetReference = '';
+  let selectedThread: string | null = null;
+  let selectionVersion = 0;
+  function prioritizeThreadHistory(chatPublicKey: string | null, refresh = false): void {
+    const chat = chatPublicKey ? inputSanitizerService.normalizeHexKey(chatPublicKey) : null;
+    if (chat === selectedThread && !refresh) return;
+    selectedThread = chat;
+    const version = ++selectionVersion;
+    threadHistory.stop();
+    groupHistory.stop();
+    targetHistory.stop();
+    if (!chat) return;
+    void chatDataService
+      .getChatByPublicKey(chat)
+      .then((row) => {
+        if (version !== selectionVersion) return;
+        if (row?.type === 'group') void groupHistory.load(chat);
+        else threadHistory.select(chat, refresh);
+      })
+      .catch((error) => logSubscription('private-messages', 'thread-history-error', { error }));
+  }
+  const loadOlderGroupHistory = (chat: string, before: number) => groupHistory.load(chat, before);
 
   function resetPrivateMessagesBackfillRuntimeState(): void {
+    selectedThread = null;
+    selectionVersion++;
+    groupHistory.stop();
+    targetHistory.stop();
     threadHistory.stop();
     stopPrivateMessagesBackfill('reset');
     for (const state of missingMessageDependencyRepairs.values()) {
       clearMissingMessageDependencyRepairTimer(state);
       state.cancelled = true;
+      state.controller?.abort();
     }
     missingMessageDependencyRepairs.clear();
   }
 
   return {
+    groupHistoryState: groupHistory.state,
+    loadOlderGroupHistory,
     prioritizeThreadHistory,
     repairMissingMessageDependency,
     resetPrivateMessagesBackfillRuntimeState,
