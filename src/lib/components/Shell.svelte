@@ -204,6 +204,9 @@
   let groupMembers = '';
   let groupAbout = '';
   let modalError = '';
+  let chatConfirmation: { id: string; name: string; action: 'delete' | 'block' } | null = null;
+  let chatConfirmationBusy = false;
+  let chatConfirmationError = '';
   let contacts: ContactRecord[] = [];
   let contactsLoaded = false;
   // Profile hydration may cache a contact before its request is accepted.
@@ -853,6 +856,12 @@
     }
   }
   async function chatAction(chat: Chat, action: string) {
+    if (action === 'delete' || action === 'block') {
+      if (chatConfirmation) return;
+      chatConfirmation = { id: chat.id, name: chat.name, action };
+      chatConfirmationError = '';
+      return;
+    }
     await act(async () => {
       if (action === 'profile') {
         await open(chat);
@@ -865,15 +874,30 @@
         await (chat.meta.muted
           ? nostr.unmutePubkey(chat.id, relays.relays)
           : nostr.mutePubkey(chat.id, relays.relays));
-      else if (action === 'accept') await chats.acceptChat(chat.id);
-      else if (action === 'read') {
+      else if (action === 'accept') {
+        await chats.acceptChat(chat.id);
+        await open(chat);
+      } else if (action === 'read') {
         const cursor = await chats.markAsRead(chat.id);
         if (cursor) nostr.scheduleContactCursorPublish(chat.id, cursor);
-      } else if (action === 'block' && confirm('Block this conversation?'))
-        await chats.blockChat(chat.id);
-      else if (action === 'delete' && confirm('Delete this conversation?'))
-        await chats.deleteChat(chat.id);
+      }
     });
+  }
+  async function confirmChatAction() {
+    if (!chatConfirmation || chatConfirmationBusy) return;
+    const { id, action } = chatConfirmation;
+    chatConfirmationBusy = true;
+    chatConfirmationError = '';
+    try {
+      if (action === 'block') await chats.blockChat(id);
+      else if (!(await chats.deleteChat(id)))
+        throw new Error('Could not delete this conversation. Please try again.');
+      chatConfirmation = null;
+    } catch (error) {
+      chatConfirmationError = error instanceof Error ? error.message : String(error);
+    } finally {
+      chatConfirmationBusy = false;
+    }
   }
   async function addContact() {
     busy = true;
@@ -1841,6 +1865,30 @@
     </ModalFrame>
   {/if}
 {/if}
+{#if chatConfirmation}
+  <ModalFrame
+    title={chatConfirmation.action === 'delete' ? 'Delete conversation?' : 'Block conversation?'}
+    busy={chatConfirmationBusy}
+    onclose={() => {
+      if (!chatConfirmationBusy) chatConfirmation = null;
+    }}
+  >
+    <p>{chatConfirmation.name}</p>
+    {#if chatConfirmationError}<p class="error" role="alert">{chatConfirmationError}</p>{/if}
+    <div class="confirmation-actions">
+      <button
+        class="outline"
+        disabled={chatConfirmationBusy}
+        onclick={() => (chatConfirmation = null)}>{$translate('common.cancel')}</button
+      >
+      <button class="danger" disabled={chatConfirmationBusy} onclick={confirmChatAction}
+        >{$translate(
+          chatConfirmation.action === 'delete' ? 'common.delete' : 'common.block',
+        )}</button
+      >
+    </div>
+  </ModalFrame>
+{/if}
 {#if actionMessage}{#key actionMessage.id}<MessageActions
       message={actionMessage}
       x={contextPosition.x}
@@ -1877,6 +1925,11 @@
 {/if}
 
 <style>
+  .confirmation-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+  }
   .group-choices {
     display: grid;
     gap: 12px;

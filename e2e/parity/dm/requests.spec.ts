@@ -6,7 +6,6 @@ import {
   deleteFirstRequest,
   disposeUsers,
   expectNoUnexpectedBrowserErrors,
-  navigateToChat,
   openDirectChatFromIdentifier,
   openRequests,
   sendMessage,
@@ -18,41 +17,46 @@ import {
 
 // Each scenario owns its accounts; a failure must not skip other coverage.
 
-test('first-contact DM becomes a request, can be accepted, and supports reply', async ({
-  browser,
-}) => {
-  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.requestAlice);
-  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.requestBob);
+for (const width of [1280, 390]) {
+  test(`accepting a first-contact DM opens the conversation and supports reply at ${width}px`, async ({
+    browser,
+  }) => {
+    const alice = await bootstrapUser(browser, TEST_ACCOUNTS[`requestAlice${width}`]);
+    const bob = await bootstrapUser(browser, TEST_ACCOUNTS[`requestBob${width}`]);
 
-  try {
-    const openingMessage = `hello-from-alice-${Date.now()}`;
-    const replyMessage = `reply-from-bob-${Date.now()}`;
+    try {
+      await bob.page.setViewportSize({ width, height: 844 });
+      const openingMessage = `hello-from-alice-${Date.now()}`;
+      const replyMessage = `reply-from-bob-${Date.now()}`;
 
-    await openDirectChatFromIdentifier(
-      alice.page,
-      bob.session.publicKey,
-      TEST_ACCOUNTS.requestBob.displayName,
-    );
-    await sendMessage(alice.page, openingMessage, {
-      chatId: bob.session.publicKey,
-    });
+      await openDirectChatFromIdentifier(
+        alice.page,
+        bob.session.publicKey,
+        bob.account.displayName,
+      );
+      await sendMessage(alice.page, openingMessage, {
+        chatId: bob.session.publicKey,
+      });
 
-    await openRequests(bob.page);
-    await expect(bob.page.getByTestId('chat-request-item')).toContainText(openingMessage);
-    await acceptFirstRequest(bob.page);
+      await openRequests(bob.page);
+      await expect(bob.page.getByTestId('chat-request-item')).toContainText(openingMessage);
+      await acceptFirstRequest(bob.page);
 
-    await navigateToChat(bob.page, alice.session.publicKey);
-    await sendMessage(bob.page, replyMessage, {
-      chatId: alice.session.publicKey,
-    });
-    await waitForThreadMessage(alice.page, replyMessage, {
-      chatId: bob.session.publicKey,
-    });
-    await expectNoUnexpectedBrowserErrors([alice, bob]);
-  } finally {
-    await disposeUsers(alice, bob);
-  }
-});
+      await expect(bob.page).toHaveURL(new RegExp(`/chats/${alice.session.publicKey}$`));
+      await waitForThreadMessage(bob.page, openingMessage, { chatId: alice.session.publicKey });
+      await expect(bob.page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+      await sendMessage(bob.page, replyMessage, {
+        chatId: alice.session.publicKey,
+      });
+      await waitForThreadMessage(alice.page, replyMessage, {
+        chatId: bob.session.publicKey,
+      });
+      await expectNoUnexpectedBrowserErrors([alice, bob]);
+    } finally {
+      await disposeUsers(alice, bob);
+    }
+  });
+}
 
 test('deleting a first-contact DM request keeps later messages in requests instead of accepted chats', async ({
   browser,

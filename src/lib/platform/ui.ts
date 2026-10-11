@@ -23,19 +23,46 @@ export interface CallRelayPrompt {
   finish: (allow: boolean) => void;
 }
 export const callRelayPrompts = writable<CallRelayPrompt[]>([]);
+interface DialogOptions {
+  title?: string;
+  message?: string;
+  ok?: { label?: string; [key: string]: unknown };
+  cancel?: { label?: string; [key: string]: unknown };
+  persistent?: boolean;
+  callRelay?: boolean;
+  options?: {
+    type: 'checkbox';
+    model: string[];
+    items: { label: string; value: string; [key: string]: unknown }[];
+  };
+  [key: string]: unknown;
+}
+export interface AppPrompt {
+  id: number;
+  title: string;
+  message: string;
+  allowLabel: string;
+  cancelLabel: string;
+  persistent: boolean;
+  choices: { label: string; value: string }[];
+  selected: string[];
+  finish: (allow: boolean, selected?: string[]) => void;
+}
+export const appPrompts = writable<AppPrompt[]>([]);
 let promptSequence = 0;
 export const Dialog = {
-  create(options: { title?: string; message?: string; [key: string]: unknown }) {
+  create(options: DialogOptions) {
     let ok: (value?: unknown) => void = () => {};
     let dismiss: () => void = () => {};
     let cancel: () => void = () => {};
     let hidden = false;
     const promptId = ++promptSequence;
-    const finish = (allow: boolean) => {
+    const finish = (allow: boolean, selected?: string[]) => {
       if (hidden) return;
       hidden = true;
       callRelayPrompts.update((items) => items.filter((item) => item.id !== promptId));
-      if (allow) ok();
+      appPrompts.update((items) => items.filter((item) => item.id !== promptId));
+      if (allow) ok(selected);
       else cancel();
       dismiss();
     };
@@ -70,11 +97,20 @@ export const Dialog = {
       ]);
       return result;
     }
-    setTimeout(() => {
-      if (!hidden && window.confirm(`${options.title ?? ''}\n\n${options.message ?? ''}`)) ok();
-      else if (!hidden) cancel();
-      dismiss();
-    });
+    appPrompts.update((items) => [
+      ...items,
+      {
+        id: promptId,
+        title: options.title ?? '',
+        message: options.message ?? '',
+        allowLabel: options.ok?.label ?? 'OK',
+        cancelLabel: options.cancel?.label ?? 'Cancel',
+        persistent: options.persistent === true,
+        choices: options.options?.items ?? [],
+        selected: [...(options.options?.model ?? [])],
+        finish,
+      },
+    ]);
     return result;
   },
 };

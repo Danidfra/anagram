@@ -212,9 +212,17 @@ export async function acceptFirstRequest(
 }
 export async function deleteFirstRequest(page: Page) {
   await request(page).getByRole('button', { name: 'Delete Chat', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Delete conversation?', exact: true })
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click();
 }
 export async function blockFirstRequest(page: Page) {
   await request(page).getByRole('button', { name: 'Block', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Block conversation?', exact: true })
+    .getByRole('button', { name: 'Block', exact: true })
+    .click();
 }
 export async function waitForNoRequests(page: Page) {
   await expect(page.getByTestId('chat-request-item')).toHaveCount(0);

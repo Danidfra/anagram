@@ -41,8 +41,30 @@ for (const width of [1280, 390]) {
       if (width === 390)
         await page.getByRole('button', { name: 'Back to chats', exact: true }).click();
       const botRow = page.locator('.chat-row').filter({ has: bot });
+      await page.evaluate(() => {
+        window.confirm = () => {
+          throw new Error('Native confirmation must not be used');
+        };
+      });
       await botRow.getByRole('button', { name: 'Chat actions', exact: true }).click();
       await botRow.getByRole('menuitem', { name: 'Delete Chat', exact: true }).click();
+      const deletion = page.getByRole('dialog', { name: 'Delete conversation?', exact: true });
+      await expect(deletion).toContainText('Dad Jokes');
+      await expect(bot).toHaveCount(1);
+      await deletion.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(deletion).toBeHidden();
+      await expect(bot).toHaveCount(1);
+      await botRow.getByRole('button', { name: 'Chat actions', exact: true }).click();
+      await botRow.getByRole('menuitem', { name: 'Block', exact: true }).click();
+      await expect(
+        page.getByRole('dialog', { name: 'Block conversation?', exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog')).toBeHidden();
+      await expect(bot).toHaveCount(1);
+      await botRow.getByRole('button', { name: 'Chat actions', exact: true }).click();
+      await botRow.getByRole('menuitem', { name: 'Delete Chat', exact: true }).click();
+      await deletion.getByRole('button', { name: 'Delete', exact: true }).click();
       await expect(bot).toHaveCount(0);
       await own.click();
       await expect(page).toHaveURL(new RegExp(`/chats/${user.session.publicKey}$`));
@@ -53,6 +75,7 @@ for (const width of [1280, 390]) {
       const ownRow = page.locator('.chat-row').filter({ has: own });
       await ownRow.getByRole('button', { name: 'Chat actions', exact: true }).click();
       await ownRow.getByRole('menuitem', { name: 'Delete Chat', exact: true }).click();
+      await deletion.getByRole('button', { name: 'Delete', exact: true }).click();
       await expect(own).toHaveCount(0);
       await group.click();
       await expect(page.getByRole('button', { name: 'Public group settings' })).toContainText(

@@ -21,6 +21,10 @@ const row = (page: Page, group: string) =>
 async function deleteGroup(page: Page, group: string) {
   await row(page, group).locator('..').getByRole('button', { name: 'Chat actions' }).click();
   await page.getByRole('menuitem', { name: 'Delete Chat', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Delete conversation?', exact: true })
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click();
   await expect(row(page, group)).toHaveCount(0);
 }
 async function refreshAndCheckDeleted(page: Page, group: string) {

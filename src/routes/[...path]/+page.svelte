@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import PwaControls from '#src/lib/components/PwaControls.svelte';
+  import AppPrompts from '#src/lib/components/AppPrompts.svelte';
   import Auth from '#src/lib/components/Auth.svelte';
   import Shell from '#src/lib/components/Shell.svelte';
   import { applyThemeAccent, readThemeAccent, ACCENT_STORAGE_KEY } from '#src/utils/themeAccent.ts';
@@ -28,6 +29,7 @@
 </script>
 
 <PwaControls />
+<AppPrompts />
 {#if ready}{#if authenticated}<Shell />{:else}<Auth
       onlogin={() => (authenticated = true)}
     />{/if}{/if}

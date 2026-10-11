@@ -7,6 +7,7 @@
   export let label: string = title;
   export let closeLabel = 'Close dialog';
   export let busy = false;
+  export let persistent = false;
   export let onclose: () => void;
   export let children: Snippet;
   function show(node: HTMLDialogElement) {
@@ -21,10 +22,10 @@
   use:portal
   use:show
   use:dismissOnBackdrop={() => {
-    if (!busy) onclose();
+    if (!busy && !persistent) onclose();
   }}
   oncancel={(event) => {
-    if (busy) event.preventDefault();
+    if (busy || persistent) event.preventDefault();
   }}
   onclose={(event) => {
     if (event.currentTarget.isConnected) onclose();
