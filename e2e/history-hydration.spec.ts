@@ -269,7 +269,7 @@ test('sidebar fills before history finishes and reload resumes past undecryptabl
     await page.evaluate(
       async ({ account, event, relayUrl }) => {
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const request = indexedDB.open('anagram-hydration-inbox', 2);
+          const request = indexedDB.open('anagram-hydration-inbox');
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
         });

@@ -11,6 +11,7 @@ import {
   PRIVATE_MESSAGES_STARTUP_RESTORE_THROTTLE_MS,
   PRIVATE_MESSAGES_WATCHDOG_INTERVAL_MS,
   PRIVATE_MESSAGES_WATCHDOG_RECOVERY_COOLDOWN_MS,
+  PRIVATE_MESSAGES_STARTUP_LIVE_LOOKBACK_SECONDS,
 } from '#src/stores/nostr/constants.ts';
 import {
   createDesiredSubscriptions,
@@ -592,8 +593,22 @@ export function createPrivateMessagesSubscriptionRuntime({
         const current = scopes.get(publicKey);
         // A wall-clock/cursor advance never narrows an existing live listener. Epoch catch-up
         // is owned by history restore and must not broaden unrelated recipients' windows.
-        const since = current && !unhealthy ? current.since : requestedSince;
-        const filters: NostrFilter = { kinds: [NostrKind.GiftWrap], '#p': [publicKey], since };
+        const groupRecipient = publicKey !== loggedInPubkeyHex;
+        const initialSince = groupRecipient
+          ? Math.max(
+              requestedSince,
+              Math.floor(Date.now() / 1000) - PRIVATE_MESSAGES_STARTUP_LIVE_LOOKBACK_SECONDS,
+            )
+          : requestedSince;
+        const since = current && !unhealthy ? current.since : initialSince;
+        // Recovered old tickets can move the account's receive watermark far
+        // back. A live epoch listener must not become an unbounded archive query.
+        const filters: NostrFilter = {
+          kinds: [NostrKind.GiftWrap],
+          '#p': [publicKey],
+          since,
+          ...(groupRecipient ? { limit: 128 } : {}),
+        };
         const signature = subscriptionSignature(filters, relayUrls);
         return {
           key: publicKey,

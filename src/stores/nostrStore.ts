@@ -1348,6 +1348,7 @@ export const useNostrStore = defineStore('nostrStore', () => {
     queuePrivateMessageIngestion,
     resetPrivateMessagesIngestRuntimeState,
     resumePendingPrivateMessages,
+    retryPendingEpochMessages,
     repairRestoredOutgoingChats,
   } = createPrivateMessagesIngestRuntime({
     verifyIncomingGroupMessage,
@@ -1533,12 +1534,23 @@ export const useNostrStore = defineStore('nostrStore', () => {
     repairMissingMessageDependency: repairMissingMessageDependencyImpl,
     resetPrivateMessagesBackfillRuntimeState: resetPrivateMessagesBackfillRuntimeStateImpl,
     resolveMissingMessageDependencyRepair: resolveMissingMessageDependencyRepairImpl,
+    groupHistoryState,
+    loadOlderGroupHistory,
     prioritizeThreadHistory,
     restoreGroupEpochHistory: restoreGroupEpochHistoryImpl,
     restorePrivateMessagesForRecipient: restorePrivateMessagesForRecipientImpl,
     startPrivateMessagesStartupBackfill: startPrivateMessagesStartupBackfillImpl,
     stopPrivateMessagesBackfill: stopPrivateMessagesBackfillImpl,
   } = createPrivateMessagesBackfillRuntime({
+    replayPendingGroupPage: async (recipients, until) => {
+      const account = getLoggedInPublicKeyHex();
+      if (!account) return;
+      let remaining = 32;
+      for (const recipient of recipients) {
+        if (remaining <= 0 || account !== getLoggedInPublicKeyHex()) break;
+        remaining -= await retryPendingEpochMessages(ndk, account, recipient, remaining, until);
+      }
+    },
     ensureLiveRecipientSubscription: () => subscribePrivateMessagesForLoggedInUserImpl(),
     beginStartupInternalTask,
     buildFilterSinceDetails,
@@ -2457,6 +2469,8 @@ export const useNostrStore = defineStore('nostrStore', () => {
     restoreMuteList,
     restoreContactCursorState,
     restoreGroupIdentitySecrets,
+    groupHistoryState,
+    loadOlderGroupHistory,
     prioritizeThreadHistory,
     restoreGroupEpochHistory: restoreGroupEpochHistoryRuntime,
     restoreMyRelayList,

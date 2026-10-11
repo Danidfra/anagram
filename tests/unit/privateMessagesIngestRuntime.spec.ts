@@ -259,6 +259,94 @@ describe('privateMessagesIngestRuntime', () => {
     expect(deps.chatStore.applyIncomingMessage).not.toHaveBeenCalled();
   });
 
+  it.each(['idle', 'active', 'in-flight'])('retries a saved epoch while the inbox is %s without another relay delivery', async (mode) => {
+    const { MessageInbox } = await import('#src/lib/nostr/inbox.ts');
+    const { ClientEvent: Event } = await import('#src/lib/nostr/client.ts');
+    const account = crypto.randomUUID(), epoch = 'd'.repeat(64), group = 'c'.repeat(64);
+    const inbox = new MessageInbox();
+    const deps = createDeps();
+    const runtime = createPrivateMessagesIngestRuntime(deps);
+    const chat = { public_key: group, type: 'group', name: 'Group', meta: {}, unread_count: 0 };
+    const wrap = (id: string) => new Event(undefined, {
+      id, pubkey: 'a'.repeat(64), kind: 1059, created_at: 1700000000,
+      tags: [['p', epoch]], content: 'ciphertext',
+    });
+    let keySaved = false;
+    let entered!: () => void, release!: () => void;
+    const blocked = new Promise<void>((resolve) => { entered = resolve; });
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    deps.resolveIncomingPrivateMessageRecipientContext.mockImplementation(async (event) => {
+      const availableAtStart = keySaved;
+      if ((mode === 'in-flight' && !keySaved) || event.id === 'hold') {
+        entered(); await barrier;
+      }
+      if (!availableAtStart || event.id === 'hold') return null;
+      return { recipientPubkey: epoch, groupChatPublicKey: group, unwrapSigner: {} as never };
+    });
+    deps.findGroupChatEpochContextByRecipientPubkey.mockImplementation(async (key) => key === epoch ? {
+      chat, epochEntry: { epoch_number: 0, epoch_public_key: epoch },
+    } : null);
+    ndkMocks.giftUnwrap.mockResolvedValue(makeRumorEvent({ recipientPubkey: epoch, content: 'Recovered after key' }));
+    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue(chat);
+    serviceMocks.chatDataService.createMessage.mockResolvedValue({
+      id: 45, chat_public_key: group, author_public_key: 'a'.repeat(64),
+      created_at: '2023-11-14T22:13:20.000Z', event_id: 'rumor-event', meta: {},
+    });
+    const initial = runtime.queuePrivateMessageIngestion(wrap('early'), account);
+    let hold: Promise<boolean> | undefined;
+    if (mode === 'in-flight') await blocked;
+    else {
+      expect(await initial).toBe(false);
+      if (mode === 'active') {
+        hold = runtime.queuePrivateMessageIngestion(wrap('hold'), account);
+        await blocked;
+      } else await runtime.getPrivateMessagesIngestQueue();
+    }
+    keySaved = true;
+    const replay = runtime.retryPendingEpochMessages(undefined, account, epoch);
+    expect(runtime.retryPendingEpochMessages(undefined, account, epoch)).toBe(replay);
+    release();
+    await initial;
+    await hold;
+    await replay;
+    await runtime.getPrivateMessagesIngestQueue();
+    expect(serviceMocks.chatDataService.createMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ message: 'Recovered after key', chat_public_key: group }),
+    );
+    expect(await inbox.hasPending(account, 'early')).toBe(false);
+    expect(await inbox.hasProcessed(account, 'early')).toBe(true);
+    runtime.resetPrivateMessagesIngestRuntimeState();
+  });
+
+  it('leaves undecryptable epoch ciphertext pending without looping', async () => {
+    const { MessageInbox } = await import('#src/lib/nostr/inbox.ts');
+    const inbox = new MessageInbox(), account = crypto.randomUUID(), epoch = 'd'.repeat(64);
+    await inbox.put({ account, id: 'bad', priority: 1, queuedAt: 1, throttle: 0,
+      event: { id: 'bad', pubkey: 'a'.repeat(64), kind: 1059, created_at: 1, content: 'bad', tags: [['p', epoch]] },
+    });
+    const deps = createDeps(), runtime = createPrivateMessagesIngestRuntime(deps);
+    deps.resolveIncomingPrivateMessageRecipientContext.mockResolvedValue(null);
+    await runtime.retryPendingEpochMessages(undefined, account, epoch);
+    await runtime.getPrivateMessagesIngestQueue();
+    expect(deps.resolveIncomingPrivateMessageRecipientContext).toHaveBeenCalledOnce();
+    expect(await inbox.hasPending(account, 'bad')).toBe(true);
+    expect(await inbox.hasProcessed(account, 'bad')).toBe(false);
+    runtime.resetPrivateMessagesIngestRuntimeState();
+  });
+
+  it('abandons an epoch replay if the account resets during its journal read', async () => {
+    const { MessageInbox } = await import('#src/lib/nostr/inbox.ts');
+    let release!: (value: never[]) => void;
+    const next = vi.spyOn(MessageInbox.prototype, 'next').mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const deps = createDeps(), runtime = createPrivateMessagesIngestRuntime(deps);
+    const replay = runtime.retryPendingEpochMessages(undefined, crypto.randomUUID(), 'd'.repeat(64));
+    runtime.resetPrivateMessagesIngestRuntimeState();
+    release([{ account: 'old', id: 'old', event: {} }] as never);
+    await replay;
+    expect(deps.resolveIncomingPrivateMessageRecipientContext).not.toHaveBeenCalled();
+    next.mockRestore();
+  });
+
   it('preempts a persisted history page when foreground traffic arrives', async () => {
     const { MessageInbox } = await import('#src/lib/nostr/inbox.ts');
     const { ClientEvent: Event } = await import('#src/lib/nostr/client.ts');

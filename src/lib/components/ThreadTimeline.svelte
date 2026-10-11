@@ -9,6 +9,7 @@
   export let label = 'Messages';
   export let firstDay = '';
   export let hasOlder = false;
+  export let historyStatus = '';
   export let hasNewer = false;
   export let loading = false;
   export let nearBottom = true;
@@ -39,13 +40,11 @@
   }
   function scrolled() {
     const top = Math.max(0, element.scrollTop);
-    if (!loading) {
-      // Upward movement releases immediately. Only scrolling back to the actual
-      // bottom resumes following; resize notifications alone must not reattach.
-      if (top < previousTop) nearBottom = false;
-      else if (top > previousTop)
-        nearBottom = element.scrollHeight - top - element.clientHeight <= 1;
-    }
+    // Upward movement releases even during loading. Do not let a page's
+    // position correction silently reattach bottom following.
+    if (top < previousTop) nearBottom = false;
+    else if (!loading && top > previousTop)
+      nearBottom = element.scrollHeight - top - element.clientHeight <= 1;
     previousTop = top;
     onscroll();
     // The decorative date can lag slightly; bottom-follow and paging stay immediate.
@@ -119,17 +118,22 @@
   {#if firstDay}<div class="thread-day-sticky" aria-hidden="true">
       <span>{stickyDay || firstDay}</span>
     </div>{/if}
-  {#if hasOlder}<div class="thread-more thread-more--top">
+  {#if hasOlder || loading}<div class="thread-more thread-more--top">
       <button
         class="thread-more__button"
         data-testid="thread-load-older"
         aria-label="Load earlier messages"
         aria-busy={loading}
+        title={historyStatus || undefined}
         disabled={loading}
         onmousedown={(event) => event.preventDefault()}
-        onclick={onolder}><Icon name="up" />{$translate('common.more')}</button
+        onclick={onolder}
+        >{#if loading}<span class="thread-history-spinner" aria-hidden="true"></span>{:else}<Icon
+            name="up"
+          />{/if}{$translate('common.more')}</button
       >
     </div>{/if}
+  {#if historyStatus}<span class="thread-history-status" role="status">{historyStatus}</span>{/if}
   {@render children()}
   {#if hasNewer}<button class="load-older" onclick={onnewer}>Load newer messages</button>{/if}
 </div>

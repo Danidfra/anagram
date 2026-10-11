@@ -10,17 +10,46 @@ export interface InboxRecord {
   reprocess?: boolean;
   relayUrls?: string[];
 }
+function withRecipientKeys(record: InboxRecord) {
+  return {
+    ...record,
+    recipientTimes: record.event.tags
+      .filter((tag) => tag[0] === 'p' && /^[0-9a-f]{64}$/.test(tag[1] ?? ''))
+      .map((tag) => [record.account, tag[1], record.event.created_at ?? 0, record.id]),
+    recipientKeys: [
+      ...new Set(
+        record.event.tags
+          .filter((tag) => tag[0] === 'p' && /^[0-9a-f]{64}$/.test(tag[1] ?? ''))
+          .map((tag) => `${record.account}:${tag[1]}`),
+      ),
+    ],
+  };
+}
 // Ciphertext journal and account-scoped completion receipts. No plaintext or keys.
 export class MessageInbox {
   private database?: Promise<IDBDatabase>;
   private db() {
     return (this.database ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open('anagram-hydration-inbox', 2);
+      const request = indexedDB.open('anagram-hydration-inbox', 4);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('inbox')) {
           const store = db.createObjectStore('inbox', { keyPath: ['account', 'id'] });
           store.createIndex('priority', ['account', 'priority', 'queuedAt', 'id']);
+        }
+        const inbox = request.transaction!.objectStore('inbox');
+        if (!inbox.indexNames.contains('recipients'))
+          inbox.createIndex('recipients', 'recipientKeys', { multiEntry: true });
+        if (!inbox.indexNames.contains('recipientTimes')) {
+          inbox.createIndex('recipientTimes', 'recipientTimes', { multiEntry: true });
+          // Index only the pending ciphertext journal; message history is untouched.
+          const cursor = inbox.openCursor();
+          cursor.onsuccess = () => {
+            const row = cursor.result;
+            if (!row) return;
+            row.update(withRecipientKeys(row.value));
+            row.continue();
+          };
         }
         if (!db.objectStoreNames.contains('processed'))
           db.createObjectStore('processed', { keyPath: ['account', 'id'] });
@@ -65,7 +94,7 @@ export class MessageInbox {
             tx.onabort = () => reject(tx.error);
             try {
               const store = tx.objectStore('inbox');
-              for (const item of batch) store.put(item.record);
+              for (const item of batch) store.put(withRecipientKeys(item.record));
             } catch (error) {
               tx.abort();
               reject(error);
@@ -87,18 +116,25 @@ export class MessageInbox {
     account: string,
     limit = 32,
     excluded: ReadonlySet<string> = new Set(),
+    recipient?: string,
+    until?: number,
   ): Promise<InboxRecord[]> {
+    if (recipient) await this.writesDone;
     const db = await this.db();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('inbox', 'readonly');
-      const index = tx.objectStore('inbox').index('priority');
-      const range = IDBKeyRange.bound(
-        [account, 0, 0, ''],
-        [account, 1, Number.MAX_SAFE_INTEGER, '\uffff'],
-      );
-      if (excluded.size) {
+      const timed = recipient && until !== undefined;
+      const index = tx
+        .objectStore('inbox')
+        .index(timed ? 'recipientTimes' : recipient ? 'recipients' : 'priority');
+      const range = timed
+        ? IDBKeyRange.bound([account, recipient, 0, ''], [account, recipient, until, '\uffff'])
+        : recipient
+          ? IDBKeyRange.only(`${account}:${recipient}`)
+          : IDBKeyRange.bound([account, 0, 0, ''], [account, 1, Number.MAX_SAFE_INTEGER, '\uffff']);
+      if (excluded.size || timed) {
         const rows: InboxRecord[] = [];
-        const cursor = index.openCursor(range);
+        const cursor = index.openCursor(range, timed ? 'prev' : 'next');
         cursor.onerror = () => reject(cursor.error);
         cursor.onsuccess = () => {
           const item = cursor.result;

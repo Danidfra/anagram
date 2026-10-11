@@ -505,6 +505,62 @@ test('a 20,000-message account opens a bounded cached window', async ({ page }) 
     (window as any).__delayHistoryUi = false;
   });
 
+  // Hold an older page open: wheel/touch must stay native, and completing the
+  // page must preserve the user's new reading position rather than snap back.
+  await page.evaluate(async () => {
+    const { chatDataService } = await import('/src/services/chatDataService.ts');
+    const original = chatDataService.listMessagesBefore;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (window as any).__releaseOlderPage = release;
+    chatDataService.listMessagesBefore = async function (...args) {
+      chatDataService.listMessagesBefore = original;
+      await gate;
+      return original.apply(this, args);
+    };
+  });
+  await thread.evaluate((node) => {
+    node.scrollTop = 0;
+  });
+  await more.click();
+  await expect(more).toBeDisabled();
+  await expect(more.locator('.thread-history-spinner')).toBeVisible();
+  expect(await thread.evaluate((node) => getComputedStyle(node).touchAction)).not.toBe('none');
+  expect(
+    await thread.evaluate((node) => {
+      const event = new TouchEvent('touchmove', { bubbles: true, cancelable: true });
+      node.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(false);
+  await thread.hover();
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => thread.evaluate((node) => node.scrollTop)).toBeGreaterThan(100);
+  await expect(more).toBeDisabled();
+  const reading = await thread.evaluate((node) => {
+    const top = node.getBoundingClientRect().top;
+    const row = [...node.querySelectorAll<HTMLElement>('.message-row')].find(
+      (row) => row.getBoundingClientRect().top > top + 50,
+    )!;
+    return { id: row.id, offset: row.getBoundingClientRect().top - top };
+  });
+  await page.evaluate(() => {
+    (window as any).__releaseOlderPage();
+  });
+  await expect(more).toBeEnabled();
+  await expect
+    .poll(() =>
+      thread.evaluate((node, reading) => {
+        const row = document.getElementById(reading.id)!;
+        return Math.abs(
+          row.getBoundingClientRect().top - node.getBoundingClientRect().top - reading.offset,
+        );
+      }, reading),
+    )
+    .toBeLessThan(3);
+
   // Scrolling to the top is not a pull: wheel momentum must not load a page.
   const beforeMomentum = await page.getByTestId('message-bubble').first().getAttribute('id');
   await thread.evaluate((node) => {

@@ -396,6 +396,24 @@ describe('privateMessagesSubscriptionRuntime', () => {
     expect(refreshAllStoredContacts).not.toHaveBeenCalled();
   });
 
+  it('bounds initial group live delivery even when a recovered ticket has an old timestamp', async () => {
+    const epoch = 'c'.repeat(64);
+    const { runtime, subscribeWithReqLogging } = createRuntime({
+      recipients: async () => [LOGGED_IN_PUBLIC_KEY, epoch],
+    });
+    const now = Math.floor(Date.now() / 1000);
+    await runtime.subscribePrivateMessagesForLoggedInUser(true, { sinceOverride: 0 });
+    const calls = subscribeWithReqLogging.mock.calls;
+    expect(calls.find((call) => call[2]['#p'][0] === epoch)![2]).toMatchObject({
+      since: now - 2 * 86400,
+      limit: 128,
+    });
+    expect(calls.find((call) => call[2]['#p'][0] === LOGGED_IN_PUBLIC_KEY)![2]).toMatchObject({
+      since: 0,
+    });
+    runtime.resetPrivateMessagesSubscriptionRuntimeState();
+  });
+
   it('changes only the affected epoch recipient and retains group and fallback relay routes', async () => {
     const group = 'b'.repeat(64),
       epochA = 'c'.repeat(64),

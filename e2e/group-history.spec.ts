@@ -44,7 +44,7 @@ function wrap(rumor: UnsignedEvent, sender: Uint8Array, recipient: string, proof
   );
 }
 
-test('ticketed groups recover all epochs and both authors across discovered and fallback relays', async ({
+test('ticketed groups page through epochs and both authors across discovered and fallback relays', async ({
   page,
 }) => {
   const servers = Array.from(
@@ -230,6 +230,18 @@ test('ticketed groups recover all epochs and both authors across discovered and 
       }),
     ),
   );
+  async function loadHistory(group: (typeof groups)[number]) {
+    // Relay caps are intentionally below our requested page size. Only explicit
+    // history requests may continue past each committed page.
+    await expect(async () => {
+      const text = await page.getByTestId('chat-thread').innerText();
+      if (group.messages.every((message) => text.includes(message.text))) return;
+      const more = page.getByTestId('thread-load-older');
+      await expect(more).toBeEnabled({ timeout: 1500 });
+      await more.click({ timeout: 1500 });
+      expect(group.messages.every((message) => text.includes(message.text))).toBe(true);
+    }).toPass({ timeout: 45000, intervals: [200, 500] });
+  }
   try {
     await page.route('https://profiles.test/**', (route) =>
       route.fulfill({
@@ -250,9 +262,24 @@ test('ticketed groups recover all epochs and both authors across discovered and 
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
     await page.getByTestId('auth-login-button').click();
     await finishOnboarding(page);
-    await page.getByTestId('requests-row').click();
+    // Restored outgoing messages can accept the groups before Requests is clicked.
+    const firstGroup = page.getByTestId('chat-item').filter({ hasText: groups[0].name });
+    await expect(async () => {
+      if (await firstGroup.isVisible()) return;
+      await page.getByTestId('requests-row').click({ timeout: 1000 });
+      await expect(firstGroup).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
+    // Ticket discovery must not open unbounded group archive subscriptions.
+    for (const { filters } of queries)
+      for (const filter of filters) {
+        if (filter.kinds?.includes(1059) && filter['#p']?.some((key) => key !== own)) {
+          expect(filter.since).toBeGreaterThanOrEqual(now - 2 * 86400);
+          expect(filter.limit).toBe(128);
+        }
+      }
     for (const group of groups) {
       const item = page.getByTestId('chat-item').filter({ hasText: group.name });
+      if (!(await item.isVisible())) await page.getByTestId('requests-row').click();
       await expect(item).toBeVisible({ timeout: 30000 });
       await expect(item.locator('img')).toHaveAttribute('src', 'https://profiles.test/group.png');
       await item.click();
@@ -260,7 +287,7 @@ test('ticketed groups recover all epochs and both authors across discovered and 
         // Keep the same frontend open as the delayed relay starts delivering history.
         // No route reload or manual refresh may be needed to render these arrivals.
         await expect.poll(() => heldHistory.length).toBeGreaterThan(0);
-        const delayedText = group.messages[4].text;
+        const delayedText = group.messages[7].text;
         await page.evaluate(async (text) => {
           const { chatDataService } = await import('/src/services/chatDataService.ts');
           const original = chatDataService.createMessage;
@@ -304,6 +331,7 @@ test('ticketed groups recover all epochs and both authors across discovered and 
         'src',
         'https://profiles.test/group.png',
       );
+      await loadHistory(group);
       for (const message of group.messages) {
         const bubble = page
           .getByTestId('message-bubble')
@@ -437,6 +465,7 @@ test('ticketed groups recover all epochs and both authors across discovered and 
     );
     for (const group of groups) {
       await page.goto(`/chats/${group.publicKey}`);
+      await loadHistory(group);
       for (const message of group.messages)
         await expect(
           page.getByTestId('chat-thread').getByText(message.text, { exact: true }),

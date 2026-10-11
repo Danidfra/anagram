@@ -1,8 +1,5 @@
 import NostrClient from '#src/lib/nostr/client.ts';
-import {
-  MISSING_MESSAGE_DEPENDENCY_REPAIR_WINDOW_SECONDS,
-  PRIVATE_MESSAGES_RECONNECT_LOOKBACK_SECONDS,
-} from '#src/stores/nostr/constants.ts';
+import { PRIVATE_MESSAGES_RECONNECT_LOOKBACK_SECONDS } from '#src/stores/nostr/constants.ts';
 import { createPrivateMessagesBackfillRuntime } from '#src/stores/nostr/privateMessagesBackfillRuntime.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -239,10 +236,8 @@ describe('privateMessagesBackfillRuntime', () => {
     });
     runtime.prioritizeThreadHistory(GROUP_CHAT_PUBLIC_KEY);
     await vi.runAllTimersAsync();
-    expect(serviceMocks.chatDataService.listLatestMessages).toHaveBeenCalledWith(
-      GROUP_CHAT_PUBLIC_KEY,
-      100,
-    );
+    expect(serviceMocks.chatDataService.listLatestMessages).not.toHaveBeenCalled();
+    expect(fixture).toHaveBeenCalledTimes(1);
     expect(new Set(fixture.mock.calls.flatMap((call) => call[2]['#p']))).toEqual(
       new Set([GROUP_EPOCH_A, GROUP_EPOCH_B]),
     );
@@ -271,6 +266,30 @@ describe('privateMessagesBackfillRuntime', () => {
       if (entry.label === 'selected-thread-history') expect(entry.stop).toHaveBeenCalled();
       else expect(entry.stop).not.toHaveBeenCalled();
     }
+    runtime.resetPrivateMessagesBackfillRuntimeState();
+  });
+
+  it('keeps the selected group page alive when account discovery is restarted', async () => {
+    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({ type: 'group', meta: {} });
+    const stop = vi.fn();
+    let eose!: () => void;
+    const subscribe = vi.fn((_label, label, _filters, options) => {
+      if (label === 'group-page-messages') {
+        eose = options.onEose;
+        return { stop } as never;
+      }
+      queueMicrotask(options.onEose);
+      return { stop: vi.fn() } as never;
+    });
+    const { runtime } = createRuntime({ subscribeWithReqLogging: subscribe });
+    runtime.prioritizeThreadHistory(GROUP_CHAT_PUBLIC_KEY);
+    await vi.advanceTimersByTimeAsync(0);
+    runtime.stopPrivateMessagesBackfill('restart');
+    expect(stop).not.toHaveBeenCalled();
+    eose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runtime.groupHistoryState.value).toMatchObject({ loading: false, failed: false });
+    expect(stop).toHaveBeenCalled();
     runtime.resetPrivateMessagesBackfillRuntimeState();
   });
 
@@ -397,7 +416,7 @@ describe('privateMessagesBackfillRuntime', () => {
     runtime.resetPrivateMessagesBackfillRuntimeState();
   });
 
-  it('discovers group epochs from old invitations and fills their older messages', async () => {
+  it('discovers old tickets without downloading unopened group archives', async () => {
     const events = [
       { id: 'ticket', created_at: 1700000000 },
       { id: 'group-message', created_at: 1600000000, recipient: GROUP_EPOCH_A },
@@ -416,6 +435,10 @@ describe('privateMessagesBackfillRuntime', () => {
     });
     start(runtime);
     await vi.advanceTimersByTimeAsync(10000);
+    expect(received).toEqual(new Set(['ticket']));
+    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({ type: 'group', meta: {} });
+    runtime.prioritizeThreadHistory(GROUP_CHAT_PUBLIC_KEY);
+    await vi.advanceTimersByTimeAsync(100);
     expect(received).toEqual(new Set(['ticket', 'group-message']));
     expect(completeStartupStep).toHaveBeenCalledExactlyOnceWith('message-history-restore');
     runtime.resetPrivateMessagesBackfillRuntimeState();
@@ -473,7 +496,7 @@ describe('privateMessagesBackfillRuntime', () => {
     runtime.resetPrivateMessagesBackfillRuntimeState();
   });
 
-  it('starts complete group history for late tickets and adds epochs to an active scan', async () => {
+  it('keeps late tickets live but fetches their archive only on demand', async () => {
     const chat = { public_key: GROUP_CHAT_PUBLIC_KEY, type: 'group', meta: {} };
     serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue(chat);
     serviceMocks.chatDataService.listChats.mockResolvedValue([chat] as never);
@@ -499,180 +522,196 @@ describe('privateMessagesBackfillRuntime', () => {
     await runtime.restoreGroupEpochHistory(GROUP_CHAT_PUBLIC_KEY, GROUP_EPOCH_B);
     await vi.advanceTimersByTimeAsync(10000);
     expect(ensure).toHaveBeenCalledTimes(2);
+    expect(seen.size).toBe(0);
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(completeStartupStep).not.toHaveBeenCalled();
+    const page = runtime.loadOlderGroupHistory(GROUP_CHAT_PUBLIC_KEY, 1800000000);
+    await vi.advanceTimersByTimeAsync(100);
+    await page;
     expect(seen).toEqual(new Set(['old-a', 'old-b']));
-    expect(completeStartupStep).toHaveBeenCalledExactlyOnceWith('message-history-restore');
     runtime.resetPrivateMessagesBackfillRuntimeState();
   });
 
-  it('repairs group targets across all known epoch recipients', async () => {
-    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
-      public_key: GROUP_CHAT_PUBLIC_KEY,
-      type: 'group',
-      meta: {},
-    });
-
-    const subscribeWithReqLogging = vi.fn((_label, requestLabel, _filters, options, details) => {
-      expect(requestLabel).toBe('private-messages-epoch-history');
-      expect(details).toEqual(
-        expect.objectContaining({
-          groupPublicKey: GROUP_CHAT_PUBLIC_KEY,
-        }),
-      );
-      Promise.resolve().then(() => {
-        options.onEose?.();
+  it.each(['reply-target-missing', 'deletion-target-missing', 'reaction-target-missing'])(
+    'does not launch group archive scans for passive %s references',
+    async (reason) => {
+      serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
+        type: 'group',
+        meta: {},
       });
-
-      return {
-        stop: vi.fn(),
-      } as never;
-    });
-    const { runtime } = createRuntime({
-      subscribeWithReqLogging,
-      resolveGroupChatEpochEntries: () => [
-        {
-          epoch_public_key: GROUP_EPOCH_A,
-        },
-        {
-          epoch_public_key: GROUP_EPOCH_B,
-        },
-      ],
-    });
-
-    await expect(
-      runtime.repairMissingMessageDependency(GROUP_CHAT_PUBLIC_KEY, TARGET_EVENT_ID, {
-        reason: 'deletion-target-missing',
-        immediate: true,
-        referenceCreatedAt: 1700003600,
-      }),
-    ).resolves.toBe(false);
-
-    expect(subscribeWithReqLogging).toHaveBeenCalledTimes(2);
-    expect(subscribeWithReqLogging).toHaveBeenNthCalledWith(
-      1,
-      'private-messages',
-      'private-messages-epoch-history',
-      expect.objectContaining({
-        '#p': [GROUP_EPOCH_A],
-      }),
-      expect.any(Object),
-      expect.any(Object),
-    );
-    expect(subscribeWithReqLogging).toHaveBeenNthCalledWith(
-      2,
-      'private-messages',
-      'private-messages-epoch-history',
-      expect.objectContaining({
-        '#p': [GROUP_EPOCH_B],
-      }),
-      expect.any(Object),
-      expect.any(Object),
-    );
-
-    runtime.resetPrivateMessagesBackfillRuntimeState();
-  });
-
-  it('promotes missing reply target repairs to the widest history window immediately', async () => {
-    vi.setSystemTime(new Date('2026-04-24T12:00:00.000Z'));
-    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
-      public_key: GROUP_CHAT_PUBLIC_KEY,
-      type: 'group',
-      meta: {},
-    });
-
-    const referenceCreatedAt = Math.floor(Date.now() / 1000);
-    const subscribeWithReqLogging = vi.fn((_label, requestLabel, filters, options) => {
-      expect(requestLabel).toBe('private-messages-epoch-history');
-      expect(filters).toEqual(
-        expect.objectContaining({
-          '#p': [GROUP_EPOCH_A],
-          since:
-            referenceCreatedAt -
-            MISSING_MESSAGE_DEPENDENCY_REPAIR_WINDOW_SECONDS[
-              MISSING_MESSAGE_DEPENDENCY_REPAIR_WINDOW_SECONDS.length - 1
-            ],
-          until: referenceCreatedAt,
+      const { runtime, subscribeWithReqLogging } = createRuntime();
+      expect(
+        await runtime.repairMissingMessageDependency(GROUP_CHAT_PUBLIC_KEY, TARGET_EVENT_ID, {
+          reason,
+          immediate: true,
+          referenceCreatedAt: 1800000000,
         }),
-      );
-      Promise.resolve().then(() => {
-        options.onEose?.();
+      ).toBe(false);
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(subscribeWithReqLogging).not.toHaveBeenCalled();
+      runtime.resetPrivateMessagesBackfillRuntimeState();
+    },
+  );
+
+  it.each(['closed', 'stalled'])(
+    'commits healthy group pages while a replica is %s and retains retry coverage',
+    async (failure) => {
+      serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
+        type: 'group',
+        meta: {},
       });
+      const stopFailed = vi.fn();
+      const fixture = relayFixture([
+        { id: TARGET_EVENT_ID, created_at: 1799999900, recipient: GROUP_EPOCH_B },
+      ]);
+      const subscribe = vi.fn((...args: Parameters<typeof fixture>) => {
+        if (args[3].relaySet.relayUrls[0].includes('failed')) {
+          if (failure === 'closed') queueMicrotask(() => args[3].onClose());
+          return { stop: stopFailed } as never;
+        }
+        return fixture(...args);
+      });
+      const queue = vi.fn(async () => true);
+      const { runtime } = createRuntime({
+        readRelays: ['wss://failed.example/', 'wss://healthy.example/'],
+        subscribeWithReqLogging: subscribe,
+        resolveGroupChatEpochEntries: () =>
+          [GROUP_EPOCH_A, GROUP_EPOCH_B].map((epoch_public_key) => ({ epoch_public_key })),
+        queuePrivateMessageIngestion: queue,
+      });
+      runtime.prioritizeThreadHistory(GROUP_CHAT_PUBLIC_KEY);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(queue).toHaveBeenCalledWith(
+        expect.objectContaining({ id: TARGET_EVENT_ID }),
+        LOGGED_IN_PUBLIC_KEY,
+        expect.anything(),
+      );
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(runtime.groupHistoryState.value).toMatchObject({
+        loading: false,
+        hasOlder: true,
+        failed: true,
+      });
+      expect(stopFailed).toHaveBeenCalled();
+      const count = subscribe.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(subscribe).toHaveBeenCalledTimes(count);
+      runtime.resetPrivateMessagesBackfillRuntimeState();
+    },
+  );
 
-      return {
-        stop: vi.fn(),
-      } as never;
-    });
-    const { runtime } = createRuntime({
-      subscribeWithReqLogging,
-      resolveGroupChatEpochEntries: () => [
+  it.each(['closed', 'missing'])(
+    'retries a %s reply target with backoff while retaining other messages',
+    async (failure) => {
+      const seen = new Set<string>();
+      let available = false;
+      const fixture = relayFixture([{ id: 'other-message', created_at: 1799999900 }]);
+      const recovered = relayFixture([{ id: TARGET_EVENT_ID, created_at: 1799999900 }]);
+      const subscribe = vi.fn((...args: Parameters<typeof fixture>) => {
+        if (available) return recovered(...args);
+        if (failure === 'closed') {
+          Promise.resolve().then(() => args[3].onClose());
+          return { stop: vi.fn() } as never;
+        }
+        return fixture(...args);
+      });
+      const { runtime } = createRuntime({
+        subscribeWithReqLogging: subscribe,
+        queuePrivateMessageIngestion: vi.fn(async (event) => {
+          seen.add(event.id);
+          if (event.id === TARGET_EVENT_ID)
+            serviceMocks.chatDataService.getMessageByEventId.mockResolvedValue({ id: 1 });
+          return true;
+        }),
+      });
+      const repair = runtime.repairMissingMessageDependency(
+        DIRECT_CHAT_PUBLIC_KEY,
+        TARGET_EVENT_ID,
         {
-          epoch_public_key: GROUP_EPOCH_A,
+          reason: 'reply-target-missing',
+          referenceCreatedAt: 1800000000,
         },
-      ],
-    });
-
-    await expect(
-      runtime.repairMissingMessageDependency(GROUP_CHAT_PUBLIC_KEY, TARGET_EVENT_ID, {
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(repair).resolves.toBe(false);
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      await runtime.repairMissingMessageDependency(DIRECT_CHAT_PUBLIC_KEY, TARGET_EVENT_ID, {
         reason: 'reply-target-missing',
-        immediate: true,
-        referenceCreatedAt,
-      }),
-    ).resolves.toBe(false);
+        referenceCreatedAt: 1800000000,
+      });
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      if (failure === 'missing') expect(seen).toContain('other-message');
+      available = true;
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(subscribe).toHaveBeenCalledTimes(3);
+      expect(seen).toContain(TARGET_EVENT_ID);
+      for (const call of subscribe.mock.calls) expect(call[2].since).toBe(1800000000 - 7 * 86400);
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(subscribe).toHaveBeenCalledTimes(3);
+      runtime.resetPrivateMessagesBackfillRuntimeState();
+    },
+  );
 
-    expect(subscribeWithReqLogging).toHaveBeenCalledTimes(1);
-
+  it('bounds unsuccessful reply retries and cancels active repair on reset', async () => {
+    const { runtime, subscribeWithReqLogging: subscribe } = createRuntime();
+    await runtime.repairMissingMessageDependency(DIRECT_CHAT_PUBLIC_KEY, TARGET_EVENT_ID, {
+      reason: 'reply-target-missing',
+      referenceCreatedAt: 1800000000,
+    });
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(subscribe).toHaveBeenCalledTimes(3);
     runtime.resetPrivateMessagesBackfillRuntimeState();
+
+    const stop = vi.fn();
+    const stalled = createRuntime({
+      subscribeWithReqLogging: vi.fn(() => ({ stop }) as never),
+    });
+    const repair = stalled.runtime.repairMissingMessageDependency(
+      DIRECT_CHAT_PUBLIC_KEY,
+      TARGET_EVENT_ID,
+      {
+        reason: 'reply-target-missing',
+        referenceCreatedAt: 1800000000,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    stalled.runtime.resetPrivateMessagesBackfillRuntimeState();
+    await expect(repair).resolves.toBe(false);
+    expect(stop).toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(stalled.subscribeWithReqLogging).toHaveBeenCalledTimes(1);
   });
 
-  it('promotes reply-open repairs to the widest history window immediately', async () => {
-    vi.setSystemTime(new Date('2026-04-24T12:00:00.000Z'));
-    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
-      public_key: GROUP_CHAT_PUBLIC_KEY,
-      type: 'group',
-      meta: {},
+  it('uses a separate bounded page for an explicitly opened group reference', async () => {
+    serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({ type: 'group', meta: {} });
+    const queue = vi.fn(async (event) => {
+      if (event.id === TARGET_EVENT_ID)
+        serviceMocks.chatDataService.getMessageByEventId.mockResolvedValue({ id: 1 });
+      return true;
     });
-
-    const referenceCreatedAt = Math.floor(Date.now() / 1000);
-    const subscribeWithReqLogging = vi.fn((_label, requestLabel, filters, options) => {
-      expect(requestLabel).toBe('private-messages-epoch-history');
-      expect(filters).toEqual(
-        expect.objectContaining({
-          '#p': [GROUP_EPOCH_A],
-          since:
-            referenceCreatedAt -
-            MISSING_MESSAGE_DEPENDENCY_REPAIR_WINDOW_SECONDS[
-              MISSING_MESSAGE_DEPENDENCY_REPAIR_WINDOW_SECONDS.length - 1
-            ],
-          until: referenceCreatedAt,
-        }),
-      );
-      Promise.resolve().then(() => {
-        options.onEose?.();
-      });
-
-      return {
-        stop: vi.fn(),
-      } as never;
-    });
+    const subscribe = relayFixture([
+      { id: TARGET_EVENT_ID, created_at: 1799999900, recipient: GROUP_EPOCH_A },
+    ]);
     const { runtime } = createRuntime({
-      subscribeWithReqLogging,
-      resolveGroupChatEpochEntries: () => [
-        {
-          epoch_public_key: GROUP_EPOCH_A,
-        },
-      ],
+      subscribeWithReqLogging: subscribe,
+      queuePrivateMessageIngestion: queue,
     });
-
-    await expect(
-      runtime.repairMissingMessageDependency(GROUP_CHAT_PUBLIC_KEY, TARGET_EVENT_ID, {
-        reason: 'reply-open',
-        immediate: true,
-        force: true,
-        referenceCreatedAt,
-      }),
-    ).resolves.toBe(false);
-
-    expect(subscribeWithReqLogging).toHaveBeenCalledTimes(1);
-
+    const repair = runtime.repairMissingMessageDependency(GROUP_CHAT_PUBLIC_KEY, TARGET_EVENT_ID, {
+      reason: 'reply-open',
+      force: true,
+      referenceCreatedAt: 1799999950,
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await repair).toBe(true);
+    expect(subscribe).toHaveBeenCalledTimes(2);
+    expect(runtime.groupHistoryState.value.chat).toBe('');
+    expect(queue).toHaveBeenCalledWith(
+      expect.anything(),
+      LOGGED_IN_PUBLIC_KEY,
+      expect.objectContaining({ reprocess: true }),
+    );
     runtime.resetPrivateMessagesBackfillRuntimeState();
   });
 });

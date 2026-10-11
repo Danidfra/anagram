@@ -875,5 +875,8 @@
   "message.upload": "アップロード",
   "contacts.addContactAction": "連絡先を追加",
   "chat.dadBotIntro": "Dad Bot に何か話しかけると、ジョークを返してくれます。",
-  "chat.dadBotExamples": "Nostr や Anagram 向けの便利なボットは簡単に作れ、大きな可能性があります。こちらのサンプルをご覧ください："
+  "chat.dadBotExamples": "Nostr や Anagram 向けの便利なボットは簡単に作れ、大きな可能性があります。こちらのサンプルをご覧ください：",
+  "chat.historyKeys": "グループの鍵を復元中…",
+  "chat.historyMessages": "メッセージを読み込み中…",
+  "chat.historyRetry": "履歴の一部を読み込めませんでした。上にスクロールするか「もっと見る」を選んで再試行してください。"
 }

@@ -120,6 +120,7 @@ export function createPrivateMessagesIngestRuntime({
     stagedChats.clear();
     stagedEvents.clear();
     hotInbox.clear();
+    epochReplays.clear();
     for (const waiting of spoolWaiters.values()) waiting.forEach((resolve) => resolve(false));
     spoolWaiters.clear();
     const abandonedTasks = [...foregroundIngestTasks, ...backgroundIngestTasks];
@@ -274,7 +275,12 @@ export function createPrivateMessagesIngestRuntime({
   async function queuePrivateMessageIngestion(
     wrappedEvent: ClientEvent,
     loggedInPubkeyHex: string,
-    options: { priority?: IngestPriority; uiThrottleMs?: number; reprocess?: boolean } = {},
+    options: {
+      priority?: IngestPriority;
+      uiThrottleMs?: number;
+      reprocess?: boolean;
+      retryPending?: boolean;
+    } = {},
   ): Promise<boolean> {
     const uiThrottleMs =
       typeof options.uiThrottleMs === 'number'
@@ -319,9 +325,10 @@ export function createPrivateMessagesIngestRuntime({
       spoolWaiters.set(key, waiting);
     });
     if (alreadyQueued) {
-      if (options.reprocess) {
-        await result;
+      if (options.reprocess || options.retryPending) {
+        const accepted = await result;
         if (generation !== ingestQueueGeneration) return false;
+        if (accepted && !options.reprocess) return true;
         return queuePrivateMessageIngestion(wrappedEvent, loggedInPubkeyHex, options);
       }
       return result;
@@ -513,6 +520,57 @@ export function createPrivateMessagesIngestRuntime({
       }
       await yieldToMainThread();
     }
+  }
+
+  const epochReplays = new Map<string, Promise<number>>();
+  function retryPendingEpochMessages(
+    client: ClientEvent['ndk'],
+    account: string,
+    recipient: string,
+    limit = 32,
+    until = Math.floor(Date.now() / 1000),
+  ): Promise<number> {
+    if (typeof indexedDB === 'undefined') return Promise.resolve(0);
+    const key = `${account}:${recipient}:${until}`;
+    const existing = epochReplays.get(key);
+    if (existing) return existing;
+    const generation = ingestQueueGeneration;
+    const replay = (async () => {
+      const attempted = new Set<string>();
+      while (generation === ingestQueueGeneration && attempted.size < limit) {
+        const batch = await inbox.next(
+          account,
+          Math.min(32, limit - attempted.size),
+          attempted,
+          recipient,
+          until,
+        );
+        if (generation !== ingestQueueGeneration || !batch.length) break;
+        await Promise.all(
+          batch.map(async (record) => {
+            if (generation !== ingestQueueGeneration) return;
+            attempted.add(record.id);
+            const event = new ClientEvent(client, record.event);
+            event.onRelays = (record.relayUrls ?? []).map((url) =>
+              client!.pool.getRelay(url, false),
+            );
+            await queuePrivateMessageIngestion(event, account, {
+              priority: record.priority === 0 ? 'foreground' : 'background',
+              uiThrottleMs: record.throttle,
+              retryPending: true,
+            });
+          }),
+        );
+        // A still-undecryptable envelope remains durable, but gets only one
+        // retry per requested page. Yield between bounded journal pages.
+        await yieldToMainThread();
+      }
+      return attempted.size;
+    })().finally(() => {
+      if (epochReplays.get(key) === replay) epochReplays.delete(key);
+    });
+    epochReplays.set(key, replay);
+    return replay;
   }
 
   async function resumePendingPrivateMessages(
@@ -1698,6 +1756,7 @@ export function createPrivateMessagesIngestRuntime({
     queuePrivateMessageIngestion,
     resetPrivateMessagesIngestRuntimeState,
     resumePendingPrivateMessages,
+    retryPendingEpochMessages,
     repairRestoredOutgoingChats,
   };
 }
