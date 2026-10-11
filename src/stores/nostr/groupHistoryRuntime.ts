@@ -78,15 +78,24 @@ export function createGroupHistoryRuntime(deps: {
     const work = (async () => {
       let context = await deps.context(chat);
       if (!context || cancelled()) return;
-      let budget = 6;
-      async function request(recipients: string[], relayUrl: string, discovery: boolean) {
+      async function request(
+        recipients: string[],
+        relayUrl: string,
+        discovery: boolean,
+        budget: { remaining: number },
+      ) {
         const progress = cursor(
           `${discovery ? 'keys' : 'messages'}:${relayUrl}:${recipients.join(',')}`,
           discovery,
         );
-        if (progress.pager.done || progress.retryAt > Date.now() || cancelled() || budget <= 0)
+        if (
+          progress.pager.done ||
+          progress.retryAt > Date.now() ||
+          cancelled() ||
+          budget.remaining <= 0
+        )
           return undefined;
-        budget--;
+        budget.remaining--;
         try {
           const result = await deps.query({
             owner: owner!,
@@ -124,17 +133,24 @@ export function createGroupHistoryRuntime(deps: {
         ]),
       ];
       const ordered = [...relays.slice(relayOffset), ...relays.slice(0, relayOffset)];
-      relayOffset = relays.length ? (relayOffset + 4) % relays.length : 0;
-      // Each relay recovers a ticket page and then a message page independently.
-      // A slow key lookup on one replica cannot hold up known keys on another.
+      relayOffset = relays.length ? (relayOffset + 1) % relays.length : 0;
+      const scheduled = ordered.slice(0, 4);
+      // Divide the six requests before starting concurrent work. A fast replica
+      // must not spend another relay's message slot on its own inbox or epochs.
+      // Rotating by one also rotates the extra key-discovery slots when the
+      // relay count is a multiple of four. No archive scan runs between actions.
       await Promise.all(
-        ordered.slice(0, 4).map(async (relay) => {
+        scheduled.map(async (relay, index) => {
+          const budget = {
+            remaining: Math.floor(6 / scheduled.length) + (index < 6 % scheduled.length ? 1 : 0),
+          };
           if (
             (before !== undefined || !context!.routes.length) &&
-            context!.discoveryRelays.includes(relay)
+            context!.discoveryRelays.includes(relay) &&
+            (budget.remaining > 1 || !batches(context!, relay).length)
           ) {
             state.value.phase = 'keys';
-            await request([owner!], relay, true);
+            await request([owner!], relay, true, budget);
           }
           if (cancelled()) return;
           const updated = await deps.context(chat);
@@ -143,7 +159,7 @@ export function createGroupHistoryRuntime(deps: {
           for (const recipients of batches(updated, relay)) {
             const progress = cursor(`messages:${relay}:${recipients.join(',')}`, false);
             if (progress.pager.done) continue;
-            const count = await request(recipients, relay, false);
+            const count = await request(recipients, relay, false, budget);
             // Do not jump over an unfinished epoch batch, even when another relay
             // already supplied older messages. Continue past genuinely empty pages.
             if (count === undefined || count > 0 || !progress.pager.done) break;

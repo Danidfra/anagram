@@ -64,6 +64,54 @@ describe('demand-driven group history', () => {
     expect(query.mock.calls[6][0].discovery).toBe(true);
     expect(query.mock.calls[7][0].recipients[0]).toBe('epoch-404');
   });
+  it('does not let busy fast inboxes starve older messages on slower relays', async () => {
+    const relays = ['fast-a', 'fast-b', 'archive-a', 'archive-b'];
+    const query = vi.fn(async (q: GroupHistoryQuery) => {
+      if (q.discovery && q.relayUrl.startsWith('archive'))
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      // Every inbox still has ticket pages. Fast message replicas also contain
+      // pages of already cached wraps; older epochs exist on the archive relays.
+      q.pager.advance(128, q.pager.until - 100);
+      return { eventCount: 128 };
+    });
+    const { runtime } = setup({ routes: routes(8, relays), discoveryRelays: relays }, query);
+    for (let action = 0; action < 4; action++) {
+      query.mockClear();
+      const work = runtime.load('group', 1700000000);
+      await vi.advanceTimersByTimeAsync(50);
+      await work;
+      expect(query.mock.calls.length).toBeLessThanOrEqual(6);
+      expect(
+        query.mock.calls
+          .filter(([q]) => !q.discovery)
+          .map(([q]) => q.relayUrl)
+          .sort(),
+      ).toEqual([...relays].sort());
+    }
+  });
+
+  it('rotates both ticket and message work across more than four busy relays', async () => {
+    const relays = Array.from({ length: 8 }, (_, i) => `relay-${i}`);
+    const query = vi.fn(async ({ pager }: GroupHistoryQuery) => {
+      pager.advance(128, pager.until - 100);
+      return { eventCount: 128 };
+    });
+    const { runtime } = setup({ routes: routes(500, relays), discoveryRelays: relays }, query);
+    const discovery = new Set<string>(),
+      messages = new Set<string>();
+    for (let action = 0; action < relays.length; action++) {
+      query.mockClear();
+      await runtime.load('group', 1700000000);
+      expect(query).toHaveBeenCalledTimes(6);
+      for (const [q] of query.mock.calls) {
+        (q.discovery ? discovery : messages).add(q.relayUrl);
+        expect(q.recipients.length).toBeLessThanOrEqual(16);
+      }
+    }
+    expect([...discovery].sort()).toEqual(relays);
+    expect([...messages].sort()).toEqual(relays);
+  });
+
   it('recovers a ticket page before querying newly discovered epoch recipients', async () => {
     const context: GroupHistoryContext = { routes: [], discoveryRelays: ['relay'] };
     const query = vi.fn(async (q: GroupHistoryQuery) => {

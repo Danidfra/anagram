@@ -39,6 +39,9 @@ Opening a group requests a bounded recent page. Scrolling up or choosing More
 first uses older IndexedDB messages, then requests another remote page when the
 local window is exhausted. Each action permits at most six relay requests, with
 up to four relays in flight and at most sixteen epoch recipients per filter.
+Requests are allocated per relay before queries start, reserving message work
+for each scheduled relay. Relay order and extra ticket-discovery slots rotate
+between actions so faster replicas cannot starve another relay's older history.
 Epoch batches are newest first. A relay finishes its current batch before moving
 to older keys. A page normally requests 128 envelopes; crowded timestamp
 boundaries can expand up to 4096 so tied events are not silently skipped.

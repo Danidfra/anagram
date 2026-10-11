@@ -484,7 +484,46 @@
   $: nostr.setAppLifecycleRouteChatId(visibleChatId);
   $: if (notificationsReady && visibleChatId)
     void clearAndroidRelayNotificationForChat(visibleChatId).catch(fail);
-  $: nostr.prioritizeThreadHistory(visibleChatId);
+  let historyRevision = 0;
+  let historyFrame = 0;
+  let historyTimer: ReturnType<typeof setTimeout> | undefined;
+  function cancelScheduledHistory() {
+    historyRevision++;
+    cancelAnimationFrame(historyFrame);
+    clearTimeout(historyTimer);
+    nostr.prioritizeThreadHistory(null);
+  }
+  async function prioritizeVisibleThread(chatId: string | null) {
+    cancelScheduledHistory();
+    if (!chatId) return;
+    const revision = historyRevision;
+    await messages.loadMessages(chatId);
+    if (revision !== historyRevision) return;
+    await tick();
+    if (revision !== historyRevision) return;
+    // Give the cached thread a paint before starting relay queries/decryption.
+    // Both callbacks are cancellable when another conversation is selected.
+    function afterCachedRender() {
+      if (revision !== historyRevision) return;
+      // The store bridge batches updates. A disk read finishing does not mean
+      // Svelte has received that window yet, especially while sync is busy.
+      const cached = messages.getMessages(chatId);
+      if (
+        $state.selected?.id !== chatId ||
+        $state.thread.items.length !== cached.length ||
+        $state.thread.items[0]?.id !== cached[0]?.id ||
+        $state.thread.items.at(-1)?.id !== cached.at(-1)?.id
+      ) {
+        historyFrame = requestAnimationFrame(afterCachedRender);
+        return;
+      }
+      historyTimer = setTimeout(() => {
+        if (revision === historyRevision) nostr.prioritizeThreadHistory(chatId);
+      }, 0);
+    }
+    historyFrame = requestAnimationFrame(afterCachedRender);
+  }
+  $: void prioritizeVisibleThread(visibleChatId);
   $: if ($state.thread.items.length && nearBottom)
     void tick().then(() => {
       scrollToBottom(scrollArea);
@@ -505,7 +544,13 @@
         .catch(fail);
   }
   function scrollToBottom(node: HTMLDivElement | undefined) {
-    if (node && nearBottom && !loadingOlder) {
+    if (
+      node &&
+      nearBottom &&
+      olderLoad?.chatId !== $state.selected?.id &&
+      !$state.thread.pagination?.isLoadingOlder &&
+      !$state.thread.pagination?.isLoadingNewer
+    ) {
       node.scrollTop = node.scrollHeight;
       scheduleVisibleReactions();
     }
@@ -535,7 +580,7 @@
       if (!reopened) return;
       chat = reopened;
     }
-    nostr.prioritizeThreadHistory(chat.publicKey, true);
+    if (chat.id !== visibleChatId) cancelScheduledHistory();
     showRequests = false;
     await goto(`/chats/${chat.id}`);
     chats.selectChat(chat.id);
@@ -1029,7 +1074,7 @@
       publicGroups.stop();
       nostr.stopAppLifecycleRuntime();
       chats.setVisibleChatId(null);
-      nostr.prioritizeThreadHistory(null);
+      cancelScheduledHistory();
     };
   });
 </script>
@@ -1409,128 +1454,130 @@
             />
           {/key}
         {/if}
-        <ThreadTimeline
-          bind:element={scrollArea}
-          chatId={$state.selected.id}
-          publicKey={$state.selected.publicKey}
-          onmount={mountThread}
-          firstDay={$state.thread.items[0] ? date($state.thread.items[0].sentAt) : ''}
-          hasOlder={Boolean($state.thread.pagination?.hasOlder || $state.thread.remote?.hasOlder)}
-          historyStatus={$state.thread.remote?.loading
-            ? $state.thread.remote.phase === 'keys'
-              ? $translate('chat.historyKeys')
-              : $translate('chat.historyMessages')
-            : $state.thread.remote?.failed
-              ? $translate('chat.historyRetry')
-              : ''}
-          hasNewer={Boolean($state.thread.pagination?.hasNewer)}
-          loading={loadingOlder}
-          bind:nearBottom
-          onolder={() => void act(older)}
-          onnewer={() => void act(() => messages.loadNewerMessages($state.selected!.id))}
-          onlatest={() =>
-            void act(async () => {
-              if ($state.selected) await messages.loadMessages($state.selected.id);
-              nearBottom = true;
-              await tick();
-              scrollToBottom(scrollArea);
-            })}
-          onscroll={() => {
-            contextMessage = '';
-            scrollTop = scrollArea.scrollTop;
-            scheduleVisibleReactions();
-          }}
-        >
-          {#if $state.selected.type === 'user' && $state.selected.publicKey === nostr.getLoggedInPublicKeyHex() && !$state.thread.pagination?.hasOlder && !loadingOlder}
-            <blockquote class="self-chat-quote">
-              <i
-                >“I often have long conversations with myself, and I am so clever that sometimes I
-                don't understand a single word of what I am saying”</i
-              >
-              <br /><br /><small
-                >DMs to yourself are end-to-end encrypted with no metadata exposed, just like DMs to
-                others.</small
-              >
-            </blockquote>
-          {:else if $state.selected.type === 'user' && $state.selected.publicKey === STARTER_BOT.publicKey && !$state.thread.pagination?.hasOlder && !loadingOlder}
-            <blockquote class="self-chat-quote" data-testid="dad-bot-intro">
-              <i>{$translate('chat.dadBotIntro')}</i>
-              <br /><br /><small>
-                {$translate('chat.dadBotExamples')}
-                <a
-                  class="bot-examples-link"
-                  href="https://github.com/lnbits/anagram/bot-example"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onclick={(event) => {
-                    event.preventDefault();
-                    void act(() => openExternalHttpUrl(event.currentTarget.href));
-                  }}>https://github.com/lnbits/anagram/bot-example</a
+        {#key $state.selected.id}
+          <ThreadTimeline
+            bind:element={scrollArea}
+            chatId={$state.selected.id}
+            publicKey={$state.selected.publicKey}
+            onmount={mountThread}
+            firstDay={$state.thread.items[0] ? date($state.thread.items[0].sentAt) : ''}
+            hasOlder={Boolean($state.thread.pagination?.hasOlder || $state.thread.remote?.hasOlder)}
+            historyStatus={$state.thread.remote?.loading
+              ? $state.thread.remote.phase === 'keys'
+                ? $translate('chat.historyKeys')
+                : $translate('chat.historyMessages')
+              : $state.thread.remote?.failed
+                ? $translate('chat.historyRetry')
+                : ''}
+            hasNewer={Boolean($state.thread.pagination?.hasNewer)}
+            loading={loadingOlder}
+            bind:nearBottom
+            onolder={() => void act(older)}
+            onnewer={() => void act(() => messages.loadNewerMessages($state.selected!.id))}
+            onlatest={() =>
+              void act(async () => {
+                if ($state.selected) await messages.loadMessages($state.selected.id);
+                nearBottom = true;
+                await tick();
+                scrollToBottom(scrollArea);
+              })}
+            onscroll={() => {
+              contextMessage = '';
+              scrollTop = scrollArea.scrollTop;
+              scheduleVisibleReactions();
+            }}
+          >
+            {#if $state.selected.type === 'user' && $state.selected.publicKey === nostr.getLoggedInPublicKeyHex() && !$state.thread.pagination?.hasOlder && !loadingOlder}
+              <blockquote class="self-chat-quote">
+                <i
+                  >“I often have long conversations with myself, and I am so clever that sometimes I
+                  don't understand a single word of what I am saying”</i
                 >
-              </small>
-            </blockquote>
-          {/if}
-          {#each displayedMessages as message, index (message.id)}
-            {@const author = messageAuthor(
-              message,
-              $state.selected,
-              mentionProfiles,
-              $state.profiles,
-              $translate('common.you'),
-            )}
-            {@const presentation = messagePresentation(
-              message,
-              displayedMessages[index - 1],
-              displayedMessages[index + 1],
-              $locale,
-            )}
-            {#if presentation.startsDay}<DateDivider label={presentation.dayLabel} />{/if}
-            {#if message.id === firstUnreadId}<div
-                class="unread-divider"
-                data-testid="thread-unread-separator"
-              >
-                {$translate('relays.unreadMessages')}
-              </div>{/if}
-            <MessageRow
-              {message}
-              {author}
-              bubbleLayout={messageLayout === 'bubbles'}
-              continuesSender={presentation.continuesSender}
-              senderContinues={presentation.senderContinues}
-              dayLabel={presentation.dayLabel}
-              highlighted={highlightedMessage === message.id}
-              contextOpen={contextMessage === message.id}
-              contactName={$state.selected?.name ?? ''}
-              contactRelayUrls={selectedRelayUrls}
-              onauthor={openAuthor}
-              onactions={(event) =>
-                contextMessage === message.id
-                  ? closeMessageActions()
-                  : showMessageActions(message, event)}
-            >
-              {#if message.meta.reply && !message.meta.deleted}<MessageReply
-                  reply={message.meta.reply}
-                  onclick={() => act(() => openReplyTarget(message))}
-                />{/if}
-              <MessageBody
+                <br /><br /><small
+                  >DMs to yourself are end-to-end encrypted with no metadata exposed, just like DMs
+                  to others.</small
+                >
+              </blockquote>
+            {:else if $state.selected.type === 'user' && $state.selected.publicKey === STARTER_BOT.publicKey && !$state.thread.pagination?.hasOlder && !loadingOlder}
+              <blockquote class="self-chat-quote" data-testid="dad-bot-intro">
+                <i>{$translate('chat.dadBotIntro')}</i>
+                <br /><br /><small>
+                  {$translate('chat.dadBotExamples')}
+                  <a
+                    class="bot-examples-link"
+                    href="https://github.com/lnbits/anagram/bot-example"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onclick={(event) => {
+                      event.preventDefault();
+                      void act(() => openExternalHttpUrl(event.currentTarget.href));
+                    }}>https://github.com/lnbits/anagram/bot-example</a
+                  >
+                </small>
+              </blockquote>
+            {/if}
+            {#each displayedMessages as message, index (message.id)}
+              {@const author = messageAuthor(
+                message,
+                $state.selected,
+                mentionProfiles,
+                $state.profiles,
+                $translate('common.you'),
+              )}
+              {@const presentation = messagePresentation(
+                message,
+                displayedMessages[index - 1],
+                displayedMessages[index + 1],
+                $locale,
+              )}
+              {#if presentation.startsDay}<DateDivider label={presentation.dayLabel} />{/if}
+              {#if message.id === firstUnreadId}<div
+                  class="unread-divider"
+                  data-testid="thread-unread-separator"
+                >
+                  {$translate('relays.unreadMessages')}
+                </div>{/if}
+              <MessageRow
                 {message}
+                {author}
                 bubbleLayout={messageLayout === 'bubbles'}
-                {mentionProfiles}
-                canRedial={canCall && !callBusy}
-                onredial={(mode) =>
-                  act(() => useCallStore().start($state.selected!.publicKey, mode))}
-                oncontact={(pubkey) => void openAuthor(pubkey)}
-                onroom={(link) => {
-                  identifier = link;
-                  modal = 'room';
-                }}
-              />
-            </MessageRow>
-          {:else}<div class="empty-thread">
-              <Icon name="lock" />
-              <p>This is the beginning of your private conversation.</p>
-            </div>{/each}
-        </ThreadTimeline>
+                continuesSender={presentation.continuesSender}
+                senderContinues={presentation.senderContinues}
+                dayLabel={presentation.dayLabel}
+                highlighted={highlightedMessage === message.id}
+                contextOpen={contextMessage === message.id}
+                contactName={$state.selected?.name ?? ''}
+                contactRelayUrls={selectedRelayUrls}
+                onauthor={openAuthor}
+                onactions={(event) =>
+                  contextMessage === message.id
+                    ? closeMessageActions()
+                    : showMessageActions(message, event)}
+              >
+                {#if message.meta.reply && !message.meta.deleted}<MessageReply
+                    reply={message.meta.reply}
+                    onclick={() => act(() => openReplyTarget(message))}
+                  />{/if}
+                <MessageBody
+                  {message}
+                  bubbleLayout={messageLayout === 'bubbles'}
+                  {mentionProfiles}
+                  canRedial={canCall && !callBusy}
+                  onredial={(mode) =>
+                    act(() => useCallStore().start($state.selected!.publicKey, mode))}
+                  oncontact={(pubkey) => void openAuthor(pubkey)}
+                  onroom={(link) => {
+                    identifier = link;
+                    modal = 'room';
+                  }}
+                />
+              </MessageRow>
+            {:else}<div class="empty-thread">
+                <Icon name="lock" />
+                <p>This is the beginning of your private conversation.</p>
+              </div>{/each}
+          </ThreadTimeline>
+        {/key}
         {#if unseenReactionMessages.length}<button
             class="jump-reactions"
             aria-label="Jump to first new reaction"

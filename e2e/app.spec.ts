@@ -406,6 +406,118 @@ test('mobile navigation and cached large inbox', async ({ page }) => {
   await page.getByRole('switch', { name: 'Dark mode', exact: true }).uncheck();
   await expect(page.locator('body')).not.toHaveClass(/body--dark/);
 });
+test('switching cached groups renders and positions messages before history checks', async ({
+  page,
+}) => {
+  const account = await login(page);
+  const groups = [getPublicKey(generateSecretKey()), getPublicKey(generateSecretKey())];
+  await page.evaluate(
+    async ({ groups, own }) => {
+      const { chatDataService } = await import('/src/services/chatDataService.ts');
+      const { useChatStore } = await import('/src/stores/chatStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      for (const [index, key] of groups.entries()) {
+        await chatDataService.createChat({
+          public_key: key,
+          type: 'group',
+          name: `Switch group ${index}`,
+          meta: { inbox_state: 'accepted' },
+          last_message: `Cached ${index} row 39`,
+          last_message_at: new Date().toISOString(),
+        });
+        const db = await chatDataService.getDatabase();
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction('messages', 'readwrite');
+          for (let n = 0; n < 40; n++)
+            tx.objectStore('messages').add({
+              chat_public_key: key,
+              author_public_key: own,
+              message: `Cached ${index} row ${n}`,
+              created_at: new Date(Date.now() - 50000 + n * 1000).toISOString(),
+              meta: {},
+            });
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+      await useChatStore().reload();
+      const nostr = useNostrStore();
+      nostr.prioritizeThreadHistory(null);
+      (window as any).__historyChecks = [];
+      nostr.prioritizeThreadHistory = (id) => {
+        if (!id) {
+          nostr.groupHistoryState.loading = false;
+          nostr.groupHistoryState.chat = '';
+          return;
+        }
+        const thread = document.querySelector('[data-testid="chat-thread"]');
+        (window as any).__historyChecks.push({
+          id,
+          rendered:
+            thread?.getAttribute('data-chat-public-key') === id &&
+            thread.querySelectorAll('.message-row').length > 0,
+        });
+        // Keep relay loading pending: it must not delay showing the cached bottom.
+        nostr.groupHistoryState.chat = id;
+        nostr.groupHistoryState.loading = true;
+        nostr.groupHistoryState.hasOlder = true;
+      };
+    },
+    { groups, own: account.pubkey },
+  );
+  const thread = page.getByTestId('chat-thread');
+  for (const index of [0, 1, 0]) {
+    await page
+      .getByTestId('chat-item')
+      .filter({ hasText: `Switch group ${index}` })
+      .click();
+    await expect(thread).toHaveAttribute('data-chat-public-key', groups[index]);
+    await expect(thread.getByText(`Cached ${index} row 39`, { exact: true })).toBeInViewport();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__historyChecks.at(-1)?.id))
+      .toBe(groups[index]);
+    await expect(thread).toHaveClass(/loading-history/);
+    expect(
+      await thread.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight),
+    ).toBeLessThanOrEqual(1);
+  }
+  expect(
+    await page.evaluate(() =>
+      (window as any).__historyChecks.every((entry: { rendered: boolean }) => entry.rendered),
+    ),
+  ).toBe(true);
+  // A cache load finishing after another selection must not start stale relay work.
+  await page.evaluate(async (key) => {
+    const { useMessageStore } = await import('/src/stores/messageStore.ts');
+    const store = useMessageStore();
+    const original = store.loadMessages;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (window as any).__releaseSwitch = () => {
+      store.loadMessages = original;
+      release();
+    };
+    store.loadMessages = async (id, force) => {
+      if (id === key) await gate;
+      return original(id, force);
+    };
+    (window as any).__historyChecks = [];
+  }, groups[1]);
+  await page.getByTestId('chat-item').filter({ hasText: 'Switch group 1' }).click();
+  await expect(thread).toHaveAttribute('data-chat-public-key', groups[1]);
+  await page.getByTestId('chat-item').filter({ hasText: 'Switch group 0' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__historyChecks.length)).toBe(1);
+  await page.evaluate(() => (window as any).__releaseSwitch());
+  await page.waitForTimeout(100);
+  expect(
+    await page.evaluate(() =>
+      (window as any).__historyChecks.map((entry: { id: string }) => entry.id),
+    ),
+  ).toEqual([groups[0]]);
+});
+
 test('a 20,000-message account opens a bounded cached window', async ({ page }) => {
   const account = await login(page);
   const peer = getPublicKey(generateSecretKey());
