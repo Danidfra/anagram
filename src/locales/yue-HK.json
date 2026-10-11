@@ -6,7 +6,6 @@
   "call.relayApproval.cancel": "拒絕",
   "auth.bunkerConnectionString": "bunker:// 連接字串",
   "auth.bunkerUrl": "BunkerURL",
-  "auth.chooseLoginMethod": "揀一個繼續方式：",
   "auth.welcomeToAnagram": "歡迎使用 Anagram",
   "auth.tagline": "私人聊天、群組同通話。",
   "auth.connectNip46": "連接 NIP-46",

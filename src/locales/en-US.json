@@ -6,7 +6,6 @@
   "call.relayApproval.cancel": "Decline",
   "auth.bunkerConnectionString": "bunker:// connection string",
   "auth.bunkerUrl": "Bunker URL",
-  "auth.chooseLoginMethod": "Choose how to continue:",
   "auth.welcomeToAnagram": "Welcome to Anagram",
   "auth.tagline": "Private chats, groups & calls.",
   "auth.connectNip46": "Connect with NIP-46",

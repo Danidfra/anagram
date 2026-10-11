@@ -6,7 +6,6 @@
   "call.relayApproval.cancel": "நிராகரி",
   "auth.bunkerConnectionString": "bunker:// இணைப்பு சரம்",
   "auth.bunkerUrl": "Bunker URL",
-  "auth.chooseLoginMethod": "எப்படித் தொடர விரும்புகிறீர்கள் என்பதைத் தேர்ந்தெடுக்கவும்:",
   "auth.welcomeToAnagram": "Anagram-க்கு வரவேற்கிறோம்",
   "auth.tagline": "தனிப்பட்ட அரட்டைகள், குழுக்கள் மற்றும் அழைப்புகள்.",
   "auth.connectNip46": "NIP-46 உடன் இணைக்கவும்",

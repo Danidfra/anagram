@@ -6,7 +6,6 @@
   "call.relayApproval.cancel": "Reddet",
   "auth.bunkerConnectionString": "bunker:// bağlantı dizesi",
   "auth.bunkerUrl": "Bunker URL",
-  "auth.chooseLoginMethod": "Nasıl devam edeceğinizi seçin:",
   "auth.welcomeToAnagram": "Anagram’a hoş geldiniz",
   "auth.tagline": "Özel sohbetler, gruplar ve aramalar.",
   "auth.connectNip46": "NIP-46 ile bağlantı kurun",

@@ -6,7 +6,6 @@
   "call.relayApproval.cancel": "拒否",
   "auth.bunkerConnectionString": "bunker:// 接続文字列",
   "auth.bunkerUrl": "Bunker URL",
-  "auth.chooseLoginMethod": "続行する方法を選んでください：",
   "auth.welcomeToAnagram": "Anagramへようこそ",
   "auth.tagline": "プライベートなチャット、グループ、通話。",
   "auth.connectNip46": "NIP-46 に接続してください",

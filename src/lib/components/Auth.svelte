@@ -45,17 +45,15 @@
             ? onboardingTitle
             : 'auth.welcomeToAnagram';
   $: subtitle =
-    step === 'methods'
-      ? 'auth.chooseLoginMethod'
-      : step === 'remote'
-        ? 'auth.connectNip46'
-        : step === 'create'
-          ? generating
-            ? 'common.creatingAccount'
-            : 'auth.generatedKeypairSecretNotice'
-          : step === 'onboarding'
-            ? onboardingSubtitle
-            : 'auth.enterNsecHexPrivate';
+    step === 'remote'
+      ? 'auth.connectNip46'
+      : step === 'create'
+        ? generating
+          ? 'common.creatingAccount'
+          : 'auth.generatedKeypairSecretNotice'
+        : step === 'onboarding'
+          ? onboardingSubtitle
+          : 'auth.enterNsecHexPrivate';
   onMount(() => {
     extensionAvailable = useNostrStore().hasNip07Extension() && !('__TAURI_INTERNALS__' in window);
     const bunker = readTopLevelBunkerLoginQueryParam();
@@ -202,8 +200,8 @@
           >{/if}
         <div>
           <h1>{$translate(title)}</h1>
-          {#if step === 'methods'}<p class="welcome-tagline">{$translate('auth.tagline')}</p>{/if}
-          <p class:login-hint={step === 'methods'}>{$translate(subtitle)}</p>
+          {#if step === 'methods'}<p class="welcome-tagline">{$translate('auth.tagline')}</p>
+          {:else}<p>{$translate(subtitle)}</p>{/if}
         </div>
       </header>
       <div class="auth-actions" class:remote-signer={step === 'remote'}>
@@ -453,12 +451,6 @@
     font-weight: 500;
     color: #334155;
     opacity: 1;
-  }
-  .auth-header .login-hint {
-    font-size: 13px;
-    color: #64748b;
-    opacity: 1;
-    margin-top: 6px;
   }
   .back {
     color: #2563eb;

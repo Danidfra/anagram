@@ -6,7 +6,6 @@
   "call.relayApproval.cancel": "Ablehnen",
   "auth.bunkerConnectionString": "bunker:// Verbindungszeichenfolge",
   "auth.bunkerUrl": "Bunker URL",
-  "auth.chooseLoginMethod": "Wähle, wie du fortfahren möchtest:",
   "auth.welcomeToAnagram": "Willkommen bei Anagram",
   "auth.tagline": "Private Chats, Gruppen & Anrufe.",
   "auth.connectNip46": "Verbinde dich mit NIP-46",
