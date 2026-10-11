@@ -87,7 +87,6 @@ test('late kind-0 names and pictures render before persistence and survive a cac
       localStorage.setItem('nip65_relays', entries);
     }, relay);
     await page.goto('/');
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByTestId('auth-open-key-button').click();
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(ownKey));
     await page.getByTestId('auth-login-button').click();
@@ -257,7 +256,6 @@ test('refresh recovers missing group and historical-author profiles from capped 
       localStorage.setItem('nip65_relays', entries);
     }, urls[0]);
     await page.goto('/');
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByTestId('auth-open-key-button').click();
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(ownKey));
     await page.getByTestId('auth-login-button').click();

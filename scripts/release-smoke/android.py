@@ -150,6 +150,7 @@ def main():
         raise RuntimeError('Requires a disposable emulator')
     click('Create Account')
     click('Login Now')
+    click('Edit relays')
     wait('Connected', 60)
     click('Next')
     # A random identity has no existing profile. Empty profile + disabled relay-list

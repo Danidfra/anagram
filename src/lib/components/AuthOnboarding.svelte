@@ -27,6 +27,7 @@
   let status: 'checking' | 'found' | 'not-found' | 'error' | 'relays' | 'profile' = 'relays';
   let profile: Awaited<ReturnType<typeof nostr.fetchUserProfileFromRelays>> = null;
   let entries: Array<{ url: string; selected: boolean }> = [];
+  let editRelays = false;
   let relayInput = '',
     error = '',
     name = '',
@@ -218,50 +219,70 @@
       {$translate('relays.profileFoundCurrentApp')}
     </p>
   {:else if status === 'relays'}
-    <form
-      class="relay-form"
-      onsubmit={(e) => {
-        e.preventDefault();
-        addRelay();
-      }}
-    >
-      <label
-        >{$translate('relays.relayUrl')}<input
-          bind:value={relayInput}
-          placeholder="wss://example-relay.io"
-          data-testid="auth-onboarding-relay-input"
-        /></label
+    <div class="button-row">
+      <button
+        class="outline"
+        onclick={logout}
+        disabled={busy}
+        data-testid="auth-onboarding-logout-button"
+        ><Icon name="logout" />{$translate('settings.logout')}</button
       ><button
         class="primary"
-        aria-label="Add relay"
-        disabled={!relayInput.trim()}
-        data-testid="auth-onboarding-add-relay-button"><Icon name="add" /></button
+        disabled={!entries.some((e) => e.selected)}
+        onclick={() => {
+          entries = entries.filter((entry) => entry.selected);
+          void lookup(true);
+        }}
+        data-testid="auth-onboarding-relays-next-button">{$translate('common.next')}</button
       >
-    </form>
-    <div class="relay-list">
-      {#each entries as entry}<div class="relay">
-          <label
-            >{#if checking.has(entry.url)}<span
-                class="relay-spinner"
-                aria-label={`Checking ${entry.url}`}
-              ></span>{:else}<input
-                type="checkbox"
-                bind:checked={entry.selected}
-                aria-label={`Use ${entry.url} for profile lookup`}
-              />{/if}<span
-              class="relay-status"
-              class:connected={$relayStatus[entry.url] === 'connected'}
-              aria-label={$relayStatus[entry.url] === 'connected' ? 'Connected' : 'Disconnected'}
-              ><Icon name={$relayStatus[entry.url] === 'connected' ? 'check' : 'warning'} /></span
-            >{entry.url}</label
-          ><button
-            class="icon-button"
-            aria-label={`Delete ${entry.url}`}
-            onclick={() => (entries = entries.filter((e) => e !== entry))}
-            ><Icon name="delete" /></button
-          >
-        </div>{/each}
     </div>
+    <details class="relay-editor" bind:open={editRelays}>
+      <summary>{$translate('relays.editRelays')}</summary>
+      <form
+        class="relay-form"
+        onsubmit={(e) => {
+          e.preventDefault();
+          addRelay();
+        }}
+      >
+        <label
+          >{$translate('relays.relayUrl')}<input
+            bind:value={relayInput}
+            placeholder="wss://example-relay.io"
+            data-testid="auth-onboarding-relay-input"
+          /></label
+        ><button
+          class="primary"
+          aria-label="Add relay"
+          disabled={!relayInput.trim()}
+          data-testid="auth-onboarding-add-relay-button"><Icon name="add" /></button
+        >
+      </form>
+      <div class="relay-list">
+        {#each entries as entry}<div class="relay">
+            <label
+              >{#if checking.has(entry.url)}<span
+                  class="relay-spinner"
+                  aria-label={`Checking ${entry.url}`}
+                ></span>{:else}<input
+                  type="checkbox"
+                  bind:checked={entry.selected}
+                  aria-label={`Use ${entry.url} for profile lookup`}
+                />{/if}<span
+                class="relay-status"
+                class:connected={$relayStatus[entry.url] === 'connected'}
+                aria-label={$relayStatus[entry.url] === 'connected' ? 'Connected' : 'Disconnected'}
+                ><Icon name={$relayStatus[entry.url] === 'connected' ? 'check' : 'warning'} /></span
+              >{entry.url}</label
+            ><button
+              class="icon-button"
+              aria-label={`Delete ${entry.url}`}
+              onclick={() => (entries = entries.filter((e) => e !== entry))}
+              ><Icon name="delete" /></button
+            >
+          </div>{/each}
+      </div>
+    </details>
   {:else if status === 'profile'}
     <label
       >{$translate('common.nameOptional')}<input
@@ -308,7 +329,10 @@
         data-testid="auth-onboarding-skip-button">{$translate('common.skipNow')}</button
       ><button
         class="primary"
-        onclick={() => (status = 'relays')}
+        onclick={() => {
+          status = 'relays';
+          editRelays = true;
+        }}
         data-testid="auth-onboarding-add-relays-button">{$translate('relays.addRelays')}</button
       >
     </div>
@@ -318,27 +342,14 @@
       data-testid="auth-onboarding-retry-button">{$translate('common.tryAgain')}</button
     >
     <div class="button-row">
-      <button class="outline" onclick={() => (status = 'relays')}
-        >{$translate('relays.editRelays')}</button
-      ><button class="outline" onclick={() => finish()} data-testid="auth-onboarding-skip-button"
-        >{$translate('common.continue')}</button
-      >
-    </div>
-  {:else if status === 'relays'}<div class="button-row">
       <button
         class="outline"
-        onclick={logout}
-        disabled={busy}
-        data-testid="auth-onboarding-logout-button"
-        ><Icon name="logout" />{$translate('settings.logout')}</button
-      ><button
-        class="primary"
-        disabled={!entries.some((e) => e.selected)}
         onclick={() => {
-          entries = entries.filter((entry) => entry.selected);
-          void lookup(true);
-        }}
-        data-testid="auth-onboarding-relays-next-button">{$translate('common.next')}</button
+          status = 'relays';
+          editRelays = true;
+        }}>{$translate('relays.editRelays')}</button
+      ><button class="outline" onclick={() => finish()} data-testid="auth-onboarding-skip-button"
+        >{$translate('common.continue')}</button
       >
     </div>
   {:else if status === 'profile'}<button
@@ -371,6 +382,16 @@
   </div>{/if}
 
 <style>
+  .relay-editor summary {
+    cursor: pointer;
+    color: #64748b;
+    font-size: 14px;
+    padding: 6px 0;
+  }
+  .relay-editor[open] summary {
+    margin-bottom: 12px;
+  }
+
   .relay-spinner {
     width: 20px;
     height: 20px;

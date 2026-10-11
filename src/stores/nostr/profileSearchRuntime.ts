@@ -1,5 +1,10 @@
 import type NostrClient from '#src/lib/nostr/client.ts';
-import { nip19, type ClientEvent, type NostrFilter } from '#src/lib/nostr/client.ts';
+import {
+  nip19,
+  type ClientEvent,
+  type NostrFilter,
+  type NostrEvent,
+} from '#src/lib/nostr/client.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 
 export interface ProfileSearchResult {
@@ -10,6 +15,7 @@ export interface ProfileSearchResult {
   relayUrls: string[];
   createdAt?: number;
   eventId?: string;
+  following?: boolean;
 }
 export type ProfileSearchStatus = 'complete' | 'unavailable' | 'invalid';
 export const profileSearchAllowed = (
@@ -22,14 +28,33 @@ export const profileSearchAllowed = (
   !privateKeys.some((key) => key && query.toLowerCase().includes(key.toLowerCase()));
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
+/** Public NIP-02 membership only; never adds private contacts. */
+export function followListEntries(event?: NostrEvent): Map<string, string> {
+  const entries = new Map<string, string>();
+  if (event?.kind !== 3) return entries;
+  for (const tag of event.tags) {
+    if (tag[0] === 'p' && /^[a-f0-9]{64}$/.test(tag[1] ?? '')) entries.set(tag[1], text(tag[3]));
+    // Match the display-profile cache bound; no message history is read.
+    if (entries.size >= 5000) break;
+  }
+  return entries;
+}
+
 /** Short-lived public discovery. It never replaces the message subscriptions,
  * creates contacts, or reads message history. Results stream before EOSE. */
 export function searchRelayProfiles(
   client: NostrClient,
   query: string,
-  relayUrls: string[],
+  relayUrls: string[] | Promise<string[]>,
   options: {
     signal: AbortSignal;
+    account?: string | null;
+    followList?: NostrEvent;
+    cachedProfile?: (
+      key: string,
+    ) => { name: string; picture: string; createdAt?: number; eventId?: string } | undefined;
+    onFollowList?: (event: NostrEvent) => void;
+    onFollowProfile?: (profile: ProfileSearchResult) => void;
     onResults: (results: ProfileSearchResult[]) => void;
     isBlocked: (key: string) => boolean;
     resolveNip05: (
@@ -51,6 +76,8 @@ export function searchRelayProfiles(
         .filter((url): url is string => Boolean(url)),
     ),
   ];
+  let followList = options.followList?.pubkey === options.account ? options.followList : undefined;
+  let followed = followListEntries(followList);
   let stopped = false;
   return new Promise((resolve) => {
     const finish = (status: ProfileSearchStatus) => {
@@ -76,10 +103,12 @@ export function searchRelayProfiles(
       if (!stopped)
         options.onResults(
           [...results.values()]
+            .map((profile) => ({ ...profile, following: followed.has(profile.publicKey) }))
             .sort((a, b) => {
               const rank = (profile: ProfileSearchResult) =>
                 Number(profile.name.toLowerCase() === value.toLowerCase());
               return (
+                Number(b.following) - Number(a.following) ||
                 rank(b) - rank(a) ||
                 a.name.localeCompare(b.name) ||
                 a.publicKey.localeCompare(b.publicKey)
@@ -124,13 +153,40 @@ export function searchRelayProfiles(
         finish('complete');
         return;
       }
-      const targets = urls([...hints, ...relayUrls]);
+      const seedFollowed = () => {
+        for (const [key, petname] of followed) {
+          if (options.isBlocked(key) || (publicKey && key !== publicKey) || results.has(key))
+            continue;
+          const cached = options.cachedProfile?.(key);
+          const name = cached?.name || petname || key.slice(0, 16);
+          if (
+            !publicKey &&
+            ![name, petname, key].some((field) => field.toLowerCase().includes(value.toLowerCase()))
+          )
+            continue;
+          results.set(key, {
+            publicKey: key,
+            name,
+            picture: cached?.picture || '',
+            nip05: '',
+            relayUrls: [],
+            createdAt: cached?.createdAt,
+            eventId: cached?.eventId,
+          });
+        }
+        if (results.size) emit();
+      };
+      seedFollowed();
+      const targets = urls([...hints, ...(Array.isArray(relayUrls) ? relayUrls : await relayUrls)]);
+      if (stopped) return;
       if (publicKey) {
+        const cached = results.get(publicKey);
         results.set(publicKey, {
+          ...cached,
           publicKey,
-          name: nip05 || publicKey.slice(0, 16),
-          picture: '',
-          nip05,
+          name: cached?.name || nip05 || publicKey.slice(0, 16),
+          picture: cached?.picture || '',
+          nip05: nip05 || cached?.nip05 || '',
           relayUrls: targets,
         });
         emit();
@@ -144,7 +200,8 @@ export function searchRelayProfiles(
         : { kinds: [0], search: value, limit: 20 };
       // Ordinary metadata reads must survive rejection of the optional NIP-50 filter.
       const filters: NostrFilter[] = publicKey ? [filter] : [filter, { kinds: [0], limit: 100 }];
-      let pending = targets.length * filters.length;
+      let pending = 0;
+      let scheduling = true;
       const receive = (event: ClientEvent) => {
         if (
           stopped ||
@@ -167,24 +224,8 @@ export function searchRelayProfiles(
           text(profile.name) ||
           event.pubkey.slice(0, 16);
         const claimedNip05 = text(profile.nip05);
-        // Relays without NIP-50 may ignore `search` and return arbitrary profiles.
-        if (
-          !publicKey &&
-          ![name, text(profile.name), claimedNip05, event.pubkey].some((field) =>
-            field.toLowerCase().includes(value.toLowerCase()),
-          )
-        )
-          return;
-        const previous = results.get(event.pubkey);
-        if (
-          previous?.createdAt !== undefined &&
-          ((event.created_at ?? 0) < previous.createdAt ||
-            (event.created_at === previous.createdAt && event.id >= (previous.eventId ?? '')))
-        )
-          return;
-        if (!previous && results.size >= 40) return;
         const picture = text(profile.picture) || text(profile.image);
-        results.set(event.pubkey, {
+        const candidate: ProfileSearchResult = {
           publicKey: event.pubkey,
           name,
           picture: /^https?:\/\//i.test(picture) ? picture : '',
@@ -192,24 +233,52 @@ export function searchRelayProfiles(
           relayUrls: targets,
           createdAt: event.created_at,
           eventId: event.id,
-        });
+        };
+        if (followed.has(event.pubkey)) options.onFollowProfile?.(candidate);
+        // Relays without NIP-50 may ignore `search` and return arbitrary profiles.
+        if (
+          !publicKey &&
+          ![
+            name,
+            text(profile.name),
+            claimedNip05,
+            event.pubkey,
+            followed.get(event.pubkey) || '',
+          ].some((field) => field.toLowerCase().includes(value.toLowerCase()))
+        )
+          return;
+        const previous = results.get(event.pubkey);
+        if (
+          previous?.createdAt !== undefined &&
+          ((event.created_at ?? 0) < previous.createdAt ||
+            (event.created_at === previous.createdAt && event.id > (previous.eventId ?? '')))
+        )
+          return;
+        if (!previous && results.size >= 40 && !followed.has(event.pubkey)) return;
+        results.set(event.pubkey, candidate);
         emit();
       };
-      for (const relay of targets)
-        for (const requestedFilter of filters) {
+      const request = (
+        requestedFilter: NostrFilter,
+        receiveEvent: (event: ClientEvent) => void,
+      ) => {
+        // Each relay can stream useful results independently.
+        pending += targets.length;
+        for (const relay of targets) {
           let done = false,
             received = 0;
           const complete = () => {
             if (done) return;
             done = true;
-            if (--pending === 0) finish(results.size || receivedEose ? 'complete' : 'unavailable');
+            if (--pending === 0 && !scheduling)
+              finish(results.size || receivedEose ? 'complete' : 'unavailable');
           };
           try {
             const sub = client.subscribe(requestedFilter, {
               relayUrls: [relay],
               closeOnEose: true,
               onEvent: (event) => {
-                if (!done && received++ < 256) receive(event);
+                if (!stopped && !done && received++ < 256) receiveEvent(event);
               },
               onEose: () => {
                 receivedEose = true;
@@ -223,6 +292,39 @@ export function searchRelayProfiles(
             complete();
           }
         }
+      };
+      const requested = new Set<string>();
+      const hydrateFollowed = () => {
+        const keys = [...followed.keys()].filter(
+          (key) =>
+            !requested.has(key) && !options.isBlocked(key) && (!publicKey || key === publicKey),
+        );
+        for (let i = 0; i < keys.length; i += 100) {
+          const authors = keys.slice(i, i + 100);
+          authors.forEach((key) => requested.add(key));
+          request({ kinds: [0], authors, limit: authors.length }, receive);
+        }
+      };
+      for (const filter of filters) request(filter, receive);
+      hydrateFollowed();
+      if (options.account)
+        request({ kinds: [3], authors: [options.account], limit: 1 }, (event) => {
+          if (event.kind !== 3 || event.pubkey !== options.account) return;
+          if (
+            followList &&
+            ((event.created_at ?? 0) < followList.created_at ||
+              (event.created_at === followList.created_at && event.id >= followList.id))
+          )
+            return;
+          followList = event.rawEvent();
+          followed = followListEntries(followList);
+          options.onFollowList?.(followList);
+          seedFollowed();
+          emit();
+          hydrateFollowed();
+        });
+      scheduling = false;
+      if (!pending) finish(results.size || receivedEose ? 'complete' : 'unavailable');
     })().catch(() => finish('unavailable'));
   });
 }

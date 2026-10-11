@@ -67,6 +67,11 @@
     }
     const copy = targetDocument.importNode(source, false);
     for (const child of source.childNodes) copy.appendChild(mirror(child, targetDocument));
+    if (source instanceof HTMLElement && source.shadowRoot && copy.nodeType === Node.ELEMENT_NODE) {
+      const root = (copy as HTMLElement).attachShadow({ mode: 'open' });
+      for (const child of source.shadowRoot.childNodes)
+        root.appendChild(mirror(child, targetDocument));
+    }
     return copy;
   }
   export function openWindow() {

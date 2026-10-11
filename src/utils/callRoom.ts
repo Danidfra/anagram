@@ -49,10 +49,18 @@ function member(value: unknown): CallRoomMember | null {
     typeof v.name !== 'string' ||
     !v.name.trim() ||
     v.name.length > 80 ||
+    (v.nameRevision !== undefined &&
+      (!Number.isSafeInteger(v.nameRevision) || v.nameRevision < 0)) ||
     !relays
   )
     return null;
-  return { pubkey, sessionId: v.sessionId, name: v.name.trim(), relays };
+  return {
+    pubkey,
+    sessionId: v.sessionId,
+    name: v.name.trim(),
+    relays,
+    ...(v.nameRevision !== undefined ? { nameRevision: v.nameRevision } : {}),
+  };
 }
 export function parseRoomLink(input: string, now = Date.now()): CallRoomLink | null {
   try {

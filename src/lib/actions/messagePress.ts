@@ -23,6 +23,7 @@ export function messagePress(node: HTMLElement, enabled: boolean) {
   const cancel = () => {
     clearTimeout(timer);
     timer = undefined;
+    window.removeEventListener('scroll', cancel, true);
   };
   const down = (event: PointerEvent) => {
     if (!enabled || !event.isPrimary || interactive(event.target)) return;
@@ -30,8 +31,10 @@ export function messagePress(node: HTMLElement, enabled: boolean) {
     origin = { x: event.clientX, y: event.clientY };
     moved = false;
     if (event.pointerType === 'mouse') return;
+    // Only an active long press needs scroll cancellation.
+    window.addEventListener('scroll', cancel, { capture: true, passive: true });
     timer = setTimeout(() => {
-      timer = undefined;
+      cancel();
       suppressClickUntil = Date.now() + 750;
       open(origin.x, origin.y);
     }, 500);
@@ -80,7 +83,6 @@ export function messagePress(node: HTMLElement, enabled: boolean) {
   node.addEventListener('contextmenu', cancel);
   node.addEventListener('click', click);
   node.addEventListener('keydown', keydown);
-  window.addEventListener('scroll', cancel, true);
   return {
     update(value: boolean) {
       enabled = value;
@@ -95,7 +97,6 @@ export function messagePress(node: HTMLElement, enabled: boolean) {
       node.removeEventListener('contextmenu', cancel);
       node.removeEventListener('click', click);
       node.removeEventListener('keydown', keydown);
-      window.removeEventListener('scroll', cancel, true);
     },
   };
 }

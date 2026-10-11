@@ -31,7 +31,6 @@ test('signer tabs, pairing QR, cancellation and key warning match the original f
   page,
 }) => {
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await expect(page.getByRole('button', { name: 'Login with Extension', exact: true })).toHaveCount(
     0,
   );

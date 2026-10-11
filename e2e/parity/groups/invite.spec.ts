@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
+import { generateSecretKey, getPublicKey, nip19, finalizeEvent } from 'nostr-tools';
 import {
   bootstrapUser,
   createGroup,
@@ -23,10 +23,29 @@ test('invite picker prioritizes contacts, searches relays, accepts public keys a
   const remote = await bootstrapUser(browser, TEST_ACCOUNTS.invitePickerRemote);
   try {
     await establishAcceptedDirectChat(owner, local);
+    const following = finalizeEvent(
+      {
+        kind: 3,
+        created_at: Math.floor(Date.now() / 1000),
+        content: '',
+        tags: [
+          ['p', remote.session.publicKey],
+          ['p', local.session.publicKey],
+        ],
+      },
+      Uint8Array.from(Buffer.from(owner.account.privateKey, 'hex')),
+    );
+    await owner.page.evaluate(async (event) => {
+      const { contactsService } = await import('/src/services/contactsService.ts');
+      await contactsService.savePublicFollowList(event);
+    }, following);
     const group = await createGroup(owner.page, { name: 'Invite picker group', about: '' });
     await navigateToChat(owner.page, group);
     await owner.page.locator('.thread-identity').click();
-    const groupDialog = owner.page.locator('.modal[role="dialog"]');
+    const groupDialog = owner.page.getByRole('dialog', {
+      name: 'profile',
+      exact: true,
+    });
     const title = groupDialog.getByRole('heading', { name: 'Invite picker group' });
     await title.click();
     await expect(groupDialog).toBeVisible();
@@ -66,6 +85,9 @@ test('invite picker prioritizes contacts, searches relays, accepts public keys a
       .filter({ hasText: 'invitePickerRemote' });
     await expect(contact).toBeVisible();
     await expect(stranger).toBeVisible();
+    await expect(dialog.getByRole('region', { name: 'People you follow' })).toContainText(
+      'invitePickerRemote',
+    );
     await expect(
       dialog.getByTestId('profile-search-result').filter({ hasText: 'invitePickerLocal' }),
     ).toHaveCount(0);

@@ -142,7 +142,6 @@ for (const cachedProfile of [false, true])
           },
           { peer, now },
         );
-      await page.getByTestId('auth-open-login-button').click();
       await page.getByTestId('auth-open-key-button').click();
       await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(ownKey));
       await page.getByTestId('auth-login-button').click();

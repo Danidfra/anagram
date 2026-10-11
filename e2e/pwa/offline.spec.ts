@@ -5,7 +5,7 @@ test('installs the public app shell, opens deep links offline, and keeps private
   context,
 }) => {
   await page.goto('/');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   const manifest = await page.locator('link[rel="manifest"]').getAttribute('href');
   const response = await page.request.get(manifest!);
   const json = await response.json();
@@ -54,9 +54,9 @@ test('installs the public app shell, opens deep links offline, and keeps private
   });
   await context.setOffline(true);
   await page.goto('/chats/' + 'a'.repeat(64));
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   await page.reload();
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   const after = await page.evaluate(async () => ({
     marker: localStorage.getItem('pwa-cache-test'),
     urls: (
@@ -89,7 +89,7 @@ test('does not register a web service worker inside Tauri', async ({ page }) => 
     Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {} });
   });
   await page.goto('/');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   expect(
     await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length),
   ).toBe(0);
@@ -149,7 +149,6 @@ test('saved NIP-17 replies reopen offline from IndexedDB in the production app',
     localStorage.setItem('nip65_relays', entries);
   }, relay);
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(ownKey));
   await page.getByTestId('auth-login-button').click();
@@ -212,7 +211,7 @@ test('saved NIP-17 replies reopen offline from IndexedDB in the production app',
 
 test('a newly installed worker waits while the existing app is open', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
   });
@@ -237,7 +236,7 @@ test('a newly installed worker waits while the existing app is open', async ({ p
     .toBe(true);
   expect(await page.evaluate(() => navigator.serviceWorker.controller!.scriptURL)).toBe(original);
   expect(await page.evaluate(() => localStorage.getItem('pwa-draft-test'))).toBe('keep-this-draft');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
 });
 
 test('clean-URL redirects do not break repeat visits or offline navigation', async ({
@@ -245,7 +244,7 @@ test('clean-URL redirects do not break repeat visits or offline navigation', asy
   context,
 }) => {
   await page.goto('/');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
   });
@@ -264,13 +263,13 @@ test('clean-URL redirects do not break repeat visits or offline navigation', asy
   for (const path of ['/', '/chats', '/']) {
     const response = await page.goto(path);
     expect(response?.fromServiceWorker()).toBe(true);
-    await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+    await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   }
   await page.reload();
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   await context.setOffline(true);
   await page.goto('/chats/' + 'a'.repeat(64));
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
 });
 
 test('cache read failures fall back to the network without breaking navigation', async ({
@@ -278,7 +277,7 @@ test('cache read failures fall back to the network without breaking navigation',
   context,
 }) => {
   await page.goto('/');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
   });
@@ -292,14 +291,14 @@ test('cache read failures fall back to the network without breaking navigation',
     };
   });
   await page.goto('/chats');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   await page.reload();
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
 });
 
 test('cache write failures do not discard downloaded public assets', async ({ page, context }) => {
   await page.goto('/');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
   });

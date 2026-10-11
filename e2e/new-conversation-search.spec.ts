@@ -40,6 +40,20 @@ for (const width of [1280, 390]) {
         key as Uint8Array,
       ),
     );
+    profiles.push(
+      finalizeEvent(
+        {
+          kind: 3,
+          created_at: Math.floor(Date.now() / 1000),
+          content: '',
+          tags: [
+            ['p', known],
+            ['p', discovered],
+          ],
+        },
+        ownKey,
+      ),
+    );
     server.on('connection', (socket) =>
       socket.on('message', (data) => {
         const [verb, id, ...filters] = JSON.parse(String(data));
@@ -68,7 +82,6 @@ for (const width of [1280, 390]) {
         localStorage.setItem('nip65_relays', entries);
       }, relay);
       await page.goto('/');
-      await page.getByTestId('auth-open-login-button').click();
       await page.getByTestId('auth-open-key-button').click();
       await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(ownKey));
       await page.getByTestId('auth-login-button').click();
@@ -82,6 +95,17 @@ for (const width of [1280, 390]) {
           meta: {},
         });
       }, known);
+      await page.getByRole('button', { name: 'contacts', exact: true }).click();
+      await page.getByTestId('contact-list-search').fill('Dialog');
+      await expect(
+        page
+          .getByRole('region', { name: 'People you follow' })
+          .getByTestId('profile-search-result'),
+      ).toContainText('Dialog new');
+      await expect(
+        page.getByTestId('contact-item').filter({ hasText: 'Dialog known' }),
+      ).toHaveCount(1);
+      await page.getByRole('button', { name: 'chats', exact: true }).click();
       await page.getByRole('button', { name: 'Chat options' }).click();
       await page.getByTestId('new-chat-button').click();
       const dialog = page.getByRole('dialog', { name: 'contact', exact: true });
@@ -90,8 +114,24 @@ for (const width of [1280, 390]) {
       await input.fill('Dialog');
       await expect(results).toHaveCount(1);
       await expect(results).toContainText('Dialog new');
+      await expect(dialog.getByRole('region', { name: 'People you follow' })).toBeVisible();
       await expect(dialog.getByText('Dialog known', { exact: true })).toHaveCount(0);
       await expect(dialog.getByRole('region', { name: 'Public groups on relays' })).toHaveCount(0);
+      if (width === 390) {
+        await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+        await page.reload();
+        await expect(page.getByRole('button', { name: 'Chat options' })).toBeVisible();
+        await page.context().setOffline(true);
+        await page.getByRole('button', { name: 'Chat options' }).click();
+        await page.getByTestId('new-chat-button').click();
+        await input.fill('Dialog');
+        await expect(dialog.getByRole('region', { name: 'People you follow' })).toContainText(
+          'Dialog new',
+        );
+        await expect(results).toHaveCount(1);
+        await page.context().setOffline(false);
+      }
+
       await input.fill(nip19.npubEncode(known));
       await expect(results).toHaveCount(0);
       await expect(

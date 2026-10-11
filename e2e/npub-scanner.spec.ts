@@ -11,7 +11,6 @@ async function openContact(page: Page) {
     localStorage.setItem('nip65_relays', relays);
   });
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(generateSecretKey()));
   await page.getByTestId('auth-login-button').click();
@@ -122,7 +121,7 @@ test('camera denial can be retried, and late permission after closing releases t
   await camera(page, npub, 'denied');
   await page.getByRole('button', { name: 'Scan npub QR code', exact: true }).click();
   await expect(page.getByTestId('npub-scanner').getByRole('alert')).toContainText(
-    'permission was denied',
+    'Enable camera access in your browser’s site settings or your device’s app permissions',
   );
   await expect(page.getByTestId('contact-identifier-input')).toHaveValue('');
   await page.evaluate(() => {
@@ -143,3 +142,53 @@ test('camera denial can be retried, and late permission after closing releases t
   });
   await cameraStopped(page);
 });
+
+for (const enumerate of ['multiple', 'unavailable'] as const) {
+  test(`camera switch releases the previous stream with ${enumerate} device enumeration`, async ({
+    page,
+  }) => {
+    await openContact(page);
+    await camera(page, 'not an npub');
+    await page.evaluate((enumerate) => {
+      const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        const fixture = window as any;
+        fixture.previousStopped = fixture.cameraTracks.every(
+          (track: MediaStreamTrack) => track.readyState === 'ended',
+        );
+        const stream = await original(constraints);
+        const requested = (constraints?.video as MediaTrackConstraints)
+          ?.deviceId as ConstrainDOMStringParameters;
+        stream.getVideoTracks()[0].getSettings = () => ({
+          deviceId: (requested?.exact as string) || 'rear',
+        });
+        return stream;
+      };
+      navigator.mediaDevices.enumerateDevices = async () => {
+        if (enumerate === 'unavailable') throw new Error('Enumeration unavailable');
+        return ['front', 'rear', 'telephoto'].map(
+          (deviceId) => ({ kind: 'videoinput', deviceId }) as MediaDeviceInfo,
+        );
+      };
+    }, enumerate);
+    await page.getByRole('button', { name: 'Scan npub QR code', exact: true }).click();
+    const scanner = page.getByTestId('npub-scanner');
+    await expect(scanner.getByRole('status')).toContainText('not an npub');
+    await scanner.getByRole('button', { name: 'Switch camera', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).cameraRequests.length)).toBe(2);
+    expect(await page.evaluate(() => (window as any).previousStopped)).toBe(true);
+    const requests = await page.evaluate(() => (window as any).cameraRequests);
+    expect(requests[1]).toEqual({
+      audio: false,
+      video: {
+        ...(enumerate === 'multiple'
+          ? { deviceId: { exact: 'telephoto' } }
+          : { facingMode: { ideal: 'user' } }),
+        width: { ideal: 1280 },
+      },
+    });
+    await expect(scanner.getByRole('status')).toContainText('not an npub');
+    await scanner.getByRole('button', { name: 'Cancel scan', exact: true }).click();
+    await cameraStopped(page);
+  });
+}

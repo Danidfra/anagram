@@ -75,7 +75,8 @@ export function createRelayListStoreSetup({
 
     function clear(): void {
       relayEntries.value = [];
-      isInitialized.value = true;
+      // Logout clears account state; the next session must load its relays afresh.
+      isInitialized.value = false;
 
       if (!hasStorage()) {
         return;

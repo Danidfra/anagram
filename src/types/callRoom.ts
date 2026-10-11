@@ -14,6 +14,7 @@ export interface CallRoomMember {
   pubkey: string;
   sessionId: string;
   name: string;
+  nameRevision?: number;
   relays: string[];
 }
 export interface CallRoomSignal {

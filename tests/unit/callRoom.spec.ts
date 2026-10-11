@@ -54,6 +54,18 @@ describe('group call links and authenticated control payloads', () => {
     expect(parseRoomLink(roomLinkToken({ ...link, relays: ['file:///secret'] }))).toBeNull();
     expect(parseRoomLink('a'.repeat(8193))).toBeNull();
   });
+  it('validates optional name revisions and strips unrecognized styling fields', () => {
+    const renamed = {
+      ...join,
+      member: { ...member, name: 'New name', nameRevision: 2, css: 'body{}' },
+    };
+    expect(parse(renamed)?.member).toEqual({ ...member, name: 'New name', nameRevision: 2 });
+    for (const revision of [-1, 1.5, '2', Number.MAX_SAFE_INTEGER + 1])
+      expect(
+        parse({ ...renamed, member: { ...renamed.member, nameRevision: revision } }),
+      ).toBeNull();
+    expect(parse(join)?.member).toEqual(member);
+  });
   it('validates joining identity/session binding and bounds group membership', () => {
     expect(parse(join)).toEqual(join);
     expect(parse({ ...join, member: { ...member, sessionId: crypto.randomUUID() } })).toBeNull();

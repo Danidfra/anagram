@@ -4,7 +4,7 @@ test('production CSP blocks injected inline/remote scripts and base URL changes 
   page,
 }) => {
   const response = await page.goto('/');
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   await expect(page.locator('meta[name="referrer"]')).toHaveAttribute('content', 'no-referrer');
   const html = await response!.text();
   const policy = html.match(/http-equiv="content-security-policy" content="([^"]+)"/i)?.[1] ?? '';

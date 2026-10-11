@@ -147,7 +147,6 @@ test('anonymous indexers discover an unknown account inbox and stream all peer p
     localStorage.setItem('nip65_relays', entries);
   }, seed);
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(ownKey));
   await page.getByTestId('auth-login-button').click();

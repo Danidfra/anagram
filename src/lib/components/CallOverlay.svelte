@@ -5,7 +5,6 @@
   import { useCallStore } from '#src/stores/callStore.ts';
   import { useCallRoomStore } from '#src/stores/callRoomStore.ts';
   import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { contactsService } from '#src/services/contactsService.ts';
   import { canShareCallScreen, callMediaSupported } from '#src/services/callMediaService.ts';
   import { createCallRingtone } from '#src/services/callRingtone.ts';
   import { observeCallActivity } from '#src/services/callActivityService.ts';
@@ -22,7 +21,12 @@
   import CallAudio from './CallAudio.svelte';
   import CallVideo from './CallVideo.svelte';
   import CallStage from './CallStage.svelte';
+  import ModalFrame from './ModalFrame.svelte';
+  import GroupCallNameFields from './GroupCallNameFields.svelte';
+  import CustomCallName from './CustomCallName.svelte';
+  import { groupCallNames } from '#src/lib/state/groupCallNames.ts';
   import CallControlsTray from './CallControlsTray.svelte';
+  import CallControlsWindow from './CallControlsWindow.svelte';
   import CallDeviceMenu from './CallDeviceMenu.svelte';
   const calls = useCallStore(),
     rooms = useCallRoomStore();
@@ -50,6 +54,13 @@
     $state.session,
     $state.busy,
   );
+  let controlsWindow: CallControlsWindow;
+  let controlsTray: CallControlsTray;
+  let autoHideControls = false;
+  let editNames = false;
+  $: nameAccount = $state.room?.own.pubkey || '';
+  $: namePreferences = groupCallNames(nameAccount);
+  $: localName = $state.room?.own.name || '';
   let stage: CallStage;
   let remoteVideo: CallVideo;
   let minimized = false,
@@ -63,11 +74,8 @@
     showInviteLink = false,
     inviteError = '';
   let devices: MediaDeviceInfo[] = [];
-  let names: Record<string, string> = {};
   let now = Date.now();
   let disposed = false;
-  let nameGeneration = 0;
-  let namesSignature = '';
   let activityStream: MediaStream | null = null,
     activityEnabled = false;
   let previousId = '';
@@ -123,12 +131,22 @@
     ...(room
       ? $state.participants
           .filter((peer) => peer.screenUrl)
-          .map((peer) => ({ id: peer.pubkey, name: names[peer.pubkey] || '', url: peer.screenUrl }))
+          .map((peer) => ({
+            id: peer.pubkey,
+            name: peer.name,
+            url: peer.screenUrl,
+          }))
       : $state.screen
         ? [{ id: 'remote', name: $state.session?.peerName || '', url: $state.screen }]
         : []),
     ...($state.localScreen
-      ? [{ id: 'local', name: $translate('call.yourScreen'), stream: $state.localScreen }]
+      ? [
+          {
+            id: 'local',
+            name: room && localName ? localName : $translate('call.yourScreen'),
+            stream: $state.localScreen,
+          },
+        ]
       : []),
   ];
   $: status = room
@@ -148,7 +166,6 @@
   $: if (!$state.busy) invite = false;
   $: if ($state.local) void refreshDevices();
   $: watchActivity($state.local, speakerView && room && !$state.muted);
-  $: void resolveNames($state.room?.members ?? []);
   function duration(ms: number) {
     const seconds = Math.max(0, Math.floor(ms / 1000));
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -159,6 +176,7 @@
     minimized = maxFill = speakerView = speakerMuted = playbackBlocked = false;
     outputError = '';
     invite = false;
+    editNames = false;
     levels.clear();
     selector = createActiveSpeakerSelector();
     activeSpeaker = 'local';
@@ -179,29 +197,6 @@
     updateLevel('local', 0);
     if (stream && enabled)
       stopActivity = observeCallActivity(stream, (level) => updateLevel('local', level));
-  }
-  async function resolveNames(members: Array<{ pubkey: string; relays: string[] }>) {
-    const signature = JSON.stringify(members);
-    if (signature === namesSignature) return;
-    namesSignature = signature;
-    const generation = ++nameGeneration;
-    names = {};
-    for (const member of members)
-      void (async () => {
-        try {
-          const cached = await contactsService.getContactByPublicKey(member.pubkey);
-          if (generation === nameGeneration && !disposed)
-            names = { ...names, [member.pubkey]: cached?.meta.nip05?.trim() || '' };
-          const profile = await useNostrStore().fetchUserProfileFromRelays(
-            member.pubkey,
-            member.relays,
-          );
-          if (profile && generation === nameGeneration && !disposed)
-            names = { ...names, [member.pubkey]: profile.nip05?.trim() || '' };
-        } catch {
-          /* Keep cached identity when relay lookup fails. */
-        }
-      })();
   }
   async function act(fn: () => unknown) {
     try {
@@ -291,13 +286,194 @@
   });
   onDestroy(() => {
     disposed = true;
-    nameGeneration++;
     ringtone.dispose();
     stopActivity?.();
     calls.reset();
     rooms.reset();
   });
 </script>
+
+{#snippet controls()}
+  <div class="call-panel__controls" class:room-controls={room}>
+    {#if room || hasVideo || screens.length}<button
+        class="call-round"
+        class:chosen={maxFill}
+        title={$translate(maxFill ? 'call.fitMedia' : 'call.maxFill')}
+        aria-label={$translate('call.maxFill')}
+        aria-pressed={maxFill}
+        data-testid={`${prefix}-max-fill`}
+        onclick={() => (maxFill = !maxFill)}><Icon name="fill" /></button
+      >{/if}
+    {#if canMinimize}<button
+        class="call-round flat"
+        aria-label={$translate('call.minimize')}
+        data-testid={`${prefix}-minimize`}
+        onclick={() => (minimized = true)}><Icon name="minimize" /></button
+      >{/if}
+    {#if active}<button
+        class="call-round"
+        aria-label={$translate('call.controlsWindow')}
+        title={$translate('call.controlsWindow')}
+        data-testid={`${prefix}-open-controls`}
+        onclick={() => controlsWindow?.openWindow()}><Icon name="popout" /></button
+      ><button
+        class="call-round"
+        aria-label={$translate(autoHideControls ? 'call.keepControls' : 'call.hideControls')}
+        title={$translate(autoHideControls ? 'call.keepControls' : 'call.hideControls')}
+        data-testid={`${prefix}-hide-controls`}
+        aria-pressed={autoHideControls}
+        onclick={() => controlsTray?.toggle()}
+        ><Icon name={autoHideControls ? 'eye' : 'down'} /></button
+      >{/if}
+    {#if room}<button
+        class="call-round"
+        aria-label={$translate(speakerView ? 'room.galleryView' : 'room.speakerView')}
+        data-testid="room-view-toggle"
+        onclick={() => (speakerView = !speakerView)}
+        ><Icon name={speakerView ? 'grid' : 'speaker-view'} /></button
+      >{/if}
+    {#if phase === 'incoming'}
+      <button
+        class="call-round danger call-primary-action"
+        data-testid="call-decline"
+        aria-label={$translate('call.decline')}
+        onclick={() => act(() => calls.end())}
+        ><Icon name="hangup" /><span class="call-action-label">{$translate('call.decline')}</span
+        ></button
+      >
+      <button
+        class="call-answer audio call-primary-action"
+        data-testid="call-accept"
+        onclick={() => act(() => calls.accept('audio'))}
+        ><Icon name="phone" /><span>{$translate('call.answerAudio')}</span></button
+      >
+      {#if $state.session?.mode === 'video'}<button
+          class="call-answer call-primary-action"
+          data-testid="call-accept-video"
+          onclick={() => act(() => calls.accept('video'))}
+          ><Icon name="video" /><span>{$translate('call.answerVideo')}</span></button
+        >{/if}
+    {:else}
+      <div class="call-panel__device">
+        <button
+          class="call-round"
+          class:danger={$state.muted}
+          aria-label={$translate($state.muted ? 'call.unmuteMicrophone' : 'call.muteMicrophone')}
+          aria-pressed={Boolean($state.muted)}
+          disabled={!$state.local}
+          data-testid={`${prefix}-microphone`}
+          onclick={() => act(() => runtime.toggleMicrophone())}
+          ><Icon name={$state.muted ? 'mic-off' : 'mic'} /></button
+        ><CallDeviceMenu
+          kind="microphone"
+          {prefix}
+          devices={devices.filter((d) => d.kind === 'audioinput')}
+          selected={$state.microphone}
+          disabled={!active || $state.changing}
+          supported={room || $state.session?.mediaVersion === 2}
+          onrefresh={refreshDevices}
+          onselect={(id) => act(() => runtime.selectMicrophone(id))}
+        />
+      </div>
+      <div class="call-panel__device">
+        <button
+          class="call-round"
+          class:danger={speakerMuted}
+          aria-label={$translate(speakerMuted ? 'call.unmuteSpeaker' : 'call.muteSpeaker')}
+          aria-pressed={speakerMuted}
+          data-testid={`${prefix}-speaker`}
+          onclick={() => (speakerMuted = !speakerMuted)}
+          ><Icon name={speakerMuted ? 'speaker-off' : 'speaker'} /></button
+        ><CallDeviceMenu
+          kind="speaker"
+          {prefix}
+          devices={devices.filter((d) => d.kind === 'audiooutput')}
+          selected={speaker}
+          supported={canSelectSpeaker}
+          canRequest={Boolean(outputs?.selectAudioOutput)}
+          onrefresh={refreshDevices}
+          onselect={(id) => {
+            outputError = '';
+            speaker = id;
+          }}
+          onrequest={requestSpeaker}
+        />
+      </div>
+      <div class="call-panel__device">
+        <button
+          class="call-round"
+          class:chosen={!$state.cameraMuted}
+          aria-label={$translate($state.cameraMuted ? 'call.enableCamera' : 'call.disableCamera')}
+          title={!canCamera ? $translate('call.videoUnavailable') : undefined}
+          aria-pressed={!$state.cameraMuted}
+          disabled={!canCamera || $state.changing}
+          data-testid={`${prefix}-camera`}
+          onclick={() => act(() => runtime.toggleCamera())}
+          ><Icon name={$state.cameraMuted ? 'video-off' : 'video'} /></button
+        ><CallDeviceMenu
+          kind="camera"
+          {prefix}
+          devices={devices.filter((d) => d.kind === 'videoinput')}
+          selected={$state.camera}
+          disabled={!canCamera || $state.changing || (!room && $state.session?.mediaVersion !== 2)}
+          onrefresh={refreshDevices}
+          onselect={(id) => act(() => runtime.selectCamera(id))}
+        />
+      </div>
+      <button
+        class="call-round"
+        class:chosen={Boolean($state.localScreen)}
+        aria-label={$translate($state.localScreen ? 'call.stopScreen' : 'call.shareScreen')}
+        title={$translate(canShareScreen ? 'call.shareScreen' : 'call.screenUnavailable')}
+        disabled={!active || !canShareScreen || (!room && !$state.session?.screenAvailable)}
+        data-testid={`${prefix}-share-screen`}
+        onclick={() => {
+          window.focus();
+          void act(toggleScreen);
+        }}><Icon name={$state.localScreen ? 'screen-off' : 'screen'} /></button
+      >
+      {#if room}<button
+          class="call-round"
+          aria-label={$translate('room.namesAndStyling')}
+          data-testid="room-edit-names"
+          onclick={() => {
+            window.focus();
+            editNames = true;
+          }}><Icon name="edit" /></button
+        ><button
+          class="call-round"
+          aria-label={$translate('call.presentationWindow')}
+          data-testid="room-open-window"
+          onclick={() => stage?.openWindow()}><Icon name="popout" /></button
+        >{#if $state.link}<button
+            class="call-round"
+            aria-label={$translate('room.invite')}
+            data-testid="room-invite"
+            onclick={() => {
+              window.focus();
+              openInvite();
+            }}><Icon name="invite" /></button
+          >{/if}{/if}
+      <button
+        class="call-round danger"
+        class:call-hangup={!room}
+        data-testid={room ? 'room-leave' : 'call-hangup'}
+        aria-label={room ? $translate('room.leave') : hangupLabel}
+        onclick={() => act(() => (room ? rooms.leave() : calls.end()))}
+        ><Icon name="hangup" />{#if !room}<span class="call-action-label">{hangupLabel}</span
+          >{/if}</button
+      >
+    {/if}
+  </div>
+{/snippet}
+
+<CallControlsWindow
+  bind:this={controlsWindow}
+  {controls}
+  active={Boolean(($state.session || $state.room) && !ended)}
+  sessionId={$state.room?.own.sessionId || $state.session?.id || ''}
+  onblocked={() => (outputError = 'call.error.popup')}
+/>
 
 <svelte:window
   onkeydown={(event) => {
@@ -314,7 +490,7 @@
   />
   {#each $state.participants as peer (`${peer.pubkey}:${peer.sessionId}`)}<CallAudio
       url={peer.audioUrl}
-      name={names[peer.pubkey] || ''}
+      name={peer.name}
       testid={`room-audio-${peer.pubkey}`}
       muted={speakerMuted}
       sink={speaker}
@@ -326,7 +502,7 @@
 {#if $state.session || $state.room}
   <div
     tabindex="-1"
-    use:callDialogFocus={!minimized}
+    use:callDialogFocus={!minimized && !editNames}
     inert={minimized}
     class="call-panel"
     class:call-panel--minimized={minimized}
@@ -380,17 +556,22 @@
         >
           {#if $state.local}<div
               class="room-tile"
+              data-testid="room-local"
               class:room-tile--speaker={focusedSpeaker === 'local'}
             >
               {#if !$state.cameraMuted}<CallVideo
                   stream={$state.local}
                   label={$translate('You')}
                 />{:else}<div class="call-person"><Icon name="person" /></div>{/if}
-              {#if names[$state.room?.own.pubkey || '']}<div
+              {#if localName && $namePreferences.cssEnabled}<CustomCallName
+                  name={localName}
+                  css={$namePreferences.css}
+                />
+              {:else if localName}<div
                   class="room-tile__overlay"
                   class:room-tile__overlay--muted={$state.muted}
                 >
-                  {names[$state.room?.own.pubkey || '']}
+                  {localName}
                 </div>{/if}
               {#if $state.muted}<span
                   class="room-tile__mute"
@@ -399,20 +580,26 @@
                   data-testid="room-local-muted"><Icon name="mic-off" /></span
                 >{/if}
             </div>{/if}
-          {#each $state.participants as peer (`${peer.pubkey}:${peer.sessionId}`)}<div
+          {#each $state.participants as peer (`${peer.pubkey}:${peer.sessionId}`)}
+            {@const displayName = peer.name}
+            <div
               class="room-tile"
               class:room-tile--speaker={focusedSpeaker === peer.pubkey}
               data-testid={`room-peer-${peer.pubkey}`}
             >
               {#if peer.videoUrl}<CallVideo
                   url={peer.videoUrl}
-                  label={names[peer.pubkey] || peer.name}
+                  label={displayName || peer.name}
                 />{:else}<div class="call-person"><Icon name="person" /></div>{/if}
-              {#if names[peer.pubkey] || peer.phase !== 'active'}<div
+              {#if displayName && $namePreferences.cssEnabled}<CustomCallName
+                  name={displayName}
+                  css={$namePreferences.css}
+                />{/if}
+              {#if (displayName && !$namePreferences.cssEnabled) || peer.phase !== 'active'}<div
                   class="room-tile__overlay"
                   class:room-tile__overlay--muted={peer.microphoneMuted}
                 >
-                  {names[peer.pubkey] || ''}
+                  {$namePreferences.cssEnabled ? '' : displayName}
                   {peer.phase !== 'active'
                     ? $translate(
                         peer.phase === 'ended' ? 'call.ended.failed' : 'call.phase.connecting',
@@ -464,165 +651,8 @@
         {$translate($state.error || $state.deviceError || outputError)}
       </div>{/if}
     {#if !ended}
-      <CallControlsTray enabled={active} let:autoHide let:toggle>
-        <div class="call-panel__controls" class:room-controls={room}>
-          {#if room || hasVideo || screens.length}<button
-              class="call-round"
-              class:chosen={maxFill}
-              title={$translate(maxFill ? 'call.fitMedia' : 'call.maxFill')}
-              aria-label={$translate('call.maxFill')}
-              aria-pressed={maxFill}
-              data-testid={`${prefix}-max-fill`}
-              onclick={() => (maxFill = !maxFill)}><Icon name="fill" /></button
-            >{/if}
-          {#if canMinimize}<button
-              class="call-round flat"
-              aria-label={$translate('call.minimize')}
-              data-testid={`${prefix}-minimize`}
-              onclick={() => (minimized = true)}><Icon name="minimize" /></button
-            >{/if}
-          {#if active}<button
-              class="call-round"
-              aria-label={$translate(autoHide ? 'call.keepControls' : 'call.hideControls')}
-              title={$translate(autoHide ? 'call.keepControls' : 'call.hideControls')}
-              data-testid={`${prefix}-hide-controls`}
-              aria-pressed={autoHide}
-              onclick={toggle}><Icon name={autoHide ? 'eye' : 'down'} /></button
-            >{/if}
-          {#if room}<button
-              class="call-round"
-              aria-label={$translate(speakerView ? 'room.galleryView' : 'room.speakerView')}
-              data-testid="room-view-toggle"
-              onclick={() => (speakerView = !speakerView)}
-              ><Icon name={speakerView ? 'grid' : 'speaker-view'} /></button
-            >{/if}
-          {#if phase === 'incoming'}
-            <button
-              class="call-round danger call-primary-action"
-              data-testid="call-decline"
-              aria-label={$translate('call.decline')}
-              onclick={() => act(() => calls.end())}
-              ><Icon name="hangup" /><span class="call-action-label"
-                >{$translate('call.decline')}</span
-              ></button
-            >
-            <button
-              class="call-answer audio call-primary-action"
-              data-testid="call-accept"
-              onclick={() => act(() => calls.accept('audio'))}
-              ><Icon name="phone" /><span>{$translate('call.answerAudio')}</span></button
-            >
-            {#if $state.session?.mode === 'video'}<button
-                class="call-answer call-primary-action"
-                data-testid="call-accept-video"
-                onclick={() => act(() => calls.accept('video'))}
-                ><Icon name="video" /><span>{$translate('call.answerVideo')}</span></button
-              >{/if}
-          {:else}
-            <div class="call-panel__device">
-              <button
-                class="call-round"
-                class:danger={$state.muted}
-                aria-label={$translate(
-                  $state.muted ? 'call.unmuteMicrophone' : 'call.muteMicrophone',
-                )}
-                aria-pressed={Boolean($state.muted)}
-                disabled={!$state.local}
-                data-testid={`${prefix}-microphone`}
-                onclick={() => act(() => runtime.toggleMicrophone())}
-                ><Icon name={$state.muted ? 'mic-off' : 'mic'} /></button
-              ><CallDeviceMenu
-                kind="microphone"
-                {prefix}
-                devices={devices.filter((d) => d.kind === 'audioinput')}
-                selected={$state.microphone}
-                disabled={!active || $state.changing}
-                supported={room || $state.session?.mediaVersion === 2}
-                onrefresh={refreshDevices}
-                onselect={(id) => act(() => runtime.selectMicrophone(id))}
-              />
-            </div>
-            <div class="call-panel__device">
-              <button
-                class="call-round"
-                class:danger={speakerMuted}
-                aria-label={$translate(speakerMuted ? 'call.unmuteSpeaker' : 'call.muteSpeaker')}
-                aria-pressed={speakerMuted}
-                data-testid={`${prefix}-speaker`}
-                onclick={() => (speakerMuted = !speakerMuted)}
-                ><Icon name={speakerMuted ? 'speaker-off' : 'speaker'} /></button
-              ><CallDeviceMenu
-                kind="speaker"
-                {prefix}
-                devices={devices.filter((d) => d.kind === 'audiooutput')}
-                selected={speaker}
-                supported={canSelectSpeaker}
-                canRequest={Boolean(outputs?.selectAudioOutput)}
-                onrefresh={refreshDevices}
-                onselect={(id) => {
-                  outputError = '';
-                  speaker = id;
-                }}
-                onrequest={requestSpeaker}
-              />
-            </div>
-            <div class="call-panel__device">
-              <button
-                class="call-round"
-                class:chosen={!$state.cameraMuted}
-                aria-label={$translate(
-                  $state.cameraMuted ? 'call.enableCamera' : 'call.disableCamera',
-                )}
-                title={!canCamera ? $translate('call.videoUnavailable') : undefined}
-                aria-pressed={!$state.cameraMuted}
-                disabled={!canCamera || $state.changing}
-                data-testid={`${prefix}-camera`}
-                onclick={() => act(() => runtime.toggleCamera())}
-                ><Icon name={$state.cameraMuted ? 'video-off' : 'video'} /></button
-              ><CallDeviceMenu
-                kind="camera"
-                {prefix}
-                devices={devices.filter((d) => d.kind === 'videoinput')}
-                selected={$state.camera}
-                disabled={!canCamera ||
-                  $state.changing ||
-                  (!room && $state.session?.mediaVersion !== 2)}
-                onrefresh={refreshDevices}
-                onselect={(id) => act(() => runtime.selectCamera(id))}
-              />
-            </div>
-            <button
-              class="call-round"
-              class:chosen={Boolean($state.localScreen)}
-              aria-label={$translate($state.localScreen ? 'call.stopScreen' : 'call.shareScreen')}
-              title={$translate(canShareScreen ? 'call.shareScreen' : 'call.screenUnavailable')}
-              disabled={!active || !canShareScreen || (!room && !$state.session?.screenAvailable)}
-              data-testid={`${prefix}-share-screen`}
-              onclick={() => act(toggleScreen)}
-              ><Icon name={$state.localScreen ? 'screen-off' : 'screen'} /></button
-            >
-            {#if room}<button
-                class="call-round"
-                aria-label={$translate('call.presentationWindow')}
-                data-testid="room-open-window"
-                onclick={() => stage?.openWindow()}><Icon name="popout" /></button
-              >{#if $state.link}<button
-                  class="call-round"
-                  aria-label={$translate('room.invite')}
-                  data-testid="room-invite"
-                  onclick={openInvite}><Icon name="invite" /></button
-                >{/if}{/if}
-            <button
-              class="call-round danger"
-              class:call-hangup={!room}
-              data-testid={room ? 'room-leave' : 'call-hangup'}
-              aria-label={room ? $translate('room.leave') : hangupLabel}
-              onclick={() => act(() => (room ? rooms.leave() : calls.end()))}
-              ><Icon name="hangup" />{#if !room}<span class="call-action-label">{hangupLabel}</span
-                >{/if}</button
-            >
-          {/if}
-        </div>
+      <CallControlsTray bind:this={controlsTray} bind:autoHide={autoHideControls} enabled={active}>
+        {@render controls()}
       </CallControlsTray>
     {:else}<button
         class="call-answer dismiss"
@@ -704,6 +734,16 @@
       >
     </div>
   </div>{/if}
+
+{#if room && !ended && editNames}
+  <ModalFrame title={$translate('room.namesAndStyling')} onclose={() => (editNames = false)}>
+    <p>{$translate('room.localNameHelp')}</p>
+    <GroupCallNameFields
+      account={nameAccount}
+      onnamechange={(name) => act(() => rooms.updateName(name))}
+    />
+  </ModalFrame>
+{/if}
 
 <CallRelayPrompt />
 
@@ -918,6 +958,34 @@
     width: calc(25% - 6px);
     aspect-ratio: 16 / 9;
   }
+  .room-grid--speaker .room-tile:not(.room-tile--speaker),
+  .room-grid--sharing .room-tile {
+    container: call-thumbnail / inline-size;
+  }
+  /* Scale the whole lower third, including user CSS decorations. The expanded
+     overlay keeps its bottom-left origin inside each tile. Container queries
+     also adapt independently in the recording window. */
+  .room-grid--speaker .room-tile:not(.room-tile--speaker) :global(.custom-call-name),
+  .room-grid--sharing .room-tile :global(.custom-call-name) {
+    --thumbnail-name-scale: 0.65;
+    inset: auto auto 0 0;
+    width: calc(100% / var(--thumbnail-name-scale));
+    height: calc(100% / var(--thumbnail-name-scale));
+    transform: scale(var(--thumbnail-name-scale));
+    transform-origin: bottom left;
+  }
+  @container call-thumbnail (max-width: 400px) {
+    .room-grid--speaker .room-tile:not(.room-tile--speaker) :global(.custom-call-name),
+    .room-grid--sharing .room-tile :global(.custom-call-name) {
+      --thumbnail-name-scale: 0.55;
+    }
+  }
+  @container call-thumbnail (max-width: 240px) {
+    .room-grid--speaker .room-tile:not(.room-tile--speaker) :global(.custom-call-name),
+    .room-grid--sharing .room-tile :global(.custom-call-name) {
+      --thumbnail-name-scale: 0.4;
+    }
+  }
   .room-grid--speaker .room-tile--speaker {
     position: absolute;
     inset: 0 auto 0 0;
@@ -928,6 +996,7 @@
   @media (max-width: 599px) {
     .room-grid--speaker {
       display: grid;
+      align-items: stretch;
       grid-template-columns: repeat(var(--sidebar-count), minmax(0, 1fr));
       grid-template-rows: minmax(0, 3fr) minmax(0, 1fr);
     }
@@ -938,7 +1007,7 @@
       grid-row: 2;
     }
     .room-grid--speaker .room-tile--speaker {
-      position: static;
+      position: relative;
       width: 100%;
       height: auto;
       grid-column: 1 / -1;

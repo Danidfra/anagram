@@ -11,7 +11,7 @@
   import AuthOnboarding from './AuthOnboarding.svelte';
   import Icon from './Icon.svelte';
   export let onlogin: () => void;
-  let step: 'welcome' | 'methods' | 'key' | 'remote' | 'create' | 'onboarding' = 'welcome';
+  let step: 'methods' | 'key' | 'remote' | 'create' | 'onboarding' = 'methods';
   let key = '',
     error = '',
     created = '',
@@ -35,31 +35,27 @@
     ReturnType<typeof useNostrStore>['createRemoteSignerNostrConnectLogin']
   > | null = null;
   $: title =
-    step === 'welcome'
-      ? 'common.welcome'
-      : step === 'create'
-        ? 'common.createAccount'
-        : step === 'remote'
-          ? 'auth.remoteSigner'
-          : step === 'key'
-            ? 'auth.loginKey'
-            : step === 'onboarding'
-              ? onboardingTitle
-              : 'auth.login';
+    step === 'create'
+      ? 'common.createAccount'
+      : step === 'remote'
+        ? 'auth.remoteSigner'
+        : step === 'key'
+          ? 'auth.loginKey'
+          : step === 'onboarding'
+            ? onboardingTitle
+            : 'auth.welcomeToAnagram';
   $: subtitle =
-    step === 'welcome'
-      ? 'common.chooseHowYouWant'
-      : step === 'methods'
-        ? 'auth.chooseLoginMethod'
-        : step === 'remote'
-          ? 'auth.connectNip46'
-          : step === 'create'
-            ? generating
-              ? 'common.creatingAccount'
-              : 'auth.generatedKeypairSecretNotice'
-            : step === 'onboarding'
-              ? onboardingSubtitle
-              : 'auth.enterNsecHexPrivate';
+    step === 'methods'
+      ? 'auth.chooseLoginMethod'
+      : step === 'remote'
+        ? 'auth.connectNip46'
+        : step === 'create'
+          ? generating
+            ? 'common.creatingAccount'
+            : 'auth.generatedKeypairSecretNotice'
+          : step === 'onboarding'
+            ? onboardingSubtitle
+            : 'auth.enterNsecHexPrivate';
   onMount(() => {
     extensionAvailable = useNostrStore().hasNip07Extension() && !('__TAURI_INTERNALS__' in window);
     const bunker = readTopLevelBunkerLoginQueryParam();
@@ -177,7 +173,7 @@
     created = '';
     createdNpub = '';
     clearTimeout(createTimer);
-    step = step === 'methods' || step === 'create' ? 'welcome' : 'methods';
+    step = 'methods';
   }
   async function copyPairing() {
     try {
@@ -198,7 +194,7 @@
   <div class="auth-shell" class:wide={step === 'onboarding'}>
     <div class="auth-card">
       <header class="auth-header">
-        {#if (step !== 'welcome' && step !== 'onboarding') || (onboardingCanGoBack && step === 'onboarding')}<button
+        {#if (step !== 'methods' && step !== 'onboarding') || (onboardingCanGoBack && step === 'onboarding')}<button
             class="icon-button back"
             aria-label="Back"
             onclick={() => (step === 'onboarding' ? onboarding?.backToRelays() : back())}
@@ -206,30 +202,27 @@
           >{/if}
         <div>
           <h1>{$translate(title)}</h1>
-          <p>{$translate(subtitle)}</p>
+          {#if step === 'methods'}<p class="welcome-tagline">{$translate('auth.tagline')}</p>{/if}
+          <p class:login-hint={step === 'methods'}>{$translate(subtitle)}</p>
         </div>
       </header>
       <div class="auth-actions" class:remote-signer={step === 'remote'}>
-        {#if step === 'welcome'}
+        {#if step === 'methods'}
           <button
             class="primary"
-            data-testid="auth-open-login-button"
-            onclick={() => (step = 'methods')}
-            ><Icon name="login" />{$translate('auth.login')}</button
+            data-testid="auth-create-account-button"
+            onclick={generate}
+            disabled={busy}><Icon name="key" />{$translate('common.createAccount')}</button
           >
-          <button class="outline" onclick={generate}
-            ><Icon name="key" />{$translate('common.createAccount')}</button
-          >
-        {:else if step === 'methods'}
           {#if extensionAvailable}<button
-              class="primary"
+              class="outline"
               onclick={() => login('extension')}
               disabled={busy}
               >{#if busy}<span class="auth-spinner" aria-label="Connecting"></span>{:else}<Icon
                   name="extension"
                 />{$translate('auth.loginExtension')}{/if}</button
             >{/if}
-          <button class="primary" onclick={() => (step = 'remote')} disabled={busy}
+          <button class="outline" onclick={() => (step = 'remote')} disabled={busy}
             ><Icon name="lock" />{$translate('auth.loginRemoteSigner')}</button
           >
           <button
@@ -247,12 +240,12 @@
               role="progressbar"
               aria-label={$translate('common.creatingAccount')}
             ></div>
-          {:else}<button class="outline" onclick={download}
-              ><Icon name="download" />{$translate('auth.downloadAccountSecret')}</button
-            ><button class="primary" disabled={busy} onclick={() => login('key')}
+          {:else}<button class="primary" disabled={busy} onclick={() => login('key')}
               >{#if busy}<span class="auth-spinner" aria-label="Connecting"></span>{:else}<Icon
                   name="login"
                 />{$translate('auth.loginNow')}{/if}</button
+            ><button class="outline" onclick={download}
+              ><Icon name="download" />{$translate('auth.downloadAccountSecret')}</button
             >{/if}
         {:else if step === 'key'}
           <div class="key-warning">
@@ -394,7 +387,7 @@
             bind:title={onboardingTitle}
             bind:subtitle={onboardingSubtitle}
             oncomplete={onlogin}
-            onlogout={() => (step = 'welcome')}
+            onlogout={() => (step = 'methods')}
           />{/if}
         {#if error}<p class="error" role="alert">{error}</p>{/if}
       </div>
@@ -447,9 +440,22 @@
     font-weight: 700;
   }
   .auth-header p {
+    white-space: pre-line;
     margin: 8px 0 0;
     opacity: 0.75;
     line-height: 1.5;
+  }
+  .auth-header .welcome-tagline {
+    font-size: 16px;
+    font-weight: 500;
+    color: #334155;
+    opacity: 1;
+  }
+  .auth-header .login-hint {
+    font-size: 13px;
+    color: #64748b;
+    opacity: 1;
+    margin-top: 6px;
   }
   .back {
     color: #2563eb;

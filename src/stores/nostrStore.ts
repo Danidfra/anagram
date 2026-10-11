@@ -1,3 +1,5 @@
+import { contactsService } from '#src/services/contactsService.ts';
+import { getPublicProfile, rememberPublicProfile } from '#src/lib/state/publicProfiles.ts';
 import { STARTER_PUBLIC_GROUP } from '#src/constants/starterPublicGroup.ts';
 import { createPrivateGroupPins } from '#src/stores/nostr/privateGroupPins.ts';
 import { searchRelayPublicGroups } from '#src/stores/nostr/publicGroupSearchRuntime.ts';
@@ -7,6 +9,7 @@ import { chatDataService } from '#src/services/chatDataService.ts';
 import { createGroupRecoveryRuntime } from './nostr/groupRecoveryRuntime.ts';
 import {
   searchRelayProfiles,
+  followListEntries,
   profileSearchAllowed,
   type ProfileSearchResult,
 } from '#src/stores/nostr/profileSearchRuntime.ts';
@@ -2330,10 +2333,30 @@ export const useNostrStore = defineStore('nostrStore', () => {
     ) => {
       if (!profileSearchAllowed(query) || containsSessionSecret(query)) return 'invalid' as const;
       const owner = getLoggedInPublicKeyHex();
-      const relayUrls = await resolveLoggedInReadRelayUrls();
+      const relayUrls = resolveLoggedInReadRelayUrls().catch(() => []);
+      const followList = owner
+        ? await contactsService.getPublicFollowList(owner).catch(() => undefined)
+        : undefined;
+      await contactsService
+        .restorePublicProfiles([...followListEntries(followList).keys()])
+        .catch(() => {});
       if (signal.aborted || owner !== getLoggedInPublicKeyHex()) return 'complete' as const;
       return searchRelayProfiles(ndk, query, relayUrls, {
         signal,
+        account: owner,
+        followList,
+        cachedProfile: getPublicProfile,
+        onFollowList: (event) => {
+          if (!signal.aborted && owner === getLoggedInPublicKeyHex())
+            void contactsService.savePublicFollowList(event).catch(() => {});
+        },
+        onFollowProfile: (profile) => {
+          if (signal.aborted || owner !== getLoggedInPublicKeyHex()) return;
+          rememberPublicProfile(profile.publicKey, profile, profile.createdAt, profile.eventId);
+          const cached = getPublicProfile(profile.publicKey);
+          if (cached?.eventId === profile.eventId)
+            void contactsService.savePublicProfile(profile.publicKey, cached).catch(() => {});
+        },
         onResults: (results) => {
           if (owner === getLoggedInPublicKeyHex()) onResults(results);
         },

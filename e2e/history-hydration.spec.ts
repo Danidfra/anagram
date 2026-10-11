@@ -228,7 +228,6 @@ test('sidebar fills before history finishes and reload resumes past undecryptabl
       }),
     );
     await page.goto('/');
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByTestId('auth-open-key-button').click();
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
     await page.getByTestId('auth-login-button').click();
@@ -457,7 +456,6 @@ test('healthy history survives AUTH rejection and recovered history survives a d
       localStorage.setItem('nip65_relays', entries);
     }, goodUrl);
     await page.goto('/');
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByTestId('auth-open-key-button').click();
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
     await page.getByTestId('auth-login-button').click();

@@ -13,7 +13,6 @@ async function login(page: Page, key = generateSecretKey()) {
     }
   }, relay);
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
   await page.getByTestId('auth-login-button').click();
@@ -103,7 +102,6 @@ test('mobile account creation keeps wrapped guidance above its buttons', async (
 });
 test('invalid key remains on login', async ({ page }) => {
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill('invalid');
   await page.getByTestId('auth-login-button').click();

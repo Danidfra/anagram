@@ -17,7 +17,6 @@ test('NIP-17 large-history and burst benchmark', async ({ page }, testInfo) => {
     localStorage.setItem('nip65_relays', relays);
   });
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
   await page.getByTestId('auth-login-button').click();

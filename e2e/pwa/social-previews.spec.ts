@@ -69,7 +69,7 @@ test('share entry pages preserve invitations with and without an offline PWA wor
     for (const destination of destinations) {
       await page.goto(destination.path + destination.hash);
       await expect(page).toHaveURL(`http://127.0.0.1:5189${destination.expected}`);
-      await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+      await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
     }
   }
   expect(requests.some((url) => url.includes(token))).toBe(false);

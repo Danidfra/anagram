@@ -15,7 +15,6 @@ async function login(page: Page) {
       localStorage.setItem(name, JSON.stringify([{ url, read: true, write: true }]));
   }, relay);
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
   await page.getByTestId('auth-login-button').click();

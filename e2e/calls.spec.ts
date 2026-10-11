@@ -78,7 +78,6 @@ test('live Iroh audio, video and group room connect two generated accounts', asy
       localStorage.setItem('nip65_relays', relays);
     });
     await page.goto(baseURL!);
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByTestId('auth-open-key-button').click();
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
     await page.getByTestId('auth-login-button').click();

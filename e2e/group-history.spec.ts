@@ -246,7 +246,6 @@ test('ticketed groups recover all epochs and both authors across discovered and 
       urls.slice(0, 3),
     );
     await page.goto('/');
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByTestId('auth-open-key-button').click();
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
     await page.getByTestId('auth-login-button').click();

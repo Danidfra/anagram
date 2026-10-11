@@ -194,7 +194,6 @@ test('restores incoming history using account inbox and encrypted private-storag
       { urls, own, now, version: MESSAGE_HYDRATION_VERSION },
     );
     await page.goto('/');
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByTestId('auth-open-key-button').click();
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
     await page.getByTestId('auth-login-button').click();

@@ -1,3 +1,4 @@
+import type { NostrEvent } from '#src/lib/nostr/client.ts';
 import {
   rememberPublicProfile,
   clearPublicProfiles,
@@ -43,8 +44,9 @@ type DebugExecResult = Array<{
 }>;
 
 const CONTACTS_DB_NAME = 'contacts-indexeddb-v1';
-const CONTACTS_DB_VERSION = 4;
+const CONTACTS_DB_VERSION = 5;
 const PUBLIC_PROFILES_STORE = 'public_profiles';
+const FOLLOW_LISTS_STORE = 'public_follow_lists';
 
 const CONTACTS_STORE = 'contacts';
 const CONTACTS_PUBLIC_KEY_INDEX = 'public_key';
@@ -315,6 +317,35 @@ class ContactsService {
     this.initPromise = null;
     await closeIndexedDbConnection(dbPromise);
     await deleteIndexedDbDatabase(CONTACTS_DB_NAME);
+  }
+
+  async getPublicFollowList(account: string): Promise<NostrEvent | undefined> {
+    const db = await this.getDatabase();
+    return requestToPromise(
+      db.transaction(FOLLOW_LISTS_STORE, 'readonly').objectStore(FOLLOW_LISTS_STORE).get(account),
+    );
+  }
+
+  async savePublicFollowList(event: NostrEvent): Promise<void> {
+    if (event.kind !== 3) return;
+    const generation = this.databaseGeneration;
+    const db = await this.getDatabase();
+    if (generation !== this.databaseGeneration) return;
+    const tx = db.transaction(FOLLOW_LISTS_STORE, 'readwrite');
+    const done = waitForTransaction(tx);
+    const store = tx.objectStore(FOLLOW_LISTS_STORE);
+    const request = store.get(event.pubkey);
+    request.onsuccess = () => {
+      const previous = request.result as NostrEvent | undefined;
+      if (
+        previous &&
+        (previous.created_at > event.created_at ||
+          (previous.created_at === event.created_at && previous.id <= event.id))
+      )
+        return;
+      store.put(event);
+    };
+    await done;
   }
 
   async restorePublicProfiles(publicKeys: string[]): Promise<void> {
@@ -746,6 +777,8 @@ class ContactsService {
           return;
         }
 
+        if (!db.objectStoreNames.contains(FOLLOW_LISTS_STORE))
+          db.createObjectStore(FOLLOW_LISTS_STORE, { keyPath: 'pubkey' });
         if (!db.objectStoreNames.contains(PUBLIC_PROFILES_STORE))
           db.createObjectStore(PUBLIC_PROFILES_STORE, { keyPath: 'publicKey' });
 

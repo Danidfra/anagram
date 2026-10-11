@@ -128,38 +128,45 @@
         </p>
       </section>
     {/if}
-    <section class="profile-search-results" aria-label={$translate('search.people')}>
-      <h2>{$translate('search.people')}</h2>
-      {#each visible as profile (profile.publicKey)}
-        <button
-          class="profile-result"
-          data-testid="profile-search-result"
-          onclick={() => onselect(profile)}
-          onkeydown={handleKeydown}
+    {#each [true, false] as following}
+      {#if !following || visible.some((profile) => profile.following)}
+        <section
+          class="profile-search-results"
+          aria-label={$translate(following ? 'search.following' : 'search.people')}
         >
-          <Avatar
-            publicKey={profile.publicKey}
-            name={profile.name}
-            picture={profile.picture}
-            size={40}
-            eager
-          />
-          <span
-            ><strong>{profile.name}</strong><small
-              >{profile.nip05 ||
-                `${profile.publicKey.slice(0, 12)}…${profile.publicKey.slice(-6)}`}</small
-            ></span
-          >
-        </button>
-      {/each}
-      <p role="status" aria-live="polite">
-        {#if loading}{$translate('search.searchingProfiles')}
-        {:else if status === 'unavailable'}{$translate('search.profilesUnavailable')}
-        {:else if !visible.length}{results.length
-            ? $translate(excludedMessage)
-            : $translate('search.noProfiles')}{/if}
-      </p>
-    </section>
+          <h2>{$translate(following ? 'search.following' : 'search.people')}</h2>
+          {#each visible.filter((profile) => Boolean(profile.following) === following) as profile (profile.publicKey)}
+            <button
+              class="profile-result"
+              data-testid="profile-search-result"
+              onclick={() => onselect(profile)}
+              onkeydown={handleKeydown}
+            >
+              <Avatar
+                publicKey={profile.publicKey}
+                name={profile.name}
+                picture={profile.picture}
+                size={40}
+                eager
+              />
+              <span
+                ><strong>{profile.name}</strong><small
+                  >{profile.nip05 ||
+                    `${profile.publicKey.slice(0, 12)}…${profile.publicKey.slice(-6)}`}</small
+                ></span
+              >
+            </button>
+          {/each}
+          {#if !following}<p role="status" aria-live="polite">
+              {#if loading}{$translate('search.searchingProfiles')}
+              {:else if status === 'unavailable'}{$translate('search.profilesUnavailable')}
+              {:else if !visible.length}{results.length
+                  ? $translate(excludedMessage)
+                  : $translate('search.noProfiles')}{/if}
+            </p>{/if}
+        </section>
+      {/if}
+    {/each}
   </div>
 {/if}
 

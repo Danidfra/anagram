@@ -7,6 +7,7 @@
   } from '#src/services/androidCallNotificationService.ts';
   import { orderThreadMessages } from '#src/utils/threadMessageOrder.ts';
   import ModalFrame from './ModalFrame.svelte';
+  import GroupCallNameFields from './GroupCallNameFields.svelte';
   import ContactIdentifierInput from './ContactIdentifierInput.svelte';
   import GroupProfileFields from './GroupProfileFields.svelte';
   import MessageInfo from './MessageInfo.svelte';
@@ -93,7 +94,6 @@
   import Icon from './Icon.svelte';
   import StartupHistory from './StartupHistory.svelte';
   import CallOverlay from './CallOverlay.svelte';
-  import { ROOM_MAX_MEMBERS } from '#src/types/callRoom.ts';
   import MessageBody from './MessageBody.svelte';
   import MessageActions from './MessageActions.svelte';
   import {
@@ -156,6 +156,7 @@
   let mobileViewport = matchMedia('(max-width: 767px)').matches;
   let query = '';
   let profileSearch: ProfileSearchResults | undefined;
+  let contactProfileSearch: ProfileSearchResults | undefined;
   async function openAuthor(publicKey: string) {
     await act(async () => {
       const chat =
@@ -421,8 +422,22 @@
           message.sender !== 'me' && (!unreadBoundary || message.sentAt > unreadBoundary),
       )?.id
     : undefined;
-  $: if (unseenReactionMessages.length) void tick().then(markVisibleReactions);
+  $: if (unseenReactionMessages.length) void tick().then(scheduleVisibleReactions);
+  let reactionFrame = 0;
+  let reactionChecksActive = true;
+  function scheduleVisibleReactions() {
+    if (!reactionChecksActive || reactionFrame || !unseenReactionMessages.length) return;
+    reactionFrame = requestAnimationFrame(() => {
+      reactionFrame = 0;
+      void markVisibleReactions();
+    });
+  }
+  onDestroy(() => {
+    reactionChecksActive = false;
+    cancelAnimationFrame(reactionFrame);
+  });
   async function markVisibleReactions() {
+    if (!unseenReactionMessages.length) return;
     if (!scrollArea || document.visibilityState !== 'visible' || !document.hasFocus()) return;
     const bounds = scrollArea.getBoundingClientRect();
     const chatId = $state.selected?.id;
@@ -505,7 +520,7 @@
   function scrollToBottom(node: HTMLDivElement | undefined) {
     if (node && nearBottom && !loadingOlder) {
       node.scrollTop = node.scrollHeight;
-      void markVisibleReactions();
+      scheduleVisibleReactions();
     }
   }
   function fail(error: unknown) {
@@ -683,7 +698,7 @@
           anchor.getBoundingClientRect().top - node.getBoundingClientRect().top - anchorOffset;
       else node.scrollTop = previousTop + Math.max(0, node.scrollHeight - previousHeight);
       scrollTop = node.scrollTop;
-      void markVisibleReactions();
+      scheduleVisibleReactions();
     } finally {
       if (olderLoad === operation) olderLoad = null;
     }
@@ -1009,7 +1024,7 @@
 <svelte:window
   onresize={() => (mobileViewport = matchMedia('(max-width: 767px)').matches)}
   onfocus={() => {
-    void markVisibleReactions();
+    scheduleVisibleReactions();
     resumeAndroidNotifications();
   }}
   onkeydown={(e) => {
@@ -1151,6 +1166,7 @@
             aria-label={$translate('contacts.filterContacts')}
             placeholder={$translate('contacts.filterContacts')}
             bind:value={contactsQuery}
+            onkeydown={(event) => contactProfileSearch?.handleKeydown(event)}
             data-testid="contact-list-search"
           />
         </div>{/if}
@@ -1222,6 +1238,16 @@
             selectedKey={contactSelectedKey}
             onselect={selectContact}
             onaction={contactAction}
+          />
+          <ProfileSearchResults
+            bind:this={contactProfileSearch}
+            query={contactsQuery}
+            existingKeys={visibleContacts.map((contact) => contact.public_key)}
+            excludedMessage="search.existingContacts"
+            onselect={(profile) => {
+              contactsQuery = '';
+              void openSearchProfile(profile);
+            }}
           />
         {/if}
       </div>
@@ -1392,7 +1418,7 @@
           onscroll={() => {
             contextMessage = '';
             scrollTop = scrollArea.scrollTop;
-            void markVisibleReactions();
+            scheduleVisibleReactions();
           }}
         >
           {#if $state.selected.type === 'user' && $state.selected.publicKey === nostr.getLoggedInPublicKeyHex() && !$state.thread.pagination?.hasOlder && !loadingOlder}
@@ -1661,7 +1687,6 @@
             })}
         />
       {:else if modal === 'room'}
-        <p>{$translate('room.description', { count: ROOM_MAX_MEMBERS })}</p>
         <label
           >{$translate('room.pasteLink')}<textarea
             bind:value={identifier}
@@ -1671,6 +1696,7 @@
         {#if identifier.trim() && !parseRoomLink(identifier.trim())}<p role="alert" class="error">
             {$translate('room.error.invalidLink')}
           </p>{/if}
+        <GroupCallNameFields account={nostr.getLoggedInPublicKeyHex() || ''} />
         {#if identifier.trim()}
           <button
             class="primary"

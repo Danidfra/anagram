@@ -11,7 +11,6 @@ async function login(page: Page) {
         localStorage.setItem(name, JSON.stringify([{ url, read: true, write: true }]));
   }, relay);
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
   await page.getByTestId('auth-login-button').click();
@@ -186,7 +185,7 @@ test('notifications can be disabled, media validates, diagnostics redact and log
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
   await page.getByTestId('settings-logout-item').click();
   await page.getByTestId('settings-logout-confirm').click();
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('npub'))).toBeNull();
   await expect(page).toHaveURL(/\/$/);
 });

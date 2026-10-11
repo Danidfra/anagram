@@ -12,6 +12,17 @@
   let disposed = false;
   let error = '';
   let status = 'qr.opening';
+  let opening = false;
+  let cameras: MediaDeviceInfo[] = [];
+  let cameraId = '';
+  let facing: 'environment' | 'user' = 'environment';
+
+  async function switchCamera() {
+    if (opening) return;
+    const index = cameras.findIndex((device) => device.deviceId === cameraId);
+    facing = facing === 'environment' ? 'user' : 'environment';
+    await start(cameras.length > 1 ? cameras[(index + 1) % cameras.length].deviceId : '');
+  }
 
   function stop() {
     generation++;
@@ -22,6 +33,7 @@
   }
   function fail(cause: unknown) {
     stop();
+    opening = false;
     const name = cause instanceof Error ? cause.name : '';
     error =
       name === 'NotAllowedError' || name === 'SecurityError'
@@ -30,14 +42,16 @@
           ? 'qr.noCamera'
           : 'qr.failed';
   }
-  async function start() {
+  async function start(deviceId = '') {
     stop();
     error = '';
     status = 'qr.opening';
+    opening = true;
     const current = generation;
     const cancelled = () => disposed || current !== generation;
     if (!navigator.mediaDevices?.getUserMedia) {
       error = 'qr.unavailable';
+      opening = false;
       return;
     }
     try {
@@ -47,7 +61,10 @@
       if (cancelled()) return;
       const acquired = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+        video: {
+          ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: facing } }),
+          width: { ideal: 1280 },
+        },
       });
       // Closing while the permission prompt is open must not leave a camera on.
       if (cancelled()) {
@@ -55,6 +72,26 @@
         return;
       }
       stream = acquired;
+      const settings = acquired.getVideoTracks()[0]?.getSettings();
+      cameraId = settings?.deviceId || deviceId;
+      if (settings?.facingMode === 'user' || settings?.facingMode === 'environment')
+        facing = settings.facingMode;
+      // Enumerate after permission so iOS can expose camera IDs. Failure must
+      // not prevent scanning with the camera we already have.
+      void navigator.mediaDevices
+        .enumerateDevices()
+        .then((devices) => {
+          if (cancelled()) return;
+          cameras = devices.filter(
+            (device, index) =>
+              device.kind === 'videoinput' &&
+              device.deviceId &&
+              devices.findIndex(
+                (other) => other.kind === device.kind && other.deviceId === device.deviceId,
+              ) === index,
+          );
+        })
+        .catch(() => {});
       video.srcObject = stream;
       void video.play().catch((cause) => {
         if (!cancelled()) fail(cause);
@@ -99,6 +136,8 @@
       scan();
     } catch (cause) {
       if (!cancelled()) fail(cause);
+    } finally {
+      if (!cancelled()) opening = false;
     }
   }
   onMount(() => {
@@ -123,8 +162,11 @@
       {$translate(status)}
     </p>{/if}
   <div class="scanner-actions">
-    {#if error}<button class="outline" type="button" onclick={start}
+    {#if error}<button class="outline" type="button" onclick={() => start()}
         >{$translate('qr.retry')}</button
+      >{/if}
+    {#if !error}<button class="outline" type="button" disabled={opening} onclick={switchCamera}
+        >{$translate('qr.switchCamera')}</button
       >{/if}
     <button class="outline" type="button" onclick={oncancel}>{$translate('qr.cancel')}</button>
   </div>

@@ -187,6 +187,12 @@ export function createCallRoomRuntime(deps: Deps) {
       )
     );
     const removed = peers.value.filter((peer) => !retained.includes(peer));
+    // Refresh labels without replacing peer objects or restarting media runtimes.
+    for (const peer of retained) {
+      peer.member = s.members.find(
+        (member) => member.pubkey === peer.member.pubkey && member.sessionId === peer.member.sessionId
+      )!;
+    }
     peers.value = retained;
     removed.forEach((peer) => {
       peer.stop();
@@ -256,6 +262,40 @@ export function createCallRoomRuntime(deps: Deps) {
     pending = [];
     for (const item of buffered)
       if (Date.now() - item.at < 10_000) void receive(item.peer, item.signal);
+  }
+  let nameRequest = 0;
+  async function updateName(value: string) {
+    const s = session.value;
+    if (!s || s.phase !== 'active') return;
+    const request = ++nameRequest;
+    const name = (
+      value.trim() ||
+      (await deps.getIdentity()).name.trim() ||
+      s.own.pubkey.slice(0, 12)
+    ).slice(0, 80);
+    if (!current(s) || request !== nameRequest) return;
+    const latest = session.value!;
+    const own =
+      name === latest.own.name
+        ? latest.own
+        : {
+            ...latest.own,
+            name,
+            nameRevision: (latest.own.nameRevision ?? 0) + 1,
+          };
+    const host = latest.own.pubkey === latest.link.host;
+    update({
+      own,
+      members: latest.members.map((member) => (member.pubkey === own.pubkey ? own : member)),
+      revision: host && own !== latest.own ? latest.revision + 1 : latest.revision,
+    });
+    if (host) await broadcastRoster();
+    else
+      await send(session.value!, hostMember(latest), {
+        action: 'join',
+        member: own,
+        secret: latest.link.secret,
+      });
   }
   async function begin(mode: CallMode, link?: CallRoomLink) {
     if (busy.value) return;
@@ -382,6 +422,20 @@ export function createCallRoomRuntime(deps: Deps) {
         return;
       }
       if (existing?.sessionId === signal.member.sessionId) {
+        if ((signal.member.nameRevision ?? 0) > (existing.nameRevision ?? 0)) {
+          const renamed = {
+            ...existing,
+            name: signal.member.name,
+            nameRevision: signal.member.nameRevision,
+          };
+          update({
+            members: s.members.map((member) => member.pubkey === pubkey ? renamed : member),
+            revision: s.revision + 1,
+          });
+          syncPeers();
+          await broadcastRoster();
+          return;
+        }
         await send(s, signal.member, {
           action: 'roster',
           members: s.members,
@@ -623,6 +677,7 @@ export function createCallRoomRuntime(deps: Deps) {
     leave,
     reset,
     dismiss,
+    updateName,
     toggleMicrophone,
     toggleCamera,
     selectCamera,

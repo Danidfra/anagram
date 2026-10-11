@@ -137,7 +137,6 @@ for (const scenario of [
           localStorage.setItem('nip65_relays', entries);
         }, relay);
         await page.goto(baseURL!);
-        await page.getByTestId('auth-open-login-button').click();
         await page.getByTestId('auth-open-key-button').click();
         await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(keys[i]));
         await page.getByTestId('auth-login-button').click();

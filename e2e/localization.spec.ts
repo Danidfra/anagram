@@ -30,7 +30,6 @@ for (const width of [1280, 390]) {
       });
     });
     await page.goto('/');
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByTestId('auth-open-key-button').click();
     await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(generateSecretKey()));
     await page.getByTestId('auth-login-button').click();

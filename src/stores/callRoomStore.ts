@@ -1,3 +1,5 @@
+import { get } from 'svelte/store';
+import { groupCallNames } from '#src/lib/state/groupCallNames.ts';
 import { defineStore } from '#src/lib/state/store.ts';
 import {
   callMediaSupported,
@@ -24,7 +26,11 @@ export const useCallRoomStore = defineStore('callRooms', () =>
       if (!own) throw new Error('No active account');
       const contact = await contactsService.getContactByPublicKey(own);
       return {
-        name: contact?.name || own.slice(0, 12),
+        name:
+          get(groupCallNames(own)).name.trim() ||
+          contact?.meta.nip05?.trim() ||
+          contact?.name ||
+          own.slice(0, 12),
         relays: await nostr.listPrivateMessageReadRelayUrls(),
       };
     },
@@ -45,5 +51,5 @@ export const useCallRoomStore = defineStore('callRooms', () =>
       record: recordCallMedia,
       unlockPlayback: primeCallAudio,
     },
-  })
+  }),
 );

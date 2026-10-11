@@ -169,6 +169,134 @@ describe('link-based Iroh call rooms', () => {
     expect(h.microphone.stop).toHaveBeenCalledOnce();
     expect(h.runtime.localStream.value).toBeNull();
   });
+  it('shares each participant’s own chosen name through join and roster controls', async () => {
+    const host = setup();
+    const guest = setup('b'.repeat(64));
+    host.deps.getIdentity = async () => ({ name: 'Host chosen name', relays: ['wss://relay.example'] });
+    guest.deps.getIdentity = async () => ({ name: 'Guest chosen name', relays: ['wss://relay.example'] });
+    await host.runtime.create();
+    const link = host.runtime.session.value!.link;
+    await guest.runtime.join(link);
+    const request = guest.deps.send.mock.calls.find(([, body]) => body.action === 'join')![1];
+    expect(request.member.name).toBe('Guest chosen name');
+    expect(Object.keys(request.member).sort()).toEqual(['name', 'pubkey', 'relays', 'sessionId']);
+    await host.runtime.receive('b'.repeat(64), request);
+    const roster = host.deps.send.mock.calls.find(([, body]) => body.action === 'roster')![1];
+    await guest.runtime.receive(link.host, roster);
+    expect(host.runtime.session.value!.members.map((member) => member.name)).toEqual([
+      'Host chosen name',
+      'Guest chosen name',
+    ]);
+    expect(guest.runtime.session.value!.members).toEqual(host.runtime.session.value!.members);
+    expect(JSON.stringify(roster)).not.toContain('css');
+  });
+  it.each([false, true])(
+    'creates a unique room after leaving (dismiss: %s) and rejects old invitations',
+    async (dismiss) => {
+      const h = setup();
+      await h.runtime.create();
+      const first = h.runtime.session.value!.link;
+      const oldJoin = join(first);
+      h.runtime.leave();
+      if (dismiss) h.runtime.dismiss();
+      // A new getUserMedia request returns fresh tracks, not the stopped first stream.
+      h.deps.media.getMedia.mockResolvedValueOnce(
+        new MediaStream([new Track('audio')] as unknown as MediaStreamTrack[]),
+      );
+      await h.runtime.create();
+      expect(h.runtime.session.value!.phase).toBe('active');
+      const second = h.runtime.session.value!.link;
+      expect(second.id).not.toBe(first.id);
+      expect(second.secret).not.toBe(first.secret);
+      expect(h.runtime.session.value!.own.sessionId).not.toBe(first.id);
+      await h.runtime.receive('b'.repeat(64), oldJoin);
+      expect(h.runtime.session.value!.members).toHaveLength(1);
+      await h.runtime.receive('b'.repeat(64), { ...join(second), secret: first.secret });
+      expect(h.runtime.session.value!.members).toHaveLength(1);
+      await h.runtime.receive('b'.repeat(64), join(second));
+      expect(h.runtime.session.value!.members).toHaveLength(2);
+    },
+  );
+  it('shares live host and guest name edits without restarting media or accepting stale/spoofed edits', async () => {
+    const host = setup(),
+      guest = setup('b'.repeat(64)),
+      observer = setup('c'.repeat(64));
+    await host.runtime.create();
+    const link = host.runtime.session.value!.link;
+    for (const user of [guest, observer]) {
+      await user.runtime.join(link);
+      await host.runtime.receive(
+        user.deps.getOwnPubkey(),
+        user.deps.send.mock.calls.find(([, body]) => body.action === 'join')![1],
+      );
+    }
+    const deliverRosters = async () => {
+      for (const user of [guest, observer]) {
+        const call = host.deps.send.mock.calls
+          .filter(([to, body]) => to === user.deps.getOwnPubkey() && body.action === 'roster')
+          .at(-1)!;
+        await user.runtime.receive(link.host, call[1]);
+      }
+    };
+    await deliverRosters();
+    await vi.waitFor(() => expect(host.deps.media.createEndpoint).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(guest.deps.media.createEndpoint).toHaveBeenCalledTimes(1));
+    const endpointCounts = [host, guest, observer].map(
+      (user) => user.deps.media.createEndpoint.mock.calls.length,
+    );
+    const streams = [host, guest, observer].map((user) => user.runtime.localStream.value);
+    const latestJoin = () =>
+      guest.deps.send.mock.calls.filter(([, body]) => body.action === 'join').at(-1)![1];
+    await guest.runtime.updateName('Guest first');
+    const older = latestJoin();
+    await guest.runtime.updateName('Guest latest');
+    const latest = latestJoin();
+    await host.runtime.receive(guest.deps.getOwnPubkey(), latest);
+    await deliverRosters();
+    for (const user of [host, observer])
+      expect(
+        user.runtime.participants.value.find((member) => member.pubkey === guest.deps.getOwnPubkey())
+          ?.name,
+      ).toBe('Guest latest');
+    expect(guest.runtime.session.value!.own.name).toBe('Guest latest');
+    await host.runtime.receive(guest.deps.getOwnPubkey(), older);
+    await host.runtime.receive(observer.deps.getOwnPubkey(), {
+      ...latest,
+      member: { ...latest.member!, name: 'Spoofed', nameRevision: 100 },
+    });
+    expect(
+      host.runtime.participants.value.find((member) => member.pubkey === guest.deps.getOwnPubkey())
+        ?.name,
+    ).toBe('Guest latest');
+    await host.runtime.updateName('Host changed');
+    await deliverRosters();
+    for (const user of [guest, observer])
+      expect(
+        user.runtime.participants.value.find((member) => member.pubkey === link.host)?.name,
+      ).toBe('Host changed');
+    for (const [index, user] of [host, guest, observer].entries()) {
+      expect(user.runtime.localStream.value).toBe(streams[index]);
+      expect(user.deps.media.createEndpoint).toHaveBeenCalledTimes(endpointCounts[index]);
+      expect(user.deps.media.getMedia).toHaveBeenCalledOnce();
+      expect(user.microphone.stop).not.toHaveBeenCalled();
+      expect(user.runtime.session.value!.phase).toBe('active');
+    }
+  });
+  it('ignores a delayed name lookup after leaving the call', async () => {
+    const h = setup();
+    await h.runtime.create();
+    let finish!: (identity: { name: string; relays: string[] }) => void;
+    h.deps.getIdentity = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    const pending = h.runtime.updateName('');
+    h.runtime.leave();
+    finish({ name: 'Too late', relays: ['wss://relay.example'] });
+    await pending;
+    expect(h.runtime.session.value!.own.name).toBe('Alice');
+    expect(h.runtime.session.value!.phase).toBe('ended');
+  });
   it('requires the link secret and authenticated joining identity', async () => {
     const h = setup();
     await h.runtime.create();

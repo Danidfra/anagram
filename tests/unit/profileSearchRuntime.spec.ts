@@ -119,3 +119,116 @@ it('finds matching profiles through a bounded ordinary read when search is rejec
   ]);
   expect(f.requests.every(({ stop }) => stop.mock.calls.length === 1)).toBe(true);
 });
+
+const account = 'c'.repeat(64);
+function follows(client: NostrClient, keys: string[], created_at = 10, pubkey = account) {
+  return new ClientEvent(client, {
+    kind: 3,
+    pubkey,
+    created_at,
+    id: String(created_at).padStart(64, '0'),
+    content: '',
+    tags: keys.map((key) => ['p', key]),
+  });
+}
+it('streams followed profiles above relay matches without waiting for a silent relay', async () => {
+  const f = fixture();
+  const onFollowList = vi.fn(),
+    onFollowProfile = vi.fn();
+  const done = searchRelayProfiles(f.client, 'alice', ['wss://one.test', 'wss://silent.test'], {
+    ...f.options,
+    account,
+    onFollowList,
+    onFollowProfile,
+  });
+  f.requests[0].options.onEvent(event(f.client, other, 10, 'Alice'));
+  const list = f.requests.find((r) => r.filter.kinds.includes(3))!;
+  list.options.onEvent(follows(f.client, [key]));
+  const hydration = f.requests.find(
+    (r) => r.filter.kinds.includes(0) && r.filter.authors?.includes(key),
+  )!;
+  hydration.options.onEvent(event(f.client, key, 10, 'Alice followed'));
+  expect(f.options.onResults.mock.lastCall![0].map((p: any) => [p.publicKey, p.following])).toEqual(
+    [
+      [key, true],
+      [other, false],
+    ],
+  );
+  // A second copy of the same profile must not create a second result.
+  f.requests[0].options.onEvent(event(f.client, key, 10, 'Alice followed'));
+  expect(f.options.onResults.mock.lastCall![0]).toHaveLength(2);
+  expect(onFollowList).toHaveBeenCalledOnce();
+  expect(onFollowProfile).toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(await done).toBe('complete');
+  expect(f.requests.every((r) => r.stop.mock.calls.length === 1)).toBe(true);
+});
+it('shows account-scoped cached follows before relay discovery finishes', async () => {
+  const f = fixture();
+  const options = {
+    ...f.options,
+    account,
+    followList: follows(f.client, [key]).rawEvent(),
+    cachedProfile: () => ({ name: 'Alice cached', picture: '' }),
+  };
+  const done = searchRelayProfiles(f.client, 'alice', new Promise<string[]>(() => {}), options);
+  expect(f.options.onResults).toHaveBeenLastCalledWith([
+    expect.objectContaining({ publicKey: key, name: 'Alice cached', following: true }),
+  ]);
+  expect(f.requests).toHaveLength(0);
+  f.controller.abort();
+  await done;
+  const otherAccount = fixture();
+  const empty = searchRelayProfiles(otherAccount.client, 'alice', [], {
+    ...options,
+    ...otherAccount.options,
+    account: other,
+  });
+  expect(await empty).toBe('unavailable');
+  expect(otherAccount.options.onResults).not.toHaveBeenCalled();
+});
+it('keeps the latest follow list, handles unfollows, and ignores cancelled replies', async () => {
+  const f = fixture();
+  const cached = follows(f.client, [key], 20);
+  const done = searchRelayProfiles(f.client, 'alice', ['wss://one.test'], {
+    ...f.options,
+    account,
+    followList: cached.rawEvent(),
+    cachedProfile: () => ({ name: 'Alice cached', picture: '' }),
+  });
+  const list = f.requests.find((r) => r.filter.kinds.includes(3))!;
+  list.options.onEvent(follows(f.client, [], 10));
+  list.options.onEvent(follows(f.client, [], 30, other));
+  expect(f.options.onResults.mock.lastCall![0][0].following).toBe(true);
+  list.options.onEvent(follows(f.client, [], 30));
+  expect(f.options.onResults.mock.lastCall![0][0].following).toBe(false);
+  const calls = f.options.onResults.mock.calls.length;
+  f.controller.abort();
+  list.options.onEvent(follows(f.client, [key], 40));
+  expect(f.options.onResults).toHaveBeenCalledTimes(calls);
+  await done;
+});
+it('does not let public result limits hide a followed match and still excludes blocked profiles', async () => {
+  const f = fixture();
+  const done = searchRelayProfiles(f.client, 'alice', ['wss://one.test'], {
+    ...f.options,
+    account,
+    isBlocked: (k) => k === other,
+  });
+  for (let i = 1; i <= 40; i++)
+    f.requests[0].options.onEvent(
+      event(f.client, i.toString(16).padStart(64, '0'), 10, `Alice ${i}`),
+    );
+  f.requests
+    .find((r) => r.filter.kinds.includes(3))!
+    .options.onEvent(follows(f.client, [key, other]));
+  const hydration = f.requests.find((r) => r.filter.authors?.includes(key))!;
+  expect(hydration.filter.authors).toEqual([key]);
+  hydration.options.onEvent(event(f.client, key, 10, 'Alice followed'));
+  expect(f.options.onResults.mock.lastCall![0][0]).toMatchObject({
+    publicKey: key,
+    following: true,
+  });
+  f.controller.abort();
+  await done;
+});

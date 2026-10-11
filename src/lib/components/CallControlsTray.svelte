@@ -2,8 +2,8 @@
   import { onDestroy } from 'svelte';
   import { translate } from '#src/i18n.ts';
   export let enabled = false;
-  let autoHide = false,
-    revealed = false,
+  export let autoHide = false;
+  let revealed = false,
     hovered = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   function reset(enabledState: boolean) {
@@ -42,7 +42,7 @@
     hovered = false;
     scheduleHide();
   }
-  function toggle() {
+  export function toggle() {
     cancelHide();
     autoHide = !autoHide;
     revealed = false;

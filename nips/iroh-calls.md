@@ -21,6 +21,7 @@ Nostr authenticates peers and exchanges connection details. Iroh carries encrypt
 
 - Links contain a room UUID, host pubkey, random 256-bit admission secret, inbox relay hints and expiry. The capability stays in the URL fragment; it contains no Iroh keys.
 - Recipient-only controls use `anagram/iroh-room/1`: `join`, `roster`, `signal`, `leave`, `closed`, `rejected`. The host admits members and signs monotonically increasing roster revisions through the same encrypted envelopes.
+- Each participant chooses their own display name before creating or joining and can edit it during the call. Names travel in the member `name` field of join and roster controls. In-call edits increment an optional nonnegative `nameRevision` (missing means zero). Guests resend their own authenticated join with the same session; the host accepts only a newer name revision for that member, then broadcasts a new roster revision. Name changes preserve existing media connections. Older hosts ignore guest name edits until everyone updates. Custom CSS is a local rendering preference and never enters signalling.
 - Each join has a fresh session UUID. Pair signals bind both sessions; the lower pubkey initiates. Current members form a full mesh of separately authenticated Iroh connections.
 - Rooms allow six participants, expire within eight hours and end when the host leaves. Possession of the link grants admission, subject to host checks.
 

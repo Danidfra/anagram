@@ -22,6 +22,7 @@
   let previousTop = 0;
   let touchY: number | null = null;
   let frame = 0;
+  let dayTimer: ReturnType<typeof setTimeout> | undefined;
   let active = true;
   function updateDay() {
     if (!element) return;
@@ -47,11 +48,15 @@
     }
     previousTop = top;
     onscroll();
-    if (!frame)
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        updateDay();
-      });
+    // The decorative date can lag slightly; bottom-follow and paging stay immediate.
+    if (dayTimer === undefined && !frame)
+      dayTimer = setTimeout(() => {
+        dayTimer = undefined;
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          updateDay();
+        });
+      }, 100);
   }
   function mount(node: HTMLDivElement) {
     previousTop = Math.max(0, node.scrollTop);
@@ -66,6 +71,7 @@
     });
   onDestroy(() => {
     active = false;
+    clearTimeout(dayTimer);
     cancelAnimationFrame(frame);
   });
 </script>

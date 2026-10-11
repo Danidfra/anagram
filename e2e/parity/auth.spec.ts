@@ -2,6 +2,7 @@
 import { test, expect } from '@playwright/test';
 import { generateSecretKey, getPublicKey } from 'nostr-tools';
 import { finishOnboarding } from '../auth-helpers';
+import { DEFAULT_RELAYS } from '../../src/constants/relays';
 import {
   bootstrapUser,
   TEST_ACCOUNTS,
@@ -30,7 +31,6 @@ test('onboarding has no history restriction and logout clears either generated o
         await page.getByRole('button', { name: 'Create Account', exact: true }).click();
         await page.getByRole('button', { name: 'Login Now', exact: true }).click();
       } else {
-        await page.getByTestId('auth-open-login-button').click();
         await page.getByTestId('auth-open-key-button').click();
         await page
           .getByTestId('auth-private-key-input')
@@ -44,8 +44,17 @@ test('onboarding has no history restriction and logout clears either generated o
       await page.getByRole('button', { name: 'Back', exact: true }).click();
       await expect(page.getByTestId('auth-onboarding-relays-next-button')).toBeVisible();
       await page.getByTestId('auth-onboarding-logout-button').click();
-      await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+      await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
       await expectBrowserStorageToBeEmpty(page);
+      // Starting again without a page reload must initialize a fresh relay list.
+      await page.getByRole('button', { name: 'Create Account', exact: true }).click();
+      await page.getByRole('button', { name: 'Login Now', exact: true }).click();
+      await expect(page.getByTestId('auth-onboarding-relays-next-button')).toBeVisible();
+      await expect(page.getByTestId('auth-onboarding-relay-input')).toBeHidden();
+      await page.getByText('Edit relays', { exact: true }).click();
+      await expect(page.getByTestId('auth-onboarding-relay-input')).toBeVisible();
+      for (const relay of DEFAULT_RELAYS)
+        await expect(page.locator('.onboarding .relay').filter({ hasText: relay })).toBeVisible();
     } finally {
       await context.close();
     }
@@ -117,7 +126,6 @@ test('NIP-07 login exchanges encrypted DMs and survives reload without storing t
   page.on('dialog', (d) => d.accept());
   try {
     await page.goto('/');
-    await page.getByTestId('auth-open-login-button').click();
     await page.getByRole('button', { name: 'Login with Extension', exact: true }).click();
     await finishOnboarding(page);
     await waitForAppBridge(page);
@@ -136,22 +144,18 @@ test('NIP-07 login exchanges encrypted DMs and survives reload without storing t
     await logoutFromSettings(page);
     await expectBrowserStorageToBeEmpty(page);
   } catch (error) {
-    await test
-      .info()
-      .attach('extension-diagnostics', {
-        body: JSON.stringify(
-          await page.evaluate(async () => window.__appE2E__!.getDeveloperDiagnosticsSnapshot()),
-        ),
-        contentType: 'application/json',
-      });
-    await test
-      .info()
-      .attach('recipient-diagnostics', {
-        body: JSON.stringify(
-          await bob.page.evaluate(async () => window.__appE2E__!.getDeveloperDiagnosticsSnapshot()),
-        ),
-        contentType: 'application/json',
-      });
+    await test.info().attach('extension-diagnostics', {
+      body: JSON.stringify(
+        await page.evaluate(async () => window.__appE2E__!.getDeveloperDiagnosticsSnapshot()),
+      ),
+      contentType: 'application/json',
+    });
+    await test.info().attach('recipient-diagnostics', {
+      body: JSON.stringify(
+        await bob.page.evaluate(async () => window.__appE2E__!.getDeveloperDiagnosticsSnapshot()),
+      ),
+      contentType: 'application/json',
+    });
     throw error;
   } finally {
     await context.close();

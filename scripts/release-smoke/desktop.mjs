@@ -206,7 +206,7 @@ async function send(text) {
 try {
   const launchStarted = Date.now();
   await open();
-  await until(() => exists(testid('auth-open-login-button')), 'fresh release login screen');
+  await until(() => exists(testid('auth-create-account-button')), 'fresh release login screen');
   const loginReadyMs = Date.now() - launchStarted;
   console.log(`Packaged login ready in ${loginReadyMs}ms`);
   if (process.platform === 'linux' && loginReadyMs > 20000)
@@ -217,7 +217,6 @@ try {
     [relay.url, 'ws://127.0.0.1:1/'],
   );
   await request(`/session/${session}/refresh`, {});
-  await click(testid('auth-open-login-button'));
   await execute(`
     window.__callMediaSmoke = {result: null, video: null};
     (${probeCallMedia.toString()})(player => new Promise(resolve => {

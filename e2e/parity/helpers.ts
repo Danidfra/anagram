@@ -58,7 +58,6 @@ export async function bootstrapUser(
     }
   }, relayUrls);
   await page.goto('/');
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(account.privateKey);
   await page.getByTestId('auth-login-button').click();
@@ -546,7 +545,7 @@ export async function logoutFromSettings(page: Page) {
   await navigateInApp(page, '/settings');
   await page.getByTestId('settings-logout-item').click();
   await page.getByTestId('settings-logout-confirm').click();
-  await expect(page.getByTestId('auth-open-login-button')).toBeVisible();
+  await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
 }
 export async function expectBrowserStorageToBeEmpty(page: Page) {
   // SvelteKit recreates navigation bookkeeping; an empty public-profile database can
@@ -622,7 +621,6 @@ export async function bootstrapSessionOnPage(page: Page, account: TestAccount) {
     localStorage.setItem('relays', entries);
     localStorage.setItem('nip65_relays', entries);
   }, E2E_RELAY_URL);
-  await page.getByTestId('auth-open-login-button').click();
   await page.getByTestId('auth-open-key-button').click();
   await page.getByTestId('auth-private-key-input').fill(account.privateKey);
   await page.getByTestId('auth-login-button').click();

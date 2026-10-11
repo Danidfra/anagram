@@ -1,6 +1,7 @@
 <script lang="ts">
   import { translate } from '#src/i18n.ts';
   import Icon from './Icon.svelte';
+  import { mediaDeviceChoices } from '#src/utils/mediaDeviceChoices.ts';
   export let kind: 'microphone' | 'camera' | 'speaker';
   export let prefix = 'call';
   export let devices: MediaDeviceInfo[] = [];
@@ -13,6 +14,24 @@
   export let onrequest: () => unknown = () => {};
   let open = false;
   let picker: HTMLDivElement;
+  function listen(node: HTMLElement) {
+    const view = node.ownerDocument.defaultView!;
+    const pointer = (event: PointerEvent) => {
+      if (open && !node.contains(event.target as Node)) open = false;
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') open = false;
+    };
+    view.addEventListener('pointerdown', pointer);
+    view.addEventListener('keydown', key);
+    return {
+      destroy() {
+        view.removeEventListener('pointerdown', pointer);
+        view.removeEventListener('keydown', key);
+      },
+    };
+  }
+  $: choices = mediaDeviceChoices(devices);
   $: label = `call.choose${kind[0].toUpperCase()}${kind.slice(1)}`;
   function choose(id: string) {
     open = false;
@@ -20,15 +39,7 @@
   }
 </script>
 
-<svelte:window
-  onpointerdown={(event) => {
-    if (open && !picker.contains(event.target as Node)) open = false;
-  }}
-  onkeydown={(event) => {
-    if (event.key === 'Escape') open = false;
-  }}
-/>
-<div bind:this={picker} class="call-device-picker">
+<div bind:this={picker} use:listen class="call-device-picker">
   <button
     class="call-device-toggle"
     {disabled}
@@ -54,7 +65,7 @@
           onclick={() => choose('')}>{$translate('call.systemDefault')}</button
         >{/if}
       {#if supported}
-        {#each devices as device, index (device.deviceId)}<button
+        {#each choices as device, index (device.deviceId)}<button
             class:chosen={selected === device.deviceId}
             data-testid={`${prefix}-${kind}-source-${index}`}
             onclick={() => choose(device.deviceId)}

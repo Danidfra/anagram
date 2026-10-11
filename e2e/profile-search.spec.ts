@@ -61,6 +61,20 @@ for (const rejectSearch of [false, true])
     const joinedGroup = group('Fiat joined lounge', 'joined'),
       discoveredGroup = group('Fiat public lounge', 'discovered');
     events.push(joinedGroup, discoveredGroup, group('Old group', 'old'));
+    events.push(
+      finalizeEvent(
+        {
+          kind: 3,
+          created_at: Math.floor(Date.now() / 1000),
+          content: '',
+          tags: [
+            ['p', remote],
+            ['p', local],
+          ],
+        },
+        ownKey,
+      ),
+    );
     const queries: Filter[] = [];
     const sent: string[] = [];
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -120,7 +134,6 @@ for (const rejectSearch of [false, true])
         socket.on('framesent', (frame) => sent.push(String(frame.payload))),
       );
       await page.goto('/');
-      await page.getByTestId('auth-open-login-button').click();
       await page.getByTestId('auth-open-key-button').click();
       await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(ownKey));
       await page.getByTestId('auth-login-button').click();
@@ -155,6 +168,14 @@ for (const rejectSearch of [false, true])
       await expect(page.getByTestId('chat-item')).toHaveCount(1);
       await expect(results).toHaveCount(1);
       await expect(results).toContainText('Fiat finder');
+      await expect(
+        page
+          .getByRole('region', { name: 'People you follow' })
+          .getByTestId('profile-search-result'),
+      ).toHaveCount(1);
+      expect((await page.getByTestId('chat-item').boundingBox())!.y).toBeLessThan(
+        (await results.boundingBox())!.y,
+      );
       const publicResults = page.getByTestId('public-group-search-result');
       await expect(publicResults).toHaveCount(1);
       await expect(publicResults).toContainText('Fiat public lounge');
