@@ -65,6 +65,23 @@ def visible(node, root):
     return vl <= left < right <= vr and vt <= top < bottom <= vb
 
 
+def login_screen_ready(root):
+    # Match the usable auth controls, not a heading that changes with copy edits.
+    labels = ('Create Account', 'Login with Remote Signer', 'Login with Key (not recommended)')
+    for label in labels:
+        node = find(label, root)
+        if node is None or node.get('class') != 'android.widget.Button' or not visible(node, root):
+            return False
+    return True
+
+
+def check_login_dump(path):
+    try:
+        return login_screen_ready(ET.parse(path).getroot())
+    except (OSError, ET.ParseError, RuntimeError):
+        return False
+
+
 def scroll_page(root, node=None):
     webview = next((n for n in root.iter('node')
                     if n.get('class') == 'android.webkit.WebView'), None)
@@ -196,4 +213,6 @@ def main():
 
 
 if __name__ == '__main__':
+    if len(sys.argv) == 3 and sys.argv[1] == '--check-login':
+        sys.exit(0 if check_login_dump(sys.argv[2]) else 1)
     main()

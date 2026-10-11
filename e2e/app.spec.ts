@@ -29,6 +29,22 @@ async function contact(page: Page, pubkey: string, name: string) {
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(page.getByTestId('message-composer-input')).toBeVisible();
 }
+// Fresh sessions can learn older epoch keys after the initial message page.
+// Drive the same bounded paging action as the user instead of assuming that
+// opening the group passively downloads every epoch in the background.
+async function loadGroupHistory(page: Page, texts: string[]) {
+  const thread = page.getByTestId('chat-thread');
+  await expect(async () => {
+    const rendered = await thread.innerText();
+    if (texts.every((text) => rendered.includes(text))) return;
+    await page.getByTestId('thread-load-older').click({ timeout: 1500 });
+    for (const text of texts)
+      await expect(thread.getByTestId('message-bubble').filter({ hasText: text })).toBeVisible({
+        timeout: 1000,
+      });
+  }).toPass({ timeout: 20000, intervals: [100, 250, 500] });
+}
+
 async function groupTicketState(page: Page, clearProof = false) {
   return page.evaluate(
     (clearProof) =>
@@ -302,6 +318,11 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   restored.on('pageerror', (e) => errors.push(e.message));
   await login(restored, bob.key);
   await restored.getByTestId('chat-item').filter({ hasText: 'Private test group' }).click();
+  await loadGroupHistory(restored, [
+    'Edited encrypted group message',
+    'Reply from group member',
+    'After group rotation',
+  ]);
   await expect(
     restored.getByTestId('message-bubble').filter({ hasText: 'Edited encrypted group message' }),
   ).toBeVisible();
@@ -359,6 +380,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   const ownerPage = await ownerRestore.newPage();
   await login(ownerPage, alice.key);
   await ownerPage.getByTestId('chat-item').filter({ hasText: 'Private test group' }).click();
+  await loadGroupHistory(ownerPage, ['Reply from group member', 'Only remaining members']);
   await expect(
     ownerPage.getByTestId('message-bubble').filter({ hasText: 'Reply from group member' }),
   ).toBeVisible();
@@ -620,23 +642,32 @@ test('a 20,000-message account opens a bounded cached window', async ({ page }) 
   // Hold an older page open: wheel/touch must stay native, and completing the
   // page must preserve the user's new reading position rather than snap back.
   await page.evaluate(async () => {
-    const { chatDataService } = await import('/src/services/chatDataService.ts');
-    const original = chatDataService.listMessagesBefore;
+    const { useMessageStore } = await import('/src/stores/messageStore.ts');
+    const store = useMessageStore();
+    const original = store.loadOlderMessages;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    (window as any).__olderPageEntered = false;
     (window as any).__releaseOlderPage = release;
-    chatDataService.listMessagesBefore = async function (...args) {
-      chatDataService.listMessagesBefore = original;
+    // Background window refreshes also call listMessagesBefore. Hold only
+    // the explicit older-page action so a background read cannot steal the gate.
+    store.loadOlderMessages = async function (chatId) {
+      (window as any).__olderPageEntered = true;
       await gate;
-      return original.apply(this, args);
+      try {
+        return await original(chatId);
+      } finally {
+        store.loadOlderMessages = original;
+      }
     };
   });
   await thread.evaluate((node) => {
     node.scrollTop = 0;
   });
   await more.click();
+  await expect.poll(() => page.evaluate(() => (window as any).__olderPageEntered)).toBe(true);
   await expect(more).toBeDisabled();
   await expect(more.locator('.thread-history-spinner')).toBeVisible();
   expect(await thread.evaluate((node) => getComputedStyle(node).touchAction)).not.toBe('none');

@@ -1,4 +1,6 @@
 """Regression tests for release smoke navigation; no emulator or network needed."""
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
@@ -15,6 +17,33 @@ def screen(button_bounds=None, label='Next', enabled='true'):
             'bounds': button_bounds,
         })
     return root
+
+
+class AndroidLoginScreen(unittest.TestCase):
+    fixture = Path(__file__).parent / 'fixtures' / 'android-welcome.xml'
+
+    def test_accepts_the_actual_ci_welcome_screen_without_old_login_button(self):
+        root = ET.parse(self.fixture).getroot()
+        self.assertIsNone(android.find('Login', root))
+        self.assertTrue(android.check_login_dump(self.fixture))
+
+    def test_requires_all_enabled_visible_auth_buttons(self):
+        for label in ('Create Account', 'Login with Remote Signer', 'Login with Key (not recommended)'):
+            for attr, value in (('enabled', 'false'), ('bounds', '[0,0][0,0]'),
+                                ('bounds', '[43,632][277,676]'), ('class', 'android.widget.TextView'),
+                                ('text', 'Unrelated control')):
+                with self.subTest(label=label, attr=attr):
+                    root = ET.parse(self.fixture).getroot()
+                    android.find(label, root).set(attr, value)
+                    self.assertFalse(android.login_screen_ready(root))
+
+    def test_rejects_empty_or_incomplete_accessibility_dump(self):
+        self.assertFalse(android.login_screen_ready(ET.fromstring('<hierarchy/>')))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'ui.xml'
+            self.assertFalse(android.check_login_dump(path))
+            path.write_text('<hierarchy>')
+            self.assertFalse(android.check_login_dump(path))
 
 
 class AndroidSmokeNavigation(unittest.TestCase):

@@ -59,7 +59,7 @@ for attempt in $(seq 1 30); do
   check_running
   timeout 10 adb shell uiautomator dump /sdcard/anagram-startup.xml >/dev/null 2>&1 || true
   adb exec-out cat /sdcard/anagram-startup.xml > "$output/ui.xml" 2>/dev/null || true
-  if grep -q 'text="Login"' "$output/ui.xml" && grep -q 'text="Create Account"' "$output/ui.xml"; then
+  if python3 "$(dirname "$0")/release-smoke/android.py" --check-login "$output/ui.xml"; then
     # Also catch failures shortly after the page first appears.
     sleep 3
     check_running
