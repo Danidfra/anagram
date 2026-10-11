@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { callVideoAspect } from '#src/lib/actions/callVideoAspect.ts';
   import { syncAndroidCallActivity } from '#src/services/androidCallNotificationService.ts';
   import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onMount, onDestroy } from 'svelte';
@@ -559,26 +560,28 @@
               data-testid="room-local"
               class:room-tile--speaker={focusedSpeaker === 'local'}
             >
-              {#if !$state.cameraMuted}<CallVideo
-                  stream={$state.local}
-                  label={$translate('You')}
-                />{:else}<div class="call-person"><Icon name="person" /></div>{/if}
-              {#if localName && $namePreferences.cssEnabled}<CustomCallName
-                  name={localName}
-                  css={$namePreferences.css}
-                />
-              {:else if localName}<div
-                  class="room-tile__overlay"
-                  class:room-tile__overlay--muted={$state.muted}
-                >
-                  {localName}
-                </div>{/if}
-              {#if $state.muted}<span
-                  class="room-tile__mute"
-                  aria-label={$translate('call.microphoneMuted')}
-                  role="img"
-                  data-testid="room-local-muted"><Icon name="mic-off" /></span
-                >{/if}
+              <div class="room-tile__content" use:callVideoAspect>
+                {#if !$state.cameraMuted}<CallVideo
+                    stream={$state.local}
+                    label={$translate('You')}
+                  />{:else}<div class="call-person"><Icon name="person" /></div>{/if}
+                {#if localName && $namePreferences.cssEnabled}<CustomCallName
+                    name={localName}
+                    css={$namePreferences.css}
+                  />
+                {:else if localName}<div
+                    class="room-tile__overlay"
+                    class:room-tile__overlay--muted={$state.muted}
+                  >
+                    {localName}
+                  </div>{/if}
+                {#if $state.muted}<span
+                    class="room-tile__mute"
+                    aria-label={$translate('call.microphoneMuted')}
+                    role="img"
+                    data-testid="room-local-muted"><Icon name="mic-off" /></span
+                  >{/if}
+              </div>
             </div>{/if}
           {#each $state.participants as peer (`${peer.pubkey}:${peer.sessionId}`)}
             {@const displayName = peer.name}
@@ -587,31 +590,33 @@
               class:room-tile--speaker={focusedSpeaker === peer.pubkey}
               data-testid={`room-peer-${peer.pubkey}`}
             >
-              {#if peer.videoUrl}<CallVideo
-                  url={peer.videoUrl}
-                  label={displayName || peer.name}
-                />{:else}<div class="call-person"><Icon name="person" /></div>{/if}
-              {#if displayName && $namePreferences.cssEnabled}<CustomCallName
-                  name={displayName}
-                  css={$namePreferences.css}
-                />{/if}
-              {#if (displayName && !$namePreferences.cssEnabled) || peer.phase !== 'active'}<div
-                  class="room-tile__overlay"
-                  class:room-tile__overlay--muted={peer.microphoneMuted}
-                >
-                  {$namePreferences.cssEnabled ? '' : displayName}
-                  {peer.phase !== 'active'
-                    ? $translate(
-                        peer.phase === 'ended' ? 'call.ended.failed' : 'call.phase.connecting',
-                      )
-                    : ''}
-                </div>{/if}
-              {#if peer.microphoneMuted}<span
-                  class="room-tile__mute"
-                  aria-label={$translate('call.microphoneMuted')}
-                  role="img"
-                  data-testid="room-peer-muted"><Icon name="mic-off" /></span
-                >{/if}
+              <div class="room-tile__content" use:callVideoAspect>
+                {#if peer.videoUrl}<CallVideo
+                    url={peer.videoUrl}
+                    label={displayName || peer.name}
+                  />{:else}<div class="call-person"><Icon name="person" /></div>{/if}
+                {#if displayName && $namePreferences.cssEnabled}<CustomCallName
+                    name={displayName}
+                    css={$namePreferences.css}
+                  />{/if}
+                {#if (displayName && !$namePreferences.cssEnabled) || peer.phase !== 'active'}<div
+                    class="room-tile__overlay"
+                    class:room-tile__overlay--muted={peer.microphoneMuted}
+                  >
+                    {$namePreferences.cssEnabled ? '' : displayName}
+                    {peer.phase !== 'active'
+                      ? $translate(
+                          peer.phase === 'ended' ? 'call.ended.failed' : 'call.phase.connecting',
+                        )
+                      : ''}
+                  </div>{/if}
+                {#if peer.microphoneMuted}<span
+                    class="room-tile__mute"
+                    aria-label={$translate('call.microphoneMuted')}
+                    role="img"
+                    data-testid="room-peer-muted"><Icon name="mic-off" /></span
+                  >{/if}
+              </div>
             </div>{/each}
         </div>
       {:else if hasVideo}<div class="call-panel__media">
@@ -899,6 +904,7 @@
     gap: 8px;
   }
   .room-tile {
+    container-type: size;
     position: relative;
     min-width: 0;
     min-height: 0;
@@ -911,6 +917,28 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+  }
+  .room-tile__content {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  /* Match object-fit: contain, so labels sit on the image rather than in the
+     surrounding letterbox. The ratio follows camera metadata/resolution changes. */
+  .room-tile__content:global([data-video-ratio]) {
+    width: min(100cqw, calc(100cqh * var(--video-ratio)));
+    height: min(100cqh, calc(100cqw / var(--video-ratio)));
+  }
+  .room-grid--fill .room-tile__content {
+    width: 100%;
+    height: 100%;
   }
   .room-tile :global(video),
   .room-tile :global(canvas) {
@@ -957,34 +985,6 @@
     flex: 0 1 auto;
     width: calc(25% - 6px);
     aspect-ratio: 16 / 9;
-  }
-  .room-grid--speaker .room-tile:not(.room-tile--speaker),
-  .room-grid--sharing .room-tile {
-    container: call-thumbnail / inline-size;
-  }
-  /* Scale the whole lower third, including user CSS decorations. The expanded
-     overlay keeps its bottom-left origin inside each tile. Container queries
-     also adapt independently in the recording window. */
-  .room-grid--speaker .room-tile:not(.room-tile--speaker) :global(.custom-call-name),
-  .room-grid--sharing .room-tile :global(.custom-call-name) {
-    --thumbnail-name-scale: 0.65;
-    inset: auto auto 0 0;
-    width: calc(100% / var(--thumbnail-name-scale));
-    height: calc(100% / var(--thumbnail-name-scale));
-    transform: scale(var(--thumbnail-name-scale));
-    transform-origin: bottom left;
-  }
-  @container call-thumbnail (max-width: 400px) {
-    .room-grid--speaker .room-tile:not(.room-tile--speaker) :global(.custom-call-name),
-    .room-grid--sharing .room-tile :global(.custom-call-name) {
-      --thumbnail-name-scale: 0.55;
-    }
-  }
-  @container call-thumbnail (max-width: 240px) {
-    .room-grid--speaker .room-tile:not(.room-tile--speaker) :global(.custom-call-name),
-    .room-grid--sharing .room-tile :global(.custom-call-name) {
-      --thumbnail-name-scale: 0.4;
-    }
   }
   .room-grid--speaker .room-tile--speaker {
     position: absolute;

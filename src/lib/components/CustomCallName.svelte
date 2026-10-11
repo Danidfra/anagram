@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fitCallName } from '#src/lib/actions/fitCallName.ts';
   import { customCallNameCss } from '#src/utils/customCallNameCss.ts';
   export let name: string;
   export let css: string;
@@ -7,15 +8,21 @@
     const style = document.createElement('style');
     const label = document.createElement('div');
     label.className = 'customname';
-    root.append(style, label);
+    const design = document.createElement('div');
+    design.setAttribute('data-call-name-design', '');
+    design.style.cssText = 'position:absolute;inset:0;contain:layout;transform-origin:0 0';
+    design.append(label);
+    root.append(style, design);
+    const fitting = fitCallName(node);
     function update(next: typeof value) {
       label.textContent = next.name;
       style.textContent = customCallNameCss(next.css);
+      fitting.update();
       // Shadow mutations do not reach the recording-stage observer.
       node.setAttribute('data-name-revision', String(Number(node.dataset.nameRevision || 0) + 1));
     }
     update(value);
-    return { update };
+    return { update, destroy: fitting.destroy };
   }
 </script>
 

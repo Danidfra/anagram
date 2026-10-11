@@ -502,69 +502,80 @@ test('group-call shared names use saved local CSS in the call and recording wind
   await styling.getByRole('button', { name: 'Reset to default', exact: true }).click();
   await expect(styling.getByLabel('CSS', { exact: true })).toHaveValue(exampleCss);
   await expect(editor.getByLabel('Custom name', { exact: true })).toHaveValue('Host renamed');
-  const expectBottomLeft = async () => {
+  const expectFittedNames = async () => {
     for (const view of [page, popup]) {
       for (const id of ['room-local', `room-peer-${peer}`]) {
-        const tile = view.getByTestId(id);
         await expect
-          .poll(async () => {
-            const bounds = await tile.boundingBox();
-            const label = await tile.locator('.customname').boundingBox();
-            if (!bounds || !label) return Infinity;
-            return Math.max(
-              Math.abs(label.x - bounds.x - 16),
-              Math.abs(bounds.y + bounds.height - label.y - label.height - 16),
-            );
-          })
-          .toBeLessThan(1);
-      }
-    }
-  };
-  await expectBottomLeft();
-  await page.keyboard.press('Escape');
-  await page.getByTestId('room-max-fill').click();
-  await expectBottomLeft();
-  await page.getByTestId('room-view-toggle').click();
-  const expectThumbnailNames = async () => {
-    for (const view of [page, popup]) {
-      for (const id of ['room-local', `room-peer-${peer}`]) {
-        const tile = view.getByTestId(id);
-        await expect
-          .poll(async () =>
-            tile.evaluate((node) => {
+          .poll(() =>
+            view.getByTestId(id).evaluate((node) => {
+              const frame = node.querySelector('.room-tile__content')!.getBoundingClientRect();
               const name = node
                 .querySelector('[data-testid="custom-call-name"]')
                 ?.shadowRoot?.querySelector<HTMLElement>('.customname');
-              if (!name) return false;
-              const bounds = node.getBoundingClientRect(),
-                label = name.getBoundingClientRect();
+              if (!name) return 'missing';
+              const label = name.getBoundingClientRect();
               const scale = label.height / name.offsetHeight;
-              const speaker =
-                Boolean(node.closest('.room-grid--speaker')) &&
-                node.classList.contains('room-tile--speaker');
+              const gap = 16 * scale;
+              const tile = node.getBoundingClientRect();
+              const ratio = Number(
+                (node.querySelector('.room-tile__content') as HTMLElement).dataset.videoRatio,
+              );
+              const fill = !!node.closest('.room-grid--fill');
+              const width = fill ? tile.width : Math.min(tile.width, tile.height * ratio);
+              const height = fill ? tile.height : width / ratio;
               const fits =
-                (speaker ? Math.abs(scale - 1) < 0.01 : scale >= 0.39 && scale <= 0.66) &&
-                Math.abs(label.left - bounds.left - 16 * scale) < 1 &&
-                Math.abs(bounds.bottom - label.bottom - 16 * scale) < 1;
-              return fits
-                ? 'ok'
-                : JSON.stringify({
-                    tile: node.getAttribute('data-testid'),
-                    speaker,
-                    scale,
-                    bounds,
-                    label,
-                  });
+                Math.abs(frame.width - width) < 1 &&
+                Math.abs(frame.height - height) < 1 &&
+                scale > 0 &&
+                scale <= 1.01 &&
+                label.height <= frame.height * 0.1 + 1 &&
+                label.width <= frame.width * 0.8 + 1 &&
+                Math.abs(label.left - frame.left - gap) < 1 &&
+                Math.abs(frame.bottom - label.bottom - gap) < 1 &&
+                (Math.abs(scale - 1) < 0.01 ||
+                  Math.abs(label.height - frame.height * 0.1) < 1 ||
+                  Math.abs(label.width - frame.width * 0.8) < 1);
+              return fits ? 'ok' : JSON.stringify({ frame, label, scale });
             }),
           )
           .toBe('ok');
       }
     }
   };
-  await expectThumbnailNames();
+  // Before any camera video, both placeholders use a landscape video frame.
+  for (const view of [page, popup]) {
+    for (const id of ['room-local', `room-peer-${peer}`]) {
+      await expect(view.getByTestId(id).locator('.room-tile__content')).toHaveAttribute(
+        'data-video-ratio',
+        String(16 / 9),
+      );
+    }
+  }
+  await expectFittedNames();
+  // Oversized designs and long names must fit without rewriting the saved CSS.
+  const largeCss = exampleCss.replace('font: 600 28px', 'font: 600 80px');
+  await styling.getByLabel('CSS', { exact: true }).fill(largeCss);
+  await editor.getByLabel('Custom name', { exact: true }).fill('W'.repeat(70));
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await expectFittedNames();
+  await expect(styling.getByLabel('CSS', { exact: true })).toHaveValue(largeCss);
+  expect(
+    await page.evaluate(() => {
+      const account = (window as any).__testRoomNames.session.own.pubkey;
+      return JSON.parse(localStorage.getItem(`ui-group-call-name:${account}`)!).css;
+    }),
+  ).toBe(largeCss);
+  await styling.getByRole('button', { name: 'Reset to default', exact: true }).click();
+  await editor.getByLabel('Custom name', { exact: true }).fill('Host renamed');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await page.getByTestId('room-max-fill').click();
+  await expectFittedNames();
+  await page.getByTestId('room-view-toggle').click();
+  await expectFittedNames();
   await page.setViewportSize({ width: 900, height: 844 });
   await popup.setViewportSize({ width: 1800, height: 900 });
-  await expectThumbnailNames();
+  await expectFittedNames();
   const thumbnailScale = (view: Page) =>
     view
       .getByTestId(`room-peer-${peer}`)
@@ -578,7 +589,7 @@ test('group-call shared names use saved local CSS in the call and recording wind
       .querySelector(`[data-testid="room-peer-${peer}"]`)!
       .classList.add('room-tile--speaker');
   }, peer);
-  await expectThumbnailNames();
+  await expectFittedNames();
   await page.evaluate((peer) => {
     document.querySelector('[data-testid="room-local"]')!.classList.add('room-tile--speaker');
     document
@@ -587,9 +598,9 @@ test('group-call shared names use saved local CSS in the call and recording wind
   }, peer);
   await page.setViewportSize({ width: 390, height: 844 });
   await popup.setViewportSize({ width: 1000, height: 650 });
-  await expectThumbnailNames();
+  await expectFittedNames();
   await page.getByTestId('room-view-toggle').click();
-  await expectBottomLeft();
+  await expectFittedNames();
   // A local share exercises the shared screen/camera layout without live capture.
   await page.evaluate(() => {
     (window as any).__testRoomNames.localScreenStream = new MediaStream();
@@ -599,18 +610,93 @@ test('group-call shared names use saved local CSS in the call and recording wind
     await expect(view.locator('.call-stage__screen .customname')).toHaveCount(0);
     await expect(view.locator('.call-stage__screen figcaption')).toHaveText('Host renamed');
   }
-  await expectThumbnailNames();
+  await expectFittedNames();
   await page.setViewportSize({ width: 1280, height: 844 });
   await popup.setViewportSize({ width: 1800, height: 900 });
-  await expectThumbnailNames();
+  await expectFittedNames();
   await page.getByTestId('room-max-fill').click();
-  await expectThumbnailNames();
+  await expectFittedNames();
   await page.screenshot({ path: 'test-results/call-screen-thumbnail-names.png' });
   await page.evaluate(() => {
     (window as any).__testRoomNames.localScreenStream = null;
   });
   await expect(page.locator('.call-stage__screen')).toHaveCount(0);
-  await expectBottomLeft();
+  await expectFittedNames();
+  // Real video dimensions expose letterboxing that camera-off fixtures cannot.
+  await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 360;
+    const context = canvas.getContext('2d')!;
+    const draw = () => {
+      context.fillStyle = '#286dac';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    };
+    draw();
+    const fixture = window as any;
+    fixture.__nameCameraCanvas = canvas;
+    fixture.__nameCameraTimer = setInterval(draw, 100);
+    fixture.__testRoomNames.localStream = canvas.captureStream(10);
+    fixture.__testRoomNames.cameraMuted = false;
+  });
+  const expectVideoName = async (ratio: number, fill = false) => {
+    for (const view of [page, popup]) {
+      const tile = view.getByTestId('room-local');
+      await expect(tile.locator('.room-tile__content')).toHaveAttribute(
+        'data-video-ratio',
+        String(ratio),
+      );
+      await expect
+        .poll(async () => {
+          const bounds = await tile.boundingBox();
+          const label = await tile.locator('.customname').boundingBox();
+          if (!bounds || !label) return Infinity;
+          const width = fill ? bounds.width : Math.min(bounds.width, bounds.height * ratio);
+          const height = fill ? bounds.height : width / ratio;
+          const naturalHeight = await tile
+            .locator('.customname')
+            .evaluate((node) => (node as HTMLElement).offsetHeight);
+          const gap = (16 * label.height) / naturalHeight;
+          return Math.max(
+            Math.abs(label.x - (bounds.x + (bounds.width - width) / 2 + gap)),
+            Math.abs(label.y + label.height - (bounds.y + (bounds.height + height) / 2 - gap)),
+            Math.max(0, label.height - height * 0.1),
+            Math.max(0, label.width - width * 0.8),
+          );
+        })
+        .toBeLessThan(1);
+    }
+  };
+  await page.setViewportSize({ width: 390, height: 844 });
+  await popup.setViewportSize({ width: 900, height: 1100 });
+  await expectVideoName(640 / 360);
+  await expectFittedNames();
+  await page.screenshot({ path: 'test-results/call-name-inside-video.png' });
+  await page.evaluate(() => {
+    const canvas = (window as any).__nameCameraCanvas as HTMLCanvasElement;
+    canvas.width = 360;
+    canvas.height = 640;
+  });
+  await expectVideoName(360 / 640);
+  await page.evaluate(() => ((window as any).__testRoomNames.cameraMuted = true));
+  await expect(page.getByTestId('room-local').locator('.call-person')).toBeVisible();
+  // Muting the camera preserves its last frame and the name's exact position.
+  await expectVideoName(360 / 640);
+  await expectFittedNames();
+  await page.evaluate(() => ((window as any).__testRoomNames.cameraMuted = false));
+  await expectVideoName(360 / 640);
+  await page.getByTestId('room-max-fill').click();
+  await expectVideoName(360 / 640, true);
+  await page.getByTestId('room-max-fill').click();
+  await page.evaluate(() => {
+    const fixture = window as any;
+    clearInterval(fixture.__nameCameraTimer);
+    fixture.__testRoomNames.localStream
+      .getTracks()
+      .forEach((track: MediaStreamTrack) => track.stop());
+    fixture.__testRoomNames.cameraMuted = true;
+  });
+  await expectFittedNames();
   await page.getByTestId('room-edit-names').click();
   await styling.getByRole('switch', { name: 'Custom name CSS' }).uncheck();
   await expect(popup.getByTestId(`room-peer-${peer}`).locator('.customname')).toHaveCount(0);

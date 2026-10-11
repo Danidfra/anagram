@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fitCallName } from '#src/lib/actions/fitCallName.ts';
   import { onDestroy } from 'svelte';
   import { translate } from '#src/i18n.ts';
   import CallVideo from './CallVideo.svelte';
@@ -71,6 +72,10 @@
       const root = (copy as HTMLElement).attachShadow({ mode: 'open' });
       for (const child of source.shadowRoot.childNodes)
         root.appendChild(mirror(child, targetDocument));
+      if (source.matches('[data-testid="custom-call-name"]')) {
+        const fitting = fitCallName(copy as HTMLElement);
+        stopFrames.push(fitting.destroy);
+      }
     }
     return copy;
   }
