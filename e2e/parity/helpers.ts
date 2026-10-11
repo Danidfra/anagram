@@ -263,8 +263,8 @@ export async function removeStoredMessageByEventId(page: Page, chatId: string, e
 export async function action(page: Page, text: string, name: string) {
   const message = threadMessage(page, text);
   await message.hover();
-  // A message's centre can be a URL with its own Copy Link context menu.
-  await message.getByRole('button', { name: 'Message actions', exact: true }).click();
+  // Use bubble padding so links, spoilers and media retain their own clicks.
+  await message.locator('.message-content').click({ position: { x: 5, y: 5 } });
   await page.getByRole('menuitem', { name, exact: true }).click();
 }
 export async function editMessage(page: Page, text: string, replacement: string, _options = {}) {

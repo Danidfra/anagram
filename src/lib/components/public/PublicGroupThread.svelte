@@ -146,9 +146,7 @@
     if (message.meta.deleted) return;
     event.preventDefault();
     contextTrigger =
-      event.target instanceof Element
-        ? event.target.closest<HTMLElement>('.message-menu-trigger')
-        : null;
+      event.target instanceof Element ? event.target.closest<HTMLElement>('.message-row') : null;
     contextPosition = messageMenuPosition(event);
     actionMessage = message;
   }
@@ -612,11 +610,7 @@
     if (
       !event
         .composedPath()
-        .some(
-          (target) =>
-            target instanceof Element &&
-            target.matches('.message-context-menu, .message-menu-trigger'),
-        )
+        .some((target) => target instanceof Element && target.matches('.message-context-menu'))
     )
       actionMessage = undefined;
   }}

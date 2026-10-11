@@ -18,6 +18,12 @@ The PWA caches the app shell; saved messages remain in IndexedDB. Relay sync and
 
 PWA installation is available in production builds. On iPhone, use Safari → Share → Add to Home Screen. There is no push delivery while the app is closed.
 
+## GitHub Pages
+
+The `Checks` workflow deploys `build/` to the repository's `github-pages` environment after all web checks pass on a push to `main`. Pull requests and other branches only run checks. To redeploy manually, run `Checks` from the Actions tab with `main` selected; the same checks must pass first.
+
+Keep Settings → Pages → Source set to **GitHub Actions** and the custom domain set to `chat.nostr.com`. The domain is managed in Pages settings. The workflow uploads the tested build and copies its app shell to `404.html` so direct chat and call routes can open on Pages. GitHub Pages still returns HTTP 404 for those fallback routes; the client renders the requested screen. Active deployments are allowed to finish before the next main run.
+
 ## Social link previews
 
 The client URL includes a branded Open Graph / Twitter card. Copied public-chat and Iroh-call links use `/join/chat.html#/public/<naddr>` and `/join/call.html#/call/<token>`. The static entry pages expose “Join chat” and “Join call” cards without JavaScript, then open the existing app flow in browsers. Call secrets remain in the fragment, outside HTTP requests and preview metadata. Existing direct links still open normally.

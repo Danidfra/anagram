@@ -332,7 +332,6 @@ p {
 .message-row {
   position: relative;
   margin: 0 0 5px;
-  padding-right: 30px;
   padding-bottom: 2px;
 }
 .message-author {
@@ -1053,18 +1052,9 @@ input[type='range'] {
   background: var(--nc-hover);
   color: var(--q-primary);
 }
-.message-menu-trigger {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 28px;
-  height: 28px;
-  opacity: 0;
-  z-index: 3;
-}
-.message-row:hover .message-menu-trigger,
-.message-row:focus-within .message-menu-trigger {
-  opacity: 1;
+.message-row:focus-visible {
+  outline: 2px solid var(--q-primary);
+  outline-offset: 2px;
 }
 @media (min-width: 768px) {
   .bubble-layout .message-row.own {
@@ -1129,9 +1119,6 @@ input[type='range'] {
   }
   .group-thread .message-author {
     display: flex;
-  }
-  .message-menu-trigger {
-    opacity: 1;
   }
 }
 
@@ -1323,14 +1310,29 @@ body.body--dark .bubble-layout {
   margin: 0 0 0 auto;
 }
 @media (max-width: 767px) {
-  .bubble-layout:not(.group-thread) .message-row.own {
-    grid-template-columns: minmax(0, 1fr) 38px;
+  .message-content,
+  .message-text {
+    font-size: 15px;
+    line-height: 20px;
   }
-  .bubble-layout:not(.group-thread) .own .bubble-avatar {
-    grid-column: 2;
+  .app-shell:not(.group-thread) .bubble-avatar,
+  .app-shell:not(.group-thread) .bubble-author-name,
+  .app-shell:not(.group-thread) .message-author {
+    display: none;
+  }
+  .app-shell:not(.group-thread) .message-row {
+    margin-bottom: 6px;
+  }
+  .bubble-layout:not(.group-thread) .message-row {
+    grid-template-columns: minmax(0, 1fr);
+    column-gap: 0;
+  }
+  .app-shell:not(.group-thread) .message-content {
+    grid-column: 1;
+    max-width: 90%;
+    padding: 6px 10px 4px;
   }
   .bubble-layout:not(.group-thread) .own .message-content {
-    grid-column: 1;
     justify-self: end;
     border-radius: 18px 18px 6px 18px;
   }

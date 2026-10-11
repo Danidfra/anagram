@@ -773,7 +773,7 @@ test('chat controls retain desktop and mobile interactions', async ({ page }, te
   await page.getByRole('button', { name: 'Next search result' }).click();
   await expect(message).toHaveClass(/highlighted/);
   await page.getByRole('button', { name: 'Close search' }).click();
-  await message.getByRole('button', { name: 'Message actions', exact: true }).click();
+  await message.locator('.message-content').click({ position: { x: 5, y: 5 } });
   await page.getByRole('menuitem', { name: 'Nostr info', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('Event ID');
   await page.getByRole('button', { name: 'Close dialog' }).click();
@@ -789,7 +789,7 @@ test('chat controls retain desktop and mobile interactions', async ({ page }, te
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(composer).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await message.getByRole('button', { name: 'Message actions', exact: true }).click();
+  await message.locator('.message-content').click({ position: { x: 5, y: 5 } });
   await expect(page.getByRole('menuitem', { name: 'Reply', exact: true })).toBeVisible();
   await page.getByRole('menuitem', { name: 'Reply', exact: true }).click();
   await expect(page.locator('.composer-context')).toContainText('Find this parity message');
@@ -1118,7 +1118,7 @@ test('incoming DM committed during a cached load remains visible', async ({ page
   ).toBeVisible();
 });
 
-test('message actions open at the pointer, stay within the viewport, and support mobile long press', async ({
+test('message actions support click, keyboard, tap and long press without stealing selections', async ({
   page,
 }, testInfo) => {
   await login(page);
@@ -1132,12 +1132,13 @@ test('message actions open at the pointer, stay within the viewport, and support
   await message.hover();
   await expect(menu).toHaveCount(0);
   const content = message.locator('.message-content');
+  await expect(message.getByRole('button', { name: 'Message actions' })).toHaveCount(0);
+  await content.click({ position: { x: 5, y: 5 } });
   const box = (await content.boundingBox())!;
-  await page.mouse.click(box.x + 16, box.y + 8, { button: 'right' });
   await expect(menu).toBeVisible();
   expect(await menu.evaluate((node) => node.closest('.message-row') === null)).toBe(true);
   const bounds = (await menu.boundingBox())!;
-  expect(Math.abs(bounds.x - box.x - 16)).toBeLessThan(3);
+  expect(Math.abs(bounds.x - box.x - 5)).toBeLessThan(3);
   expect(bounds.y).toBeGreaterThanOrEqual(8);
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(page.viewportSize()!.height - 7);
   const reply = menu.getByRole('menuitem', { name: 'Reply', exact: true });
@@ -1156,13 +1157,25 @@ test('message actions open at the pointer, stay within the viewport, and support
   await menu.getByRole('menuitem', { name: 'Forward', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Close dialog' }).click();
-  await message.getByRole('button', { name: 'Message actions', exact: true }).click();
+  await message.locator('.message-content').click({ position: { x: 5, y: 5 } });
   await expect(reply).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(menu.getByRole('menuitem', { name: 'Copy message' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
-  await expect(message.getByRole('button', { name: 'Message actions' })).toBeFocused();
+  await expect(message).toBeFocused();
+  await message.press('Enter');
+  await expect(reply).toBeFocused();
+  await page.keyboard.press('Escape');
+  await message.locator('.message-text').evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+  });
+  await content.dispatchEvent('click', { clientX: box.x + 16, clientY: box.y + 8 });
+  await expect(menu).toHaveCount(0);
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
   await page.evaluate(async () => {
     const { saveDesktopMessageLayoutPreference } = await import('/src/utils/themeStorage.ts');
     saveDesktopMessageLayoutPreference('bubbles');
@@ -1172,7 +1185,16 @@ test('message actions open at the pointer, stay within the viewport, and support
   await menu.getByRole('button', { name: 'Choose reaction' }).click();
   await expect(menu.locator('input')).toBeVisible();
   await page.keyboard.press('Escape');
+  const desktopFont = await message
+    .locator('.message-text')
+    .evaluate((node) => getComputedStyle(node).fontSize);
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(message.locator('.bubble-avatar')).toBeHidden();
+  await expect(message.locator('.bubble-author-name')).toBeHidden();
+  await expect(message.locator('.message-text')).toHaveCSS('font-size', '15px');
+  await content.click({ position: { x: 5, y: 5 } });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
   const mobileBox = (await content.boundingBox())!;
   const position = {
     clientX: mobileBox.x + 14,
@@ -1181,6 +1203,18 @@ test('message actions open at the pointer, stay within the viewport, and support
     pointerId: 1,
     isPrimary: true,
   };
+  // A scroll/drag must not become a tap, including a delayed synthetic click.
+  await content.dispatchEvent('pointerdown', position);
+  await content.dispatchEvent('pointermove', { ...position, clientY: position.clientY + 40 });
+  await content.dispatchEvent('pointerup', position);
+  await content.dispatchEvent('click', { clientX: position.clientX, clientY: position.clientY });
+  await expect(menu).toHaveCount(0);
+  // A short touch opens the same menu without waiting for a long press.
+  await content.dispatchEvent('pointerdown', position);
+  await content.dispatchEvent('pointerup', position);
+  await content.dispatchEvent('click', { clientX: position.clientX, clientY: position.clientY });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
   await content.dispatchEvent('pointerdown', position);
   await expect(menu).toBeVisible();
   await content.dispatchEvent('pointerup', position);
@@ -1196,4 +1230,8 @@ test('message actions open at the pointer, stay within the viewport, and support
   });
   await page.getByTestId('chat-thread').dispatchEvent('scroll');
   await expect(menu).toHaveCount(0);
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await expect(message.locator('.bubble-avatar')).toBeVisible();
+  await expect(message.locator('.bubble-author-name')).toBeVisible();
+  await expect(message.locator('.message-text')).toHaveCSS('font-size', desktopFont);
 });

@@ -767,7 +767,7 @@ test('public chat shares layouts, sender grouping, date dividers, emoji input an
   await expect(first.locator('.message-content')).toHaveCSS('border-top-left-radius', '18px');
   await expect(last.locator('.message-content')).toHaveCSS('border-top-left-radius', '6px');
   await first.hover();
-  await first.getByRole('button', { name: 'Message actions', exact: true }).click();
+  await first.locator('.message-content').click({ position: { x: 5, y: 5 } });
   const menu = page.getByRole('menu', { name: 'Message actions' });
   await expect(menu.getByRole('menuitem')).toHaveCount(5);
   await expect(menu.getByRole('menuitem', { name: 'Pin message', exact: true })).toBeVisible();
@@ -1032,7 +1032,7 @@ test('public message actions reuse private controls and synchronize replies, edi
     await expect(received).toBeVisible();
     async function action(page: Page, row: ReturnType<Page['locator']>, name: string) {
       await row.hover();
-      await row.getByRole('button', { name: 'Message actions', exact: true }).click();
+      await row.locator('.message-content').click({ position: { x: 5, y: 5 } });
       await page.getByRole('menuitem', { name, exact: true }).click();
     }
     await action(bob, received, 'Reply');
@@ -1059,7 +1059,7 @@ test('public message actions reuse private controls and synchronize replies, edi
     await expect(reply.locator('.reply-preview')).toContainText('Action edited twice');
 
     await received.hover();
-    await received.getByRole('button', { name: 'Message actions', exact: true }).click();
+    await received.locator('.message-content').click({ position: { x: 5, y: 5 } });
     await expect(bob.getByRole('menuitem', { name: 'Edit', exact: true })).toHaveCount(0);
     await expect(bob.getByRole('menuitem', { name: 'Delete', exact: true })).toHaveCount(0);
     await bob.getByRole('button', { name: 'React', exact: true }).click();

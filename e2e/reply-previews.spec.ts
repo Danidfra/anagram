@@ -95,7 +95,7 @@ for (const kind of ['dm', 'private', 'public'] as const) {
         );
         const source = page.locator(`[id="message-${id}"]`);
         await source.hover();
-        await source.getByRole('button', { name: 'Message actions', exact: true }).click();
+        await source.locator('.message-content').click({ position: { x: 5, y: 5 } });
         await page.getByRole('menuitem', { name: 'Reply', exact: true }).click();
         await expect(page.locator('.composer-context')).toContainText(item.label);
         if (index < 4) await expect(page.locator('.composer-context')).not.toContainText(item.text);

@@ -4,7 +4,6 @@
   import type { Message } from '#src/types/chat.ts';
   import { locale } from '#src/i18n.ts';
   import Avatar from './Avatar.svelte';
-  import Icon from './Icon.svelte';
   import MessageRelayStatus from './MessageRelayStatus.svelte';
   import MessageReactions from './MessageReactions.svelte';
   export let message: Message;
@@ -30,7 +29,9 @@
 </script>
 
 {#snippet name()}{#if authorLabel}{@render authorLabel()}{:else}{author.name}{/if}{/snippet}
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <article
+  tabindex={onactions && !message.meta.deleted ? 0 : undefined}
   class="message-row"
   class:context-open={contextOpen}
   class:highlighted
@@ -113,12 +114,4 @@
         />{/if}
     </div>
   </div>
-  {#if onactions && !message.meta.deleted}<button
-      class="icon-button message-menu-trigger"
-      aria-label="Message actions"
-      aria-expanded={contextOpen}
-      aria-haspopup="menu"
-      aria-controls={contextOpen ? 'message-context-menu' : undefined}
-      onclick={onactions}><Icon name="more" /></button
-    >{/if}
 </article>
