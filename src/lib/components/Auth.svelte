@@ -392,11 +392,14 @@
         {#if error}<p class="error" role="alert">{error}</p>{/if}
       </div>
       <footer>
-        {$translate('common.made')}<a
-          href="https://lnbits.com"
-          target="_blank"
-          rel="noopener noreferrer"><img src="/lnbits.svg" alt="" /> LNbits</a
-        >{$translate('common.team')}
+        <p class="independence-note">{$translate('auth.independence')}</p>
+        <div class="team-credit">
+          {$translate('common.made')}<a
+            href="https://lnbits.com"
+            target="_blank"
+            rel="noopener noreferrer"><img src="/lnbits.svg" alt="" /> LNbits</a
+          >{$translate('common.team')}
+        </div>
       </footer>
     </div>
   </div>
@@ -527,15 +530,29 @@
   }
   footer {
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
-    gap: 6px;
-    height: 64px;
-    padding: 10px 22px 14px;
+    gap: 12px;
+    min-height: 64px;
+    padding: 14px 22px;
     color: #64748b;
     font-size: 13px;
     border-top: 1px solid rgba(208, 220, 235, 0.72);
     background: rgba(255, 255, 255, 0.48);
+  }
+  .independence-note {
+    white-space: pre-line;
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    text-align: center;
+  }
+  .team-credit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
   }
   footer a {
     display: flex;
