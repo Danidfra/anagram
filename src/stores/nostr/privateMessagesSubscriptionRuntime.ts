@@ -86,7 +86,7 @@ interface PrivateMessagesSubscriptionRuntimeDeps {
   queuePrivateMessageIngestion: (
     wrappedEvent: ClientEvent,
     loggedInPubkeyHex: string,
-    options?: { priority: 'foreground' | 'background' },
+    options?: { priority: 'foreground' | 'background'; live?: boolean },
   ) => void;
   refreshAllStoredContacts: () => Promise<unknown>;
   relaySignature: (relays: string[]) => string;
@@ -646,6 +646,7 @@ export function createPrivateMessagesSubscriptionRuntime({
                   updateStoredEventSinceFromCreatedAt(wrapped.created_at);
                   queuePrivateMessageIngestion(wrapped, loggedInPubkeyHex, {
                     priority: 'foreground',
+                    ...(state.ready ? { live: true } : {}),
                   });
                   bumpDeveloperDiagnosticsVersion();
                 },

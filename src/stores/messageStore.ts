@@ -1,5 +1,6 @@
 import { UNKNOWN_REPLY_MESSAGE_TEXT } from '#src/stores/nostr/constants.ts';
 import { defineStore } from '#src/lib/state/store.ts';
+import { notifyLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 import { getEmojiEntryByValue } from '#src/data/topEmojis.ts';
 import {
   type ChatRow,
@@ -1201,6 +1202,9 @@ export const useMessageStore = defineStore('messageStore', () => {
       nextMessage,
       previousMessageId,
     );
+    // Persistence can replace the temporary id before the view paints it.
+    if (previousMessageId.startsWith(OPTIMISTIC_MESSAGE_ID_PREFIX))
+      notifyLiveThreadMessage(normalizedChatId, nextMessage.id);
   }
 
   function insertOptimisticOutboundMessage(chatId: string, message: Message): void {
@@ -1208,6 +1212,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     upsertMessageInState(chatId, message, {
       allowOutsideLoadedWindow: true,
     });
+    notifyLiveThreadMessage(chatId, message.id);
   }
 
   function buildOptimisticOutboundMessage(

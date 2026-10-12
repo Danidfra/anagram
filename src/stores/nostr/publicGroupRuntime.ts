@@ -1,4 +1,5 @@
 import { buildMessageEditTag } from '#src/utils/messageEdits.ts';
+import { notifyLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 import {
   editTarget,
   editRoot,
@@ -527,7 +528,8 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       return;
     }
   }
-  function append(events: PublicGroupMessage[], older = false) {
+  function append(events: PublicGroupMessage[], older = false, liveIds?: Set<string>) {
+    const previousIds = liveIds?.size ? new Set(get(state).messages.map((event) => event.id)) : null;
     state.update((s) => {
       const all = publicMessageRoots([...s.messages, ...events]).sort(
         (a, b) => a.created_at - b.created_at || a.id!.localeCompare(b.id!),
@@ -539,6 +541,16 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         more: s.more || (!older && all.length > ROOM_WINDOW),
       };
     });
+    if (liveIds && previousIds) {
+      const snapshot = get(state);
+      const latest = snapshot.messages.findLast(
+        (event) =>
+          liveIds.has(event.id!) &&
+          !previousIds.has(event.id) &&
+          roomPolicy(snapshot.room!, event.pubkey) !== 'blocked',
+      );
+      if (latest) notifyLiveThreadMessage(snapshot.room!.address, latest.id!);
+    }
   }
   async function open(link: string) {
     // init resets the account synchronously, but its storage read may still be
@@ -738,7 +750,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     const active = () => revision === liveRevision && token === view && owner === deps.account();
     let draining = false;
     let received = 0;
+    let ready = false;
     const pending: PublicGroupMessage[] = [];
+    const liveMessages = new WeakSet<PublicGroupMessage>();
     live = deps.client.subscribe(
       [
         { kinds: [9], '#a': [room.address], limit: ROOM_PAGE },
@@ -760,7 +774,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
             return;
           }
           if (event.kind === 9) received++;
-          pending.push(receivedMessage(event, relay?.url ?? event.relay?.url));
+          const message = receivedMessage(event, relay?.url ?? event.relay?.url);
+          if (ready && event.kind === 9 && !editTarget(message)) liveMessages.add(message);
+          pending.push(message);
           if (!draining && liveTimer === undefined)
             liveTimer = setTimeout(() => {
               liveTimer = undefined;
@@ -768,6 +784,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
             }, 0);
         },
         onEose: () => {
+          ready = true;
           if (active() && !get(state).messages.length && received === 0)
             state.update((s) => ({ ...s, more: false }));
         },
@@ -886,7 +903,14 @@ export function createPublicGroupRuntime(deps: Dependencies) {
             const saved = await cacheTimelineEvents(current.address, batch, urls, db, active);
             if (active() && !get(state).history && !get(state).hasNewer) {
               const hydrated = await hydrate(current.address, saved, db);
-              if (active() && !get(state).history && !get(state).hasNewer) append(hydrated);
+              if (active() && !get(state).history && !get(state).hasNewer)
+                append(
+                  hydrated,
+                  false,
+                  new Set(
+                    batch.filter((event) => liveMessages.has(event)).map((event) => event.id!),
+                  ),
+                );
             }
             if (active() && batch.some((event) => event.kind !== 9 || editTarget(event)))
               await refreshVisible(current.address, db, token);
@@ -1662,7 +1686,11 @@ export function createPublicGroupRuntime(deps: Dependencies) {
           !get(state).history &&
           !get(state).hasNewer
         )
-          append(hydrated);
+          append(
+            hydrated,
+            false,
+            event.kind === 9 && !editTarget(event) ? new Set([event.id!]) : undefined,
+          );
       }
       if (token === view && (event.kind !== 9 || editTarget(event)))
         await refreshVisible(address, db, token);

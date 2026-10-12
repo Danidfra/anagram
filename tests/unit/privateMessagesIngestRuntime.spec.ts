@@ -1,4 +1,5 @@
 import { type ClientEvent, NostrKind, nip19 } from '#src/lib/nostr/client.ts';
+import { onLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 import { createPrivateMessagesIngestRuntime } from '#src/stores/nostr/privateMessagesIngestRuntime.ts';
 import { CALL_PROTOCOL, CALL_SIGNAL_KIND } from '#src/types/call.ts';
 import { ROOM_PROTOCOL } from '#src/types/callRoom.ts';
@@ -713,7 +714,7 @@ describe('privateMessagesIngestRuntime', () => {
     ]);
   });
 
-  it('creates request chats and inserts messages directly into live state', async () => {
+  it.each([false, true])('only signals incoming live arrivals (live=%s)', async (live) => {
     const deps = createDeps();
     const runtime = createPrivateMessagesIngestRuntime(deps);
     const createdAt = '2023-11-14T22:13:20.000Z';
@@ -743,10 +744,19 @@ describe('privateMessagesIngestRuntime', () => {
       meta: {},
     });
 
-    runtime.queuePrivateMessageIngestion(makeWrappedEvent(), 'b'.repeat(64), {
-      uiThrottleMs: 25,
-    });
-    await runtime.getPrivateMessagesIngestQueue();
+    const activity = vi.fn();
+    const stop = onLiveThreadMessage(activity);
+    try {
+      runtime.queuePrivateMessageIngestion(makeWrappedEvent(), 'b'.repeat(64), {
+        uiThrottleMs: 25,
+        live,
+      });
+      await runtime.getPrivateMessagesIngestQueue();
+    } finally {
+      stop();
+    }
+    expect(activity).toHaveBeenCalledTimes(live ? 1 : 0);
+    if (live) expect(activity).toHaveBeenCalledWith({ chatId: 'a'.repeat(64), id: 'rumor-event' });
 
     expect(serviceMocks.chatDataService.createChat).toHaveBeenCalledWith(
       expect.objectContaining({

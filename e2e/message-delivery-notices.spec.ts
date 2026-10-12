@@ -1,20 +1,25 @@
 import { expect, test } from '@playwright/test';
 import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
 import { finishOnboarding } from './auth-helpers';
-import { E2E_RELAY_URL } from './parity/helpers';
+import { E2E_RELAY_URL, navigateToChat } from './parity/helpers';
 
 test('relay rejection stays on the message status bar without a popup; other send errors still notify', async ({
   page,
 }) => {
   // Intercept only after onboarding; all other relay traffic continues normally.
   let rejectMessages = false;
+  let holdRejections = true;
+  const rejections: Array<() => void> = [];
   await page.routeWebSocket(E2E_RELAY_URL, (socket) => {
     const server = socket.connectToServer();
     socket.onMessage((raw) => {
       const [type, event] = JSON.parse(String(raw));
-      if (rejectMessages && type === 'EVENT' && event.kind === 1059)
-        socket.send(JSON.stringify(['OK', event.id, false, 'blocked: test relay rejection']));
-      else server.send(raw);
+      if (rejectMessages && type === 'EVENT' && event.kind === 1059) {
+        const reject = () =>
+          socket.send(JSON.stringify(['OK', event.id, false, 'blocked: test relay rejection']));
+        if (holdRejections) rejections.push(reject);
+        else reject();
+      } else server.send(raw);
     });
   });
   await page.addInitScript((url) => {
@@ -28,9 +33,26 @@ test('relay rejection stays on the message status bar without a popup; other sen
   await page.getByTestId('auth-private-key-input').fill(nip19.nsecEncode(key));
   await page.getByTestId('auth-login-button').click();
   await finishOnboarding(page);
-  await page
-    .locator(`[data-testid="chat-item"][data-chat-public-key="${getPublicKey(key)}"]`)
-    .click();
+  await navigateToChat(page, getPublicKey(key));
+  await page.evaluate(async (own) => {
+    const { chatDataService } = await import('/src/services/chatDataService.ts');
+    const { useMessageStore } = await import('/src/stores/messageStore.ts');
+    for (let index = 0; index < 30; index++)
+      await chatDataService.createMessage({
+        chat_public_key: own,
+        author_public_key: own,
+        message: `Earlier message ${index}`,
+        event_id: index.toString(16).padStart(64, '0'),
+        created_at: new Date(Date.now() - (60 - index) * 1000).toISOString(),
+        meta: {},
+      });
+    await useMessageStore().loadMessages(own, true);
+  }, getPublicKey(key));
+  const thread = page.getByTestId('chat-thread');
+  await expect(thread.locator('.message-row')).toHaveCount(30);
+  await thread.hover();
+  await page.mouse.wheel(0, -300);
+  await expect(page.getByRole('button', { name: 'Jump to latest messages' })).toBeVisible();
   rejectMessages = true;
   const composer = page.getByTestId('message-composer-input');
   await composer.fill('Keep the failed message visible');
@@ -39,6 +61,14 @@ test('relay rejection stays on the message status bar without a popup; other sen
     .getByTestId('message-bubble')
     .filter({ hasText: 'Keep the failed message visible' });
   const status = message.getByTestId('message-relay-status');
+  // The pending row must be revealed while the relay has not acknowledged it.
+  await expect(message).toBeInViewport();
+  await expect
+    .poll(() => thread.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop))
+    .toBeLessThan(2);
+  await expect.poll(() => rejections.length).toBeGreaterThan(0);
+  holdRejections = false;
+  rejections.splice(0).forEach((reject) => reject());
   await expect(status.locator('.bubble__status-segment--red')).toBeVisible();
   await expect(composer).toHaveValue('Keep the failed message visible');
   await expect(page.locator('.notices .error')).toHaveCount(0);

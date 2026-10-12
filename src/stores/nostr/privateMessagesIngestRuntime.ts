@@ -1,4 +1,5 @@
 import { disposeCryptoWorker } from '#src/lib/nostr/cryptoWorker.ts';
+import { notifyLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 import { messageInbox, type InboxRecord } from '#src/lib/nostr/inbox.ts';
 import { yieldToMainThread } from '#src/utils/backgroundTasks.ts';
 import { giftUnwrap, ClientEvent, NostrKind } from '#src/lib/nostr/client.ts';
@@ -120,6 +121,7 @@ export function createPrivateMessagesIngestRuntime({
     stagedChats.clear();
     stagedEvents.clear();
     hotInbox.clear();
+    liveIngestIds.clear();
     epochReplays.clear();
     for (const waiting of spoolWaiters.values()) waiting.forEach((resolve) => resolve(false));
     spoolWaiters.clear();
@@ -270,6 +272,9 @@ export function createPrivateMessagesIngestRuntime({
   const stagedEvents = new Set<string>();
   // Only the next small page stays in memory. Overflow drains from the journal.
   const hotInbox = new Map<string, { record: InboxRecord; durable: Promise<boolean> }>();
+  // Only this session's live arrivals can move an open thread. Journal replay
+  // and history requests intentionally do not retain this transient UI signal.
+  const liveIngestIds = new Set<string>();
   const spoolWaiters = new Map<string, Array<(value: boolean) => void>>();
   let spoolArrivalVersion = 0;
   async function queuePrivateMessageIngestion(
@@ -277,6 +282,7 @@ export function createPrivateMessagesIngestRuntime({
     loggedInPubkeyHex: string,
     options: {
       priority?: IngestPriority;
+      live?: boolean;
       uiThrottleMs?: number;
       reprocess?: boolean;
       retryPending?: boolean;
@@ -302,6 +308,7 @@ export function createPrivateMessagesIngestRuntime({
               return (
                 (await processIncomingPrivateMessage(wrappedEvent, loggedInPubkeyHex, {
                   uiThrottleMs,
+                  live: options.live,
                 })) !== false
               );
             } catch {
@@ -347,6 +354,7 @@ export function createPrivateMessagesIngestRuntime({
       ...(options.reprocess ? { reprocess: true } : {}),
       relayUrls: wrappedEvent.onRelays.map((r) => r.url),
     };
+    if (options.live) liveIngestIds.add(key);
     spoolArrivalVersion++;
     spoolWrites++;
     // Start the journal concurrently. Immediate processing does not wait for its
@@ -421,6 +429,7 @@ export function createPrivateMessagesIngestRuntime({
               });
               activeIds.add(record.id);
               const hotKey = `${loggedInPubkeyHex}:${record.id}`;
+              const live = liveIngestIds.delete(hotKey);
               const journal = hotInbox.get(hotKey)?.durable;
               hotInbox.delete(hotKey);
               const job = (async () => {
@@ -438,6 +447,7 @@ export function createPrivateMessagesIngestRuntime({
                     accepted =
                       (await processIncomingPrivateMessage(event, loggedInPubkeyHex, {
                         uiThrottleMs: record.throttle,
+                        live,
                         onStaged: releaseStage,
                       })) !== false;
                   if (generation !== ingestQueueGeneration) return;
@@ -479,6 +489,7 @@ export function createPrivateMessagesIngestRuntime({
           if (generation !== ingestQueueGeneration) return;
           spoolRunning = false;
           hotInbox.clear();
+          liveIngestIds.clear();
           for (const waiting of spoolWaiters.values()) waiting.forEach((resolve) => resolve(false));
           spoolWaiters.clear();
           resolveDrained?.();
@@ -594,6 +605,7 @@ export function createPrivateMessagesIngestRuntime({
     options: {
       uiThrottleMs?: number;
       onStaged?: () => void;
+      live?: boolean;
     } = {},
   ): Promise<boolean | undefined> {
     const processingGeneration = ingestQueueGeneration;
@@ -1581,6 +1593,7 @@ export function createPrivateMessagesIngestRuntime({
       event_id: rumorEventId,
       meta: messageMeta,
     });
+    if (options.live && rumorEventId) notifyLiveThreadMessage(chat.public_key, rumorEventId);
     const previousCommit = commitTail;
     const stagedChat = {
       ...chat,

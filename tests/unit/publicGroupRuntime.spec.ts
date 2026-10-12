@@ -18,6 +18,7 @@ import NostrClient, {
 import { STARTER_PUBLIC_GROUP } from '#src/constants/starterPublicGroup.ts';
 import { PublicGroupData } from '#src/services/publicGroupData.ts';
 import { createPublicGroupRuntime } from '#src/stores/nostr/publicGroupRuntime.ts';
+import { onLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 import { parsePublicRoom, roomTags, encodeRoomLink } from '#src/stores/nostr/publicGroups.ts';
 const stops: Array<() => void> = [];
 afterEach(() => {
@@ -245,6 +246,40 @@ it('cancels an in-flight room lookup when the account changes', async () => {
   expect(get(runtime.state).rooms).toEqual([]);
   expect(get(runtime.state).room).toBeNull();
   expect(listeners.size).toBe(0);
+});
+
+it('signals new live messages and pending posts, excluding history and delivery updates', async () => {
+  const author = generateSecretKey();
+  const metadata = room(author, 'live-scroll');
+  const group = parsePublicRoom(metadata);
+  const initial = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Initial history', tags: [['a', group.address]] },
+    author,
+  );
+  const { runtime, listeners } = setup([metadata, initial], author);
+  const activity = vi.fn();
+  stops.push(onLiveThreadMessage(activity));
+  await runtime.open(encodeRoomLink(group));
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(1));
+  expect(activity).not.toHaveBeenCalled();
+
+  const incoming = finalizeEvent(
+    { kind: 9, created_at: 21, content: 'Live arrival', tags: [['a', group.address]] },
+    author,
+  );
+  const deliver = () => {
+    for (const listener of listeners)
+      if (matchFilters(listener.filters, incoming))
+        listener.options.onEvent?.(new ClientEvent(undefined, incoming));
+  };
+  deliver();
+  await vi.waitFor(() => expect(activity).toHaveBeenCalledOnce());
+  expect(activity).toHaveBeenCalledWith({ chatId: group.address, id: incoming.id });
+  deliver(); // Another relay copy must not move the viewport again.
+  await runtime.send('Outgoing post');
+  expect(activity).toHaveBeenCalledTimes(2);
+  const sent = get(runtime.state).messages.find((event) => event.content === 'Outgoing post')!;
+  expect(activity).toHaveBeenLastCalledWith({ chatId: group.address, id: sent.id });
 });
 
 it('opens and posts through a completed replica without waiting for a stalled relay', async () => {

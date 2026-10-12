@@ -21,10 +21,7 @@
   import ForwardMessagePicker from './ForwardMessagePicker.svelte';
   import ThreadTimeline from './ThreadTimeline.svelte';
   import MessageRow from './MessageRow.svelte';
-  import {
-    scrollThreadToLatest,
-    prepareThreadScrollToLatest,
-  } from '#src/lib/actions/threadPosition.ts';
+  import { scrollThreadToLatest } from '#src/lib/actions/threadPosition.ts';
   import MessageComposer from './MessageComposer.svelte';
   import DateDivider from './DateDivider.svelte';
   import MediaUploadConfirmation from './MediaUploadConfirmation.svelte';
@@ -651,7 +648,6 @@
     const chat = $state.selected;
     if (!chat || !draft.trim() || busy) return;
     busy = true;
-    const revealSentMessage = prepareThreadScrollToLatest(scrollArea);
     const text = serializeMentionDraft(draft, mentionProfiles);
     const uploadKey = uploadContext();
     const attachments = draftAttachments(text, uploadedAttachments.get(uploadKey));
@@ -662,8 +658,8 @@
     try {
       if (editedMessage) await messages.editMessage(chat.id, editedMessage.id, text);
       else {
-        const sent = await messages.sendMessage(chat.id, text, originalReply, { attachments });
-        if (currentId === chat.id && sent) revealSentMessage(sent.id);
+        scrollThreadToLatest(scrollArea);
+        await messages.sendMessage(chat.id, text, originalReply, { attachments });
       }
       uploadedAttachments.delete(uploadKey);
       if (currentId === chat.id) {
@@ -1601,6 +1597,7 @@
           attachDisabled={Boolean(editing)}
           onsend={() => void send()}
           onfile={prepareUpload}
+          pasteContext={uploadContext}
           {mentionProfiles}
           onchange={() => {
             if (!editing) chats.setComposerDraft(currentId, draft);

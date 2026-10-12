@@ -4,6 +4,7 @@
   import type { NostrMentionProfile } from '#src/utils/nostrMentions.ts';
   export let mentionProfiles: NostrMentionProfile[] = [];
   import { autosizeTextarea } from '#src/lib/actions/autosizeTextarea.ts';
+  import { nativeImagePaste } from '#src/lib/actions/nativeImagePaste.ts';
   import { translate } from '#src/i18n.ts';
   import Icon from './Icon.svelte';
   import EmojiPicker from './EmojiPicker.svelte';
@@ -25,6 +26,7 @@
   export let maxlength: number | undefined = undefined;
   export let onsend: () => void;
   export let onfile: (file?: File) => void;
+  export let pasteContext: () => string = () => '';
   export let onchange: () => void = () => {};
   let mobileKeyboard = false;
   onMount(() => {
@@ -206,6 +208,11 @@
       bind:value={draft}
       bind:this={input}
       use:autosizeTextarea={draft}
+      use:nativeImagePaste={{
+        enabled: () => allowAttachments && !disabled && !busy && !attachDisabled,
+        context: () => pasteContext(),
+        onfile: prepareUpload,
+      }}
       {disabled}
       onpaste={(event) => {
         const file = event.clipboardData?.files[0];

@@ -1,38 +1,23 @@
+import { onLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
+
 interface PositionOptions {
   chatId: string;
   onchange: (atBottom: boolean) => void;
 }
 interface Controller {
   latest: (messageId?: string) => void;
-  revision: () => number;
 }
 const controllers = new WeakMap<HTMLElement, Controller>();
 
-/** Explicit navigation only; hydration never requests a trip to the bottom. */
+/** Explicit navigation; hydration alone never requests a trip to the bottom. */
 export function scrollThreadToLatest(node: HTMLElement | undefined, messageId?: string) {
   if (node) controllers.get(node)?.latest(messageId);
-}
-
-/** A send completing must not override scrolling performed while it was pending. */
-export function prepareThreadScrollToLatest(node: HTMLElement | undefined) {
-  const controller = node && controllers.get(node);
-  const revision = controller?.revision();
-  return (messageId?: string) => {
-    if (
-      node &&
-      controller &&
-      controllers.get(node) === controller &&
-      controller.revision() === revision
-    )
-      controller.latest(messageId);
-  };
 }
 
 export function threadPosition(node: HTMLElement, options: PositionOptions) {
   let anchors: { id: string; offset: number }[] = [];
   let lastTop = node.scrollTop;
   let positioned = false;
-  let revision = 0;
   let pendingLatest: { messageId?: string } | undefined;
   let atBottom: boolean | undefined;
   let disposed = false;
@@ -42,15 +27,39 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
 
   function remember(currentRows: HTMLElement[]) {
     const top = node.getBoundingClientRect().top;
-    const positions = currentRows.map((row) => ({
-      id: row.id,
-      offset: row.getBoundingClientRect().top - top,
-      bottom: row.getBoundingClientRect().bottom - top,
-    }));
-    const firstVisible = positions.findIndex((row) => row.bottom > 38);
-    const start = Math.max(0, firstVisible);
-    // Keep fallback rows for deletion, edit replacement and bounded-window eviction.
-    anchors = [...positions.slice(start), ...positions.slice(0, start).reverse()];
+    const rects = new Map<number, DOMRect>();
+    const rect = (index: number) => {
+      let value = rects.get(index);
+      if (!value) {
+        value = currentRows[index].getBoundingClientRect();
+        rects.set(index, value);
+      }
+      return value;
+    };
+    // Rows are in vertical display order. Find the first visible row without
+    // measuring the entire rendered history on every scroll or hydration update.
+    let low = 0;
+    let high = currentRows.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (rect(middle).bottom > top + 38) high = middle;
+      else low = middle + 1;
+    }
+    const start = Math.min(low, currentRows.length - 1);
+    // Neighbours cover deletion/edit replacement; boundary rows cover paging
+    // that evicts the visible portion of the bounded message window.
+    const indices = new Set([
+      start,
+      start + 1,
+      start + 2,
+      start - 1,
+      start - 2,
+      currentRows.length - 1,
+      0,
+    ]);
+    anchors = [...indices]
+      .filter((index) => index >= 0 && index < currentRows.length)
+      .map((index) => ({ id: currentRows[index].id, offset: rect(index).top - top }));
     lastTop = node.scrollTop;
     const nextBottom = maxTop() - lastTop <= 1;
     if (nextBottom !== atBottom) {
@@ -59,7 +68,6 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
     }
   }
   function userMoved() {
-    revision++;
     positioned = true;
     pendingLatest = undefined;
   }
@@ -73,7 +81,11 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
     const canNavigate =
       pendingLatest &&
       (!pendingLatest.messageId ||
-        currentRows.some((row) => row.id === `message-${pendingLatest!.messageId}`));
+        currentRows.some(
+          (row) =>
+            row.id === `message-${pendingLatest!.messageId}` ||
+            row.dataset.eventId === pendingLatest!.messageId,
+        ));
     if (currentRows.length && ((!positioned && !pendingLatest) || canNavigate)) {
       node.scrollTop = node.scrollHeight;
       positioned = true;
@@ -105,8 +117,14 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
   }
   const resize = new ResizeObserver(restore);
   const mutation = new MutationObserver(restore);
+  const stopLiveMessages = onLiveThreadMessage(({ chatId, id }) => {
+    if (chatId !== options.chatId || !atBottom) return;
+    // Account for a user scroll whose DOM event has not been dispatched yet.
+    if (Math.abs(node.scrollTop - lastTop) > 0.5) return;
+    pendingLatest = { messageId: id };
+    restore();
+  });
   const controller: Controller = {
-    revision: () => revision,
     latest(messageId) {
       pendingLatest = { messageId };
       restore();
@@ -135,18 +153,21 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
   restore();
   return {
     update(next: PositionOptions) {
-      if (next.chatId !== options.chatId) {
+      const changedChat = next.chatId !== options.chatId;
+      if (changedChat) {
         anchors = [];
         positioned = false;
         pendingLatest = undefined;
-        revision++;
         lastTop = node.scrollTop;
       }
       options = next;
-      restore();
+      // Content and size observers handle changes within the same chat. Svelte
+      // can update the action's options while typing without any layout change.
+      if (changedChat) restore();
     },
     destroy() {
       disposed = true;
+      stopLiveMessages();
       mutation.disconnect();
       resize.disconnect();
       controllers.delete(node);

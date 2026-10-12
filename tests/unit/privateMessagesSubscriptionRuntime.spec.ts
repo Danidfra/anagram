@@ -236,7 +236,7 @@ describe('privateMessagesSubscriptionRuntime', () => {
     expect(queuePrivateMessageIngestion).toHaveBeenCalledWith(
       expect.anything(),
       LOGGED_IN_PUBLIC_KEY,
-      { priority: 'foreground' },
+      { priority: 'foreground', live: true },
     );
     expect(startPrivateMessagesStartupBackfill).toHaveBeenCalledTimes(1);
     expect(startupRuntime.getStartupStepSnapshot('private-messages-subscribe').status).toBe(

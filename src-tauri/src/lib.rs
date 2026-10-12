@@ -8,6 +8,7 @@ use std::sync::{
 mod android_notifications;
 #[cfg(any(target_os = "android", test))]
 mod call_notifications;
+mod clipboard;
 mod secure_storage;
 use tauri::Manager;
 #[cfg(desktop)]
@@ -40,6 +41,20 @@ fn authorize_key_access(window: &tauri::WebviewWindow) -> Result<(), String> {
     } else {
         Err("Private key access denied".into())
     }
+}
+
+#[tauri::command]
+async fn read_clipboard_image(window: tauri::WebviewWindow) -> Result<tauri::ipc::Response, String> {
+    // Reuse the main-window/origin guard; presentation windows cannot read it.
+    authorize_key_access(&window)?;
+    #[cfg(target_os = "linux")]
+    {
+        clipboard::read_image(&window)
+            .await
+            .map(tauri::ipc::Response::new)
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(tauri::ipc::Response::new(Vec::<u8>::new()))
 }
 
 #[tauri::command]
@@ -189,6 +204,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            read_clipboard_image,
             read_private_key,
             write_private_key,
             remove_private_key,

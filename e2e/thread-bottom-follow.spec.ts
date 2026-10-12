@@ -92,6 +92,21 @@ for (const kind of ['dm', 'private', 'public'] as const) {
         thread.getByText('Still following after scrolling down', { exact: true }),
       ).toHaveCount(1);
       await expect.poll(bottomDistance).toBeLessThanOrEqual(1);
+      if (peer) {
+        await openDirectChatFromIdentifier(peer.page, user.session.npub, 'Incoming scroll peer');
+        await sendMessagesViaBridge(peer.page, user.session.publicKey, ['Live incoming message']);
+        await expect(thread.getByText('Live incoming message', { exact: true })).toBeVisible();
+        await expect.poll(bottomDistance).toBeLessThanOrEqual(1);
+        await thread.hover();
+        await page.mouse.wheel(0, -180);
+        await expect(latest).toBeVisible();
+        const top = await thread.evaluate((node) => node.scrollTop);
+        await sendMessagesViaBridge(peer.page, user.session.publicKey, ['Live while reading']);
+        await expect(thread.getByText('Live while reading', { exact: true })).toHaveCount(1);
+        await expect
+          .poll(() => thread.evaluate((node, top) => Math.abs(node.scrollTop - top), top))
+          .toBeLessThan(2);
+      }
       expect(user.browserErrors).toEqual([]);
     } finally {
       await disposeUsers(user, ...(peer ? [peer] : []));

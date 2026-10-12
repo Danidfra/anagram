@@ -2,6 +2,92 @@ import { expect, test, type Page } from '@playwright/test';
 import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools';
 import { bootstrapUser, TEST_ACCOUNTS, navigateInApp } from './parity/helpers';
 
+test('position tracking stays bounded and retains fallback anchors', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { threadPosition } = await import('/src/lib/actions/threadPosition.ts');
+    const node = document.createElement('div');
+    node.style.cssText =
+      'position:fixed;inset:0;z-index:99999;height:600px;overflow:auto;overflow-anchor:none;background:white';
+    document.body.append(node);
+    let reads = 0;
+    for (let index = 0; index < 300; index++) {
+      const row = document.createElement('div');
+      row.className = 'message-row';
+      row.id = `position-fixture-${index}`;
+      row.style.height = `${60 + (index % 3) * 20}px`;
+      const measure = row.getBoundingClientRect.bind(row);
+      row.getBoundingClientRect = () => {
+        reads++;
+        return measure();
+      };
+      node.append(row);
+    }
+    const settle = async () => {
+      for (let frame = 0; frame < 3; frame++)
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    };
+    const offset = (row: Element) =>
+      row.getBoundingClientRect().top - node.getBoundingClientRect().top;
+    const action = threadPosition(node, { chatId: 'fixture', onchange: () => {} });
+    try {
+      await settle();
+      node.scrollTop = 12000;
+      await settle();
+      const visible = [...node.children].find(
+        (row) => row.getBoundingClientRect().bottom > node.getBoundingClientRect().top + 38,
+      )!;
+      const saved = offset(visible);
+      reads = 0;
+      (node.firstElementChild as HTMLElement).style.height = '300px';
+      await settle();
+      const resizeReads = reads;
+      const resizeDrift = Math.abs(offset(visible) - saved);
+
+      reads = 0;
+      for (let update = 0; update < 20; update++)
+        action.update({ chatId: 'fixture', onchange: () => {} });
+      const unchangedReads = reads;
+
+      // If the primary anchor disappears, the next message keeps its position.
+      const neighbour = visible.nextElementSibling!;
+      const neighbourOffset = offset(neighbour);
+      visible.remove();
+      await settle();
+      const deletionDrift = Math.abs(offset(neighbour) - neighbourOffset);
+
+      // Paging may evict all nearby anchors. A surviving boundary still anchors
+      // the viewport, provided the replacement window has enough scroll range.
+      const boundary = node.lastElementChild!;
+      const boundaryOffset = offset(boundary);
+      const replacement = document.createElement('div');
+      replacement.style.height = '24000px';
+      node.replaceChildren(replacement, boundary);
+      await settle();
+      const evictionDrift = Math.abs(offset(boundary) - boundaryOffset);
+      reads = 0;
+      await settle();
+      return {
+        resizeReads,
+        unchangedReads,
+        resizeDrift,
+        deletionDrift,
+        evictionDrift,
+        idleReads: reads,
+      };
+    } finally {
+      action.destroy();
+      node.remove();
+    }
+  });
+  expect(result.resizeReads).toBeLessThan(80);
+  expect(result.unchangedReads).toBe(0);
+  expect(result.idleReads).toBe(0);
+  expect(result.resizeDrift).toBeLessThan(2);
+  expect(result.deletionDrift).toBeLessThan(2);
+  expect(result.evictionDrift).toBeLessThan(2);
+});
+
 async function anchor(page: Page) {
   return page.getByTestId('chat-thread').evaluate((node) => {
     const top = node.getBoundingClientRect().top;
@@ -212,9 +298,20 @@ for (const width of [1280, 390])
           }
         }, kind);
         await page.getByTestId('message-send-button').click();
+        // Sending navigates immediately, even while relay publication is held.
+        await expect
+          .poll(() =>
+            thread.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop),
+          )
+          .toBeLessThan(2);
+        saved = await anchor(page);
+        const beforeSendScroll = await thread.evaluate((node) => node.scrollTop);
         await thread.hover();
         await page.mouse.wheel(0, -220);
-        await expect.poll(async () => (await anchor(page)).id).not.toBe(saved.id);
+        // A tall message can remain the visible anchor after an actual scroll.
+        await expect
+          .poll(() => thread.evaluate((node) => node.scrollTop))
+          .toBeLessThan(beforeSendScroll);
         saved = await anchor(page);
         await page.evaluate(() => (window as any).__releasePositionSend());
         await expect(page.getByTestId('message-composer-input')).toHaveValue('');

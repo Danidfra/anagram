@@ -16,10 +16,7 @@
   import ThreadSearch from '../ThreadSearch.svelte';
   import ThreadTimeline from '../ThreadTimeline.svelte';
   import MessageRow from '../MessageRow.svelte';
-  import {
-    scrollThreadToLatest,
-    prepareThreadScrollToLatest,
-  } from '#src/lib/actions/threadPosition.ts';
+  import { scrollThreadToLatest } from '#src/lib/actions/threadPosition.ts';
   import MessageComposer from '../MessageComposer.svelte';
   import DateDivider from '../DateDivider.svelte';
   import MediaUploadConfirmation from '../MediaUploadConfirmation.svelte';
@@ -314,7 +311,6 @@
     if (sending) return;
     sending = true;
     error = '';
-    const revealSentMessage = prepareThreadScrollToLatest(log);
     const originalDraft = draft;
     const uploadKey = uploadContext();
     const text = serializeMentionDraft(originalDraft, $mentionProfiles);
@@ -325,6 +321,7 @@
         await runtime.editMessage(editing.id, text);
         cancelContext();
       } else {
+        scrollToEnd();
         await runtime.send(
           text,
           draftAttachments(text, uploadedAttachments.get(uploadKey)),
@@ -332,8 +329,6 @@
         );
         uploadedAttachments.delete(uploadKey);
         if (draft === originalDraft) draft = '';
-        await tick();
-        revealSentMessage();
         reply = null;
       }
     } catch (e) {
@@ -586,6 +581,7 @@
     maxlength={8000}
     onsend={() => void send()}
     onfile={(file) => uploader.choose(file)}
+    pasteContext={uploadContext}
   />
 {:else}<div class="welcome-empty">
     <button class="outline" onclick={() => goto('/chats')}>Back to chats</button>
