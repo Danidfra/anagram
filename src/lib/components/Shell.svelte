@@ -994,12 +994,9 @@
     void publicGroups.init().catch((error) => {
       if (!disposed) fail(error);
     });
-    let pendingCallAction: AndroidCallAction | undefined;
+    // Call invitations expire while history restores. The call handler already
+    // validates the account/token and prioritizes its signed envelope ingestion.
     const openCallNotification = (action: AndroidCallAction) => {
-      if (!notificationsReady) {
-        pendingCallAction = action;
-        return;
-      }
       if (!disposed && action.ownerPubkey === nostr.getLoggedInPublicKeyHex())
         void handleAndroidCallAction(action).catch(fail);
     };
@@ -1027,7 +1024,6 @@
         await initializeAndroidRelayNotificationsAfterLogin().catch(fail);
         if (disposed) return;
         notificationsReady = androidNotifications;
-        if (pendingCallAction) openCallNotification(pendingCallAction);
         if (pendingNotificationChat !== undefined) openNotification(pendingNotificationChat);
         drainNotifications();
       })
