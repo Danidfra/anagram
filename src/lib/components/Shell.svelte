@@ -21,6 +21,10 @@
   import ForwardMessagePicker from './ForwardMessagePicker.svelte';
   import ThreadTimeline from './ThreadTimeline.svelte';
   import MessageRow from './MessageRow.svelte';
+  import {
+    scrollThreadToLatest,
+    prepareThreadScrollToLatest,
+  } from '#src/lib/actions/threadPosition.ts';
   import MessageComposer from './MessageComposer.svelte';
   import DateDivider from './DateDivider.svelte';
   import MediaUploadConfirmation from './MediaUploadConfirmation.svelte';
@@ -312,7 +316,6 @@
   async function openPinnedMessage() {
     const pin = groupPin;
     if (!pin?.eventId || pin.group !== $state.selected?.publicKey) return;
-    nearBottom = false;
     await act(async () => {
       let target = await messages.ensureMessageLoadedByEventId(pin.group, pin.eventId);
       if (!target) {
@@ -453,7 +456,6 @@
     }
   }
   let currentId = '';
-  let scrollTop = 0;
   let pullStart: number | null = null;
   let nearBottom = true;
   $: if ($page.url.pathname.startsWith('/settings')) section = 'settings';
@@ -530,16 +532,7 @@
     historyFrame = requestAnimationFrame(afterCachedRender);
   }
   $: void prioritizeVisibleThread(visibleChatId);
-  $: if ($state.thread.items.length && nearBottom)
-    void tick().then(() => {
-      scrollToBottom(scrollArea);
-    });
-  function mountThread(node: HTMLDivElement) {
-    const previousTop = scrollTop;
-    void tick().then(() => {
-      if (nearBottom) scrollToBottom(node);
-      else node.scrollTop = previousTop;
-    });
+  function mountThread(_node: HTMLDivElement) {
     const id = chats.selectedChatId;
     if (id)
       void chats
@@ -550,16 +543,8 @@
         .catch(fail);
   }
   function scrollToBottom(node: HTMLDivElement | undefined) {
-    if (
-      node &&
-      nearBottom &&
-      olderLoad?.chatId !== $state.selected?.id &&
-      !$state.thread.pagination?.isLoadingOlder &&
-      !$state.thread.pagination?.isLoadingNewer
-    ) {
-      node.scrollTop = node.scrollHeight;
-      scheduleVisibleReactions();
-    }
+    scrollThreadToLatest(node, messages.getMessages(currentId).at(-1)?.id);
+    scheduleVisibleReactions();
   }
   function fail(error: unknown) {
     if (error instanceof RecordedMessageDeliveryError) return;
@@ -576,10 +561,8 @@
     }
   }
   async function loadThread(id: string) {
-    nearBottom = true;
     await messages.loadMessages(id);
-    await tick();
-    if (currentId === id) scrollToBottom(scrollArea);
+    // The timeline positions its first rendered window once. Later hydration preserves it.
   }
   async function open(chat: Chat) {
     if (chat.meta.deleted_locally === true) {
@@ -668,6 +651,7 @@
     const chat = $state.selected;
     if (!chat || !draft.trim() || busy) return;
     busy = true;
+    const revealSentMessage = prepareThreadScrollToLatest(scrollArea);
     const text = serializeMentionDraft(draft, mentionProfiles);
     const uploadKey = uploadContext();
     const attachments = draftAttachments(text, uploadedAttachments.get(uploadKey));
@@ -675,10 +659,12 @@
     const originalReply = reply;
     draft = '';
     if (!editedMessage) chats.clearComposerDraft(chat.id);
-    nearBottom = true;
     try {
       if (editedMessage) await messages.editMessage(chat.id, editedMessage.id, text);
-      else await messages.sendMessage(chat.id, text, originalReply, { attachments });
+      else {
+        const sent = await messages.sendMessage(chat.id, text, originalReply, { attachments });
+        if (currentId === chat.id && sent) revealSentMessage(sent.id);
+      }
       uploadedAttachments.delete(uploadKey);
       if (currentId === chat.id) {
         if (editedMessage) finishEditing();
@@ -711,26 +697,8 @@
     const node = scrollArea;
     const operation = { chatId };
     olderLoad = operation;
-    nearBottom = false;
     contextMessage = '';
     node.focus({ preventScroll: true });
-    let anchor: HTMLElement | undefined;
-    let anchorOffset: number | null = null;
-    let previousTop = node.scrollTop,
-      previousHeight = node.scrollHeight;
-    function rememberPosition() {
-      const top = node.getBoundingClientRect().top;
-      anchor = [...node.querySelectorAll<HTMLElement>('.message-row')].find(
-        (row) => row.getBoundingClientRect().bottom > top + 38,
-      );
-      anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : null;
-      previousTop = node.scrollTop;
-      previousHeight = node.scrollHeight;
-    }
-    rememberPosition();
-    // Track the row the user is reading now, not the row they left when the
-    // request started. Prepending can change author headers on that old row.
-    node.addEventListener('scroll', rememberPosition, { passive: true });
     const current = () =>
       chats.selectedChatId === chatId && scrollArea === node && node.isConnected;
     try {
@@ -753,18 +721,8 @@
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       await tick();
       if (!current()) return;
-      node.removeEventListener('scroll', rememberPosition);
-      if (anchor?.isConnected && anchorOffset !== null)
-        node.scrollTop +=
-          anchor.getBoundingClientRect().top -
-          node.getBoundingClientRect().top -
-          anchorOffset +
-          (node.scrollTop - previousTop);
-      else node.scrollTop += Math.max(0, node.scrollHeight - previousHeight);
-      scrollTop = node.scrollTop;
       scheduleVisibleReactions();
     } finally {
-      node.removeEventListener('scroll', rememberPosition);
       if (olderLoad === operation) olderLoad = null;
     }
   }
@@ -809,7 +767,6 @@
   async function jump(id: string, signal?: AbortSignal) {
     const chatId = $state.selected?.id;
     if (!chatId) return;
-    nearBottom = false;
     const target = await messages.ensureMessageLoaded(chatId, id);
     if (!target || $state.selected?.id !== chatId || signal?.aborted) return;
     await tick();
@@ -821,7 +778,6 @@
     const preview = message.meta.reply;
     const chatId = message.chatId;
     if (!preview) return;
-    nearBottom = false;
     let target = preview.eventId
       ? await messages.ensureMessageLoadedByEventId(chatId, preview.eventId)
       : await messages.ensureMessageLoaded(chatId, preview.messageId);
@@ -1505,13 +1461,11 @@
             onlatest={() =>
               void act(async () => {
                 if ($state.selected) await messages.loadMessages($state.selected.id);
-                nearBottom = true;
                 await tick();
                 scrollToBottom(scrollArea);
               })}
             onscroll={() => {
               contextMessage = '';
-              scrollTop = scrollArea.scrollTop;
               scheduleVisibleReactions();
             }}
           >

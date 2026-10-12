@@ -16,6 +16,10 @@
   import ThreadSearch from '../ThreadSearch.svelte';
   import ThreadTimeline from '../ThreadTimeline.svelte';
   import MessageRow from '../MessageRow.svelte';
+  import {
+    scrollThreadToLatest,
+    prepareThreadScrollToLatest,
+  } from '#src/lib/actions/threadPosition.ts';
   import MessageComposer from '../MessageComposer.svelte';
   import DateDivider from '../DateDivider.svelte';
   import MediaUploadConfirmation from '../MediaUploadConfirmation.svelte';
@@ -57,7 +61,6 @@
   async function jump(id: string, signal: AbortSignal) {
     const request = ++jumpRevision;
     jumping = true;
-    nearBottom = false;
     try {
       const target = await runtime.jumpToMessage(id, signal);
       if (signal.aborted) return;
@@ -291,46 +294,19 @@
   async function latest() {
     if ($state.history) await runtime.history($state.history);
     else await runtime.open(link);
-    nearBottom = true;
     await tick();
     scrollToEnd();
   }
   function scrollToEnd() {
-    if (log && nearBottom && !paging && !jumping && !actionMessage)
-      log.scrollTop = log.scrollHeight;
+    scrollThreadToLatest(log);
   }
-  $: if (visible.length && nearBottom && !paging && !jumping) void tick().then(scrollToEnd);
   async function pageHistory(older = true) {
     if (paging || jumping || $state.loading) return;
     if (older ? !$state.more : !$state.hasNewer) return;
     paging = true;
-    nearBottom = false;
-    const node = log;
-    let anchor: HTMLElement | undefined;
-    let offset: number | undefined;
-    let previousTop = node.scrollTop;
-    function rememberPosition() {
-      anchor = [...node.querySelectorAll<HTMLElement>('[data-event-id]')].find(
-        (row) => row.getBoundingClientRect().bottom > node.getBoundingClientRect().top,
-      );
-      offset = anchor?.getBoundingClientRect().top;
-      previousTop = node.scrollTop;
-    }
-    rememberPosition();
-    node.addEventListener('scroll', rememberPosition, { passive: true });
-    const revision = jumpRevision;
     try {
       await (older ? runtime.older() : runtime.newer());
-      await tick();
-      if (revision !== jumpRevision || log !== node) return;
-      node.removeEventListener('scroll', rememberPosition);
-      const retained =
-        anchor && log.querySelector<HTMLElement>(`[data-event-id="${anchor.dataset.eventId}"]`);
-      if (retained && offset !== undefined)
-        log.scrollTop +=
-          retained.getBoundingClientRect().top - offset + (log.scrollTop - previousTop);
     } finally {
-      node.removeEventListener('scroll', rememberPosition);
       paging = false;
     }
   }
@@ -338,6 +314,7 @@
     if (sending) return;
     sending = true;
     error = '';
+    const revealSentMessage = prepareThreadScrollToLatest(log);
     const originalDraft = draft;
     const uploadKey = uploadContext();
     const text = serializeMentionDraft(originalDraft, $mentionProfiles);
@@ -355,9 +332,10 @@
         );
         uploadedAttachments.delete(uploadKey);
         if (draft === originalDraft) draft = '';
+        await tick();
+        revealSentMessage();
         reply = null;
       }
-      nearBottom = true;
     } catch (e) {
       error = (e as Error).message;
     } finally {

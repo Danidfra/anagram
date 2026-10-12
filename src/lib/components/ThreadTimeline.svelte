@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick, type Snippet } from 'svelte';
+  import { threadPosition } from '#src/lib/actions/threadPosition.ts';
   import { threadHistoryPull } from '#src/lib/actions/threadHistoryPull.ts';
   import { translate } from '#src/i18n.ts';
   import Icon from './Icon.svelte';
@@ -20,8 +21,6 @@
   export let onmount: (node: HTMLDivElement) => void = () => {};
   export let children: Snippet;
   let stickyDay = '';
-  let previousTop = 0;
-  let touchY: number | null = null;
   let frame = 0;
   let dayTimer: ReturnType<typeof setTimeout> | undefined;
   let active = true;
@@ -34,20 +33,9 @@
       rows.at(-1)?.dataset.dayLabel ??
       '';
   }
-  function releaseBottom() {
-    // A short thread has nowhere to scroll up to; keep following new messages.
-    if (element.scrollTop > 0) nearBottom = false;
-  }
   function scrolled() {
-    const top = Math.max(0, element.scrollTop);
-    // Upward movement releases even during loading. Do not let a page's
-    // position correction silently reattach bottom following.
-    if (top < previousTop) nearBottom = false;
-    else if (!loading && top > previousTop)
-      nearBottom = element.scrollHeight - top - element.clientHeight <= 1;
-    previousTop = top;
     onscroll();
-    // The decorative date can lag slightly; bottom-follow and paging stay immediate.
+    // Positioning stays immediate in threadPosition; the decorative date can lag slightly.
     if (dayTimer === undefined && !frame)
       dayTimer = setTimeout(() => {
         dayTimer = undefined;
@@ -58,11 +46,7 @@
       }, 100);
   }
   function mount(node: HTMLDivElement) {
-    previousTop = Math.max(0, node.scrollTop);
     onmount(node);
-    const observer = new ResizeObserver(scrolled);
-    observer.observe(node);
-    return { destroy: () => observer.disconnect() };
   }
   $: if (firstDay || chatId)
     void tick().then(() => {
@@ -81,6 +65,7 @@
   class="messages"
   class:loading-history={loading}
   bind:this={element}
+  use:threadPosition={{ chatId, onchange: (value) => (nearBottom = value) }}
   use:mount
   use:threadHistoryPull={{
     chatId,
@@ -94,26 +79,6 @@
   data-testid="chat-thread"
   data-chat-public-key={publicKey}
   onscroll={scrolled}
-  onwheel={(event) => {
-    if (!event.ctrlKey && event.deltaY < 0) releaseBottom();
-  }}
-  ontouchstart={(event) => {
-    touchY = event.touches.length === 1 ? event.touches[0].clientY : null;
-  }}
-  ontouchmove={(event) => {
-    const y = event.touches.length === 1 ? event.touches[0].clientY : null;
-    if (y !== null && touchY !== null && y > touchY) releaseBottom();
-    touchY = y;
-  }}
-  ontouchend={() => (touchY = null)}
-  ontouchcancel={() => (touchY = null)}
-  onkeydown={(event) => {
-    if (
-      event.target === element &&
-      (['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey))
-    )
-      releaseBottom();
-  }}
 >
   {#if firstDay}<div class="thread-day-sticky" aria-hidden="true">
       <span>{stickyDay || firstDay}</span>

@@ -304,7 +304,7 @@ p {
   flex: 1;
   min-height: 0;
   padding: 14px 16px 24px;
-  overflow-anchor: auto;
+  overflow-anchor: none;
 }
 .date-divider {
   text-align: center;
@@ -695,9 +695,6 @@ p {
   background: var(--q-primary);
   border: 1px solid var(--q-primary);
   color: var(--nc-active-text);
-}
-.messages.loading-history {
-  overflow-anchor: none;
 }
 .thread-history-spinner {
   width: 12px;
