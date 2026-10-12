@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Message } from '#src/types/chat.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { useMessageStore } from '#src/stores/messageStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
+  import { useMessageStore } from '#src/stores/messageStore.svelte.ts';
   import ProfileName from './ProfileName.svelte';
   export let message: Message;
   export let ontoggle: ((emoji: string, remove: boolean) => Promise<void>) | undefined = undefined;

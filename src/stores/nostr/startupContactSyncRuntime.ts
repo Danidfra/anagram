@@ -19,7 +19,6 @@ import type {
 } from '#src/stores/nostr/types.ts';
 import type { ContactRecord } from '#src/types/contact.ts';
 import { yieldToMainThread } from '#src/utils/backgroundTasks.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
 
 interface StartupBatchTracker {
   beginItem: () => void;
@@ -68,12 +67,15 @@ const STARTUP_TASK_ERROR_MESSAGES: Record<StartupStepId, string> = {
   'private-messages-subscribe': 'Failed to subscribe to private messages on startup',
   'group-rosters-subscribe': 'Failed to subscribe to group rosters on startup',
   'contact-profile-subscribe': 'Failed to subscribe to contact profile updates on startup',
-  'contact-relay-list-subscribe': 'Failed to subscribe to contact relay list updates on startup',
+  'contact-relay-list-subscribe':
+    'Failed to subscribe to contact relay list updates on startup',
   'message-history-restore': 'Failed to restore message history on startup',
 };
 
 function isExpectedRelayQueryDeferral(error: unknown): boolean {
-  return error instanceof RelayQueryTimeoutError || error instanceof RelayQueryUnavailableError;
+  return (
+    error instanceof RelayQueryTimeoutError || error instanceof RelayQueryUnavailableError
+  );
 }
 
 interface StartupTaskRunOptions {
@@ -108,7 +110,7 @@ interface StartupContactSyncRuntimeDeps {
   getRestoreStartupStatePromise: () => Promise<void> | null;
   getSyncLoggedInContactProfilePromise: () => Promise<void> | null;
   getSyncRecentChatContactsPromise: () => Promise<void> | null;
-  isRestoringStartupState: Ref<boolean>;
+  isRestoringStartupState: boolean;
   readPrivatePreferencesFromStorage: () => PrivatePreferences | null;
   reloadChats: () => Promise<void>;
   refreshContactByPublicKey: (
@@ -132,13 +134,19 @@ interface StartupContactSyncRuntimeDeps {
   setSyncLoggedInContactProfilePromise: (promise: Promise<void> | null) => void;
   setSyncRecentChatContactsPromise: (promise: Promise<void> | null) => void;
   subscribeContactProfileUpdates: (seedRelayUrls?: string[], force?: boolean) => Promise<void>;
-  subscribeContactRelayListUpdates: (seedRelayUrls?: string[], force?: boolean) => Promise<void>;
+  subscribeContactRelayListUpdates: (
+    seedRelayUrls?: string[],
+    force?: boolean,
+  ) => Promise<void>;
   subscribeGroupMembershipRosterUpdates: (
     seedRelayUrls?: string[],
     force?: boolean,
   ) => Promise<void>;
   subscribeMyRelayListUpdates: (seedRelayUrls?: string[], force?: boolean) => Promise<void>;
-  subscribePrivateContactListUpdates: (seedRelayUrls?: string[], force?: boolean) => Promise<void>;
+  subscribePrivateContactListUpdates: (
+    seedRelayUrls?: string[],
+    force?: boolean,
+  ) => Promise<void>;
   subscribePrivateMessagesForLoggedInUser: (
     force?: boolean,
     options?: SubscribePrivateMessagesOptions,
@@ -149,54 +157,55 @@ function formatStartupRestoreError(error: unknown): string {
   return error instanceof Error ? error.message : String(error ?? '');
 }
 
-export function createStartupContactSyncRuntime({
-  logStartupRestore = () => {},
-  applyContactCursorStateToContact,
-  beginStartupStep,
-  bumpContactListVersion,
-  completeStartupStep,
-  createStartupBatchTracker,
-  deriveContactCursorDTag,
-  ensureRelayConnections,
-  ensureStoredEventSince,
-  fetchContactCursorEvents,
-  failStartupStep,
-  flushPendingEventSinceUpdate,
-  getConfiguredRelayUrls,
-  getLoggedInPublicKeyHex,
-  getRestoreStartupStatePromise,
-  getSyncLoggedInContactProfilePromise,
-  isRestoringStartupState,
-  readPrivatePreferencesFromStorage,
-  reloadChats,
-  refreshContactByPublicKey,
-  refreshGroupRelayListsOnStartup,
-  resetStartupStep,
-  resetStartupStepTracking,
-  restoreContactCursorState,
-  restoreGroupIdentitySecrets,
-  restoreMyRelayList,
-  restoreMuteList,
-  restorePrivateContactList,
-  restorePrivatePreferences,
-  runLightweightSessionResume,
-  startOutboundMessageReplay,
-  startPrivateMessagesHistoryRestore,
-  setRestoreStartupStatePromise,
-  setSyncLoggedInContactProfilePromise,
-  subscribeContactProfileUpdates,
-  subscribeContactRelayListUpdates,
-  subscribeGroupMembershipRosterUpdates,
-  subscribeMyRelayListUpdates,
-  subscribePrivateContactListUpdates,
-  subscribePrivateMessagesForLoggedInUser,
-}: StartupContactSyncRuntimeDeps) {
+export function createStartupContactSyncRuntime(state: StartupContactSyncRuntimeDeps) {
+  const {
+    logStartupRestore = () => {},
+    applyContactCursorStateToContact,
+    beginStartupStep,
+    bumpContactListVersion,
+    completeStartupStep,
+    createStartupBatchTracker,
+    deriveContactCursorDTag,
+    ensureRelayConnections,
+    ensureStoredEventSince,
+    fetchContactCursorEvents,
+    failStartupStep,
+    flushPendingEventSinceUpdate,
+    getConfiguredRelayUrls,
+    getLoggedInPublicKeyHex,
+    getRestoreStartupStatePromise,
+    getSyncLoggedInContactProfilePromise,
+    readPrivatePreferencesFromStorage,
+    reloadChats,
+    refreshContactByPublicKey,
+    refreshGroupRelayListsOnStartup,
+    resetStartupStep,
+    resetStartupStepTracking,
+    restoreContactCursorState,
+    restoreGroupIdentitySecrets,
+    restoreMyRelayList,
+    restoreMuteList,
+    restorePrivateContactList,
+    restorePrivatePreferences,
+    runLightweightSessionResume,
+    startOutboundMessageReplay,
+    startPrivateMessagesHistoryRestore,
+    setRestoreStartupStatePromise,
+    setSyncLoggedInContactProfilePromise,
+    subscribeContactProfileUpdates,
+    subscribeContactRelayListUpdates,
+    subscribeGroupMembershipRosterUpdates,
+    subscribeMyRelayListUpdates,
+    subscribePrivateContactListUpdates,
+    subscribePrivateMessagesForLoggedInUser,
+  } = state;
   let initializeSessionStatePromise: Promise<void> | null = null;
   let initializedSessionPubkey: string | null = null;
 
   function getCheckpointRelayUrls(fallbackRelayUrls: string[]): string[] {
-    const configuredRelayUrls =
-      inputSanitizerService.normalizeStringArray(getConfiguredRelayUrls());
+    const configuredRelayUrls = inputSanitizerService.normalizeStringArray(
+      getConfiguredRelayUrls(),
+    );
     return configuredRelayUrls.length > 0 ? configuredRelayUrls : fallbackRelayUrls;
   }
 
@@ -263,7 +272,7 @@ export function createStartupContactSyncRuntime({
         logStartupRestore('cursor-ui-refresh', {
           cursorAppliedCount,
         });
-        const { useMessageStore } = await import('#src/stores/messageStore.ts');
+        const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
         await Promise.all([reloadChats(), useMessageStore().reloadLoadedMessages()]);
         cursorUiReloaded = true;
       }
@@ -476,7 +485,7 @@ export function createStartupContactSyncRuntime({
       writeStartupCheckpoint(loggedInPubkeyHex, checkpointRelayUrls, 'in_progress');
     }
 
-    isRestoringStartupState.value = true;
+    state.isRestoringStartupState = true;
     logStartupRestore('start', {
       hasLoggedInPubkey: Boolean(getLoggedInPublicKeyHex()),
       seedRelayCount: seedRelayUrls.length,
@@ -489,7 +498,7 @@ export function createStartupContactSyncRuntime({
             (await runStartupTask(stepId, seedRelayUrls)) && didCompleteEveryTask;
         }
       } finally {
-        isRestoringStartupState.value = false;
+        state.isRestoringStartupState = false;
         flushPendingEventSinceUpdate();
         setRestoreStartupStatePromise(null);
         if (loggedInPubkeyHex) {

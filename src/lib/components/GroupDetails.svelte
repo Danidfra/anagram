@@ -9,9 +9,9 @@
   import { contactsService } from '#src/services/contactsService.ts';
   import { chatDataService } from '#src/services/chatDataService.ts';
   import { nostrEventDataService } from '#src/services/nostrEventDataService.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { useChatStore } from '#src/stores/chatStore.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
+  import { useChatStore } from '#src/stores/chatStore.svelte.ts';
+  import { toStore } from 'svelte/store';
   import type { ContactRecord, ContactRelay } from '#src/types/contact.ts';
   import type {
     ChatMetadata,
@@ -29,7 +29,7 @@
 
   export let publicKey: string;
   const nostr = useNostrStore();
-  const version = observe(() => nostr.contactListVersion);
+  const version = toStore(() => nostr.contactListVersion);
   let contact: ContactRecord | null = null;
   let epochs: Pick<
     ChatGroupEpochKey,

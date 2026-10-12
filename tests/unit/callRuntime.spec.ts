@@ -1,4 +1,4 @@
-import { createCallRuntime } from '#src/stores/nostr/callRuntime.ts';
+import { createCallRuntime } from '#src/stores/nostr/callRuntime.svelte.ts';
 import {
   CALL_PROTOCOL,
   type CallConnection,
@@ -147,9 +147,9 @@ describe('call negotiation and lifetime', () => {
     h.deps.onEnded.mockRejectedValue(new Error('History delivery failed'));
     await h.runtime.start(peer, 'audio');
     await Promise.resolve();
-    expect(h.runtime.error.value).toBe('call.error.failed');
-    expect(h.runtime.failureDetail.value).toBe('Invitation delivery failed');
-    expect(h.runtime.session.value?.endReason).toBe('failed');
+    expect(h.runtime.error).toBe('call.error.failed');
+    expect(h.runtime.failureDetail).toBe('Invitation delivery failed');
+    expect(h.runtime.session?.endReason).toBe('failed');
   });
 
   it('reports busy during a room only to eligible contacts and deduplicates the invitation', async () => {
@@ -173,7 +173,7 @@ describe('call negotiation and lifetime', () => {
     await h.runtime.start(peer, 'video');
     const sent = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     expect(sent.action).toBe('invite');
-    expect(h.runtime.session.value?.phase).toBe('outgoing');
+    expect(h.runtime.session?.phase).toBe('outgoing');
     expect(h.deps.record).not.toHaveBeenCalled();
     const acceptance = {
       ...sent,
@@ -186,7 +186,7 @@ describe('call negotiation and lifetime', () => {
     await h.runtime.receiveSignal(peer, { ...acceptance, mode: 'audio' });
     expect(h.endpoint.connect).not.toHaveBeenCalled();
     await h.runtime.receiveSignal(peer, acceptance);
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     expect(h.endpoint.connect).toHaveBeenCalledWith(
       'c'.repeat(64),
       'https://relay.example/',
@@ -208,8 +208,8 @@ describe('call negotiation and lifetime', () => {
     expect(h.microphone.stop).toHaveBeenCalledOnce();
     expect(h.connection.close).toHaveBeenCalledOnce();
     expect(h.receiver.close).toHaveBeenCalledOnce();
-    expect(h.runtime.localStream.value).toBeNull();
-    expect(h.runtime.session.value?.endReason).toBe('hangup');
+    expect(h.runtime.localStream).toBeNull();
+    expect(h.runtime.session?.endReason).toBe('hangup');
     expect(h.deps.onEnded).toHaveBeenCalledWith(
       expect.objectContaining({
         direction: 'outgoing',
@@ -224,7 +224,7 @@ describe('call negotiation and lifetime', () => {
     const h = setup();
     const offer = invite();
     await Promise.all([h.runtime.receiveSignal(peer, offer), h.runtime.receiveSignal(peer, offer)]);
-    expect(h.runtime.session.value?.phase).toBe('incoming');
+    expect(h.runtime.session?.phase).toBe('incoming');
     expect(h.deps.getMedia).not.toHaveBeenCalled();
     h.runtime.end();
     expect(h.deps.sendSignal).toHaveBeenCalledWith(
@@ -233,14 +233,14 @@ describe('call negotiation and lifetime', () => {
     );
     h.runtime.dismiss();
     await h.runtime.receiveSignal(peer, offer);
-    expect(h.runtime.session.value).toBeNull();
+    expect(h.runtime.session).toBeNull();
   });
   it('accepts exactly once and pins the caller endpoint', async () => {
     const h = setup();
     const offer = invite();
     await h.runtime.receiveSignal(peer, offer);
     await Promise.all([h.runtime.accept(), h.runtime.accept()]);
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     expect(h.deps.getMedia).toHaveBeenCalledOnce();
     expect(h.endpoint.accept).toHaveBeenCalledWith(offer.address?.id, offer.callId);
     expect(h.deps.sendSignal).toHaveBeenCalledWith(
@@ -254,7 +254,7 @@ describe('call negotiation and lifetime', () => {
     const second = invite();
     await h.runtime.receiveSignal(peer, first);
     await h.runtime.receiveSignal('c'.repeat(64), second);
-    expect(h.runtime.session.value?.id).toBe(first.callId);
+    expect(h.runtime.session?.id).toBe(first.callId);
     expect(h.deps.sendSignal).toHaveBeenCalledWith(
       'c'.repeat(64),
       expect.objectContaining({ callId: second.callId, reason: 'busy' })
@@ -267,7 +267,7 @@ describe('call negotiation and lifetime', () => {
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'ringing' });
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(h.runtime.session.value?.endReason).toBe('timeout');
+    expect(h.runtime.session?.endReason).toBe('timeout');
     expect(h.microphone.stop).toHaveBeenCalledOnce();
     expect(h.endpoint.close).toHaveBeenCalledOnce();
   });
@@ -303,15 +303,15 @@ describe('call negotiation and lifetime', () => {
     h.runtime.reset();
     complete({ name: 'Alice' });
     await pending;
-    expect(h.runtime.session.value).toBeNull();
+    expect(h.runtime.session).toBeNull();
   });
   it('uses a fresh call ID and endpoint for each attempt', async () => {
     const h = setup();
     await h.runtime.start(peer, 'audio');
-    const first = h.runtime.session.value?.id;
+    const first = h.runtime.session?.id;
     h.runtime.end();
     await h.runtime.start(peer, 'audio');
-    expect(h.runtime.session.value?.id).not.toBe(first);
+    expect(h.runtime.session?.id).not.toBe(first);
     expect(h.deps.createEndpoint).toHaveBeenCalledTimes(2);
   });
 
@@ -322,8 +322,8 @@ describe('call negotiation and lifetime', () => {
     await h.runtime.start(peer, 'video');
     const sent = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...sent, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.endReason).toBe('hangup'));
-    expect(h.runtime.error.value).toBe('');
+    await vi.waitFor(() => expect(h.runtime.session?.endReason).toBe('hangup'));
+    expect(h.runtime.error).toBe('');
     expect(h.microphone.stop).toHaveBeenCalledOnce();
   });
 
@@ -337,12 +337,12 @@ describe('call negotiation and lifetime', () => {
     await vi.waitFor(() => expect(h.deps.sendSignal).toHaveBeenCalled());
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     rejectPublish(new Error('Relay acknowledgement timed out'));
     await starting;
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.session?.phase).toBe('active');
     expect(h.microphone.stop).not.toHaveBeenCalled();
-    expect(h.runtime.error.value).toBe('');
+    expect(h.runtime.error).toBe('');
   });
   it('keeps the accepted incoming call alive when the relay rejects an already delivered answer', async () => {
     const h = setup();
@@ -352,10 +352,10 @@ describe('call negotiation and lifetime', () => {
       () => new Promise((_, reject) => { rejectPublish = reject; })
     );
     const accepting = h.runtime.accept('audio');
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     rejectPublish(new Error('Relay acknowledgement timed out'));
     await accepting;
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.session?.phase).toBe('active');
     expect(h.microphone.stop).not.toHaveBeenCalled();
   });
   it('still fails an undelivered answer without an authenticated Iroh connection', async () => {
@@ -364,14 +364,14 @@ describe('call negotiation and lifetime', () => {
     vi.mocked(h.endpoint.accept).mockImplementationOnce(() => new Promise(() => {}));
     h.deps.sendSignal.mockRejectedValueOnce(new Error('Relay refused the answer'));
     await h.runtime.accept('audio');
-    expect(h.runtime.session.value?.endReason).toBe('failed');
+    expect(h.runtime.session?.endReason).toBe('failed');
     expect(h.microphone.stop).toHaveBeenCalledOnce();
   });
   it('still fails an undelivered invitation when no peer has acknowledged it', async () => {
     const h = setup();
     h.deps.sendSignal.mockRejectedValueOnce(new Error('Relay refused the invitation'));
     await h.runtime.start(peer, 'audio');
-    expect(h.runtime.session.value?.endReason).toBe('failed');
+    expect(h.runtime.session?.endReason).toBe('failed');
     expect(h.microphone.stop).toHaveBeenCalledOnce();
   });
   it('aborts malformed media frames and releases devices', async () => {
@@ -382,7 +382,7 @@ describe('call negotiation and lifetime', () => {
     await h.runtime.start(peer, 'video');
     const sent = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...sent, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.endReason).toBe('failed'));
+    await vi.waitFor(() => expect(h.runtime.session?.endReason).toBe('failed'));
     expect(h.microphone.stop).toHaveBeenCalledOnce();
     expect(h.deps.record).not.toHaveBeenCalled();
   });
@@ -391,7 +391,7 @@ describe('call negotiation and lifetime', () => {
     const offer = invite();
     await h.runtime.receiveSignal(peer, { ...offer, action: 'end', reason: 'cancelled' });
     await h.runtime.receiveSignal(peer, offer);
-    expect(h.runtime.session.value).toBeNull();
+    expect(h.runtime.session).toBeNull();
   });
   it('does not capture media for unsupported targets, self calls or untrusted contacts', async () => {
     const h = setup();
@@ -399,7 +399,7 @@ describe('call negotiation and lifetime', () => {
     expect(h.deps.getMedia).not.toHaveBeenCalled();
     h.deps.supported.mockReturnValue(false);
     await h.runtime.start(peer, 'video');
-    expect(h.runtime.error.value).toBe('call.error.unsupported');
+    expect(h.runtime.error).toBe('call.error.unsupported');
     h.deps.supported.mockReturnValue(true);
     h.deps.resolvePeer.mockResolvedValue(null);
     await h.runtime.start(peer, 'video');
@@ -417,13 +417,13 @@ describe('call negotiation and lifetime', () => {
       callId: crypto.randomUUID(),
     });
     await vi.advanceTimersByTimeAsync(9999);
-    expect(h.runtime.session.value?.phase).toBe('outgoing');
+    expect(h.runtime.session?.phase).toBe('outgoing');
     await vi.advanceTimersByTimeAsync(1);
-    expect(h.runtime.session.value?.endReason).toBe('unsupported');
+    expect(h.runtime.session?.endReason).toBe('unsupported');
     expect(h.microphone.stop).toHaveBeenCalledOnce();
     expect(h.endpoint.close).toHaveBeenCalledOnce();
     await h.runtime.receiveSignal(peer, { ...offer, action: 'ringing' });
-    expect(h.runtime.session.value?.phase).toBe('ended');
+    expect(h.runtime.session?.phase).toBe('ended');
   });
   it('acknowledges an incoming invite before any device permission request', async () => {
     const h = setup();
@@ -443,14 +443,14 @@ describe('call negotiation and lifetime', () => {
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'ringing' });
     await vi.advanceTimersByTimeAsync(10_001);
-    expect(h.runtime.session.value?.phase).toBe('outgoing');
-    expect(h.runtime.session.value?.peerConfirmed).toBe(true);
+    expect(h.runtime.session?.phase).toBe('outgoing');
+    expect(h.runtime.session?.peerConfirmed).toBe(true);
   });
   it('reports actual capture denial without sending an invitation or implying a codec failure', async () => {
     const h = setup();
     h.deps.getMedia.mockRejectedValue(new DOMException('Denied', 'NotAllowedError'));
     await h.runtime.start(peer, 'audio');
-    expect(h.runtime.error.value).toBe('call.error.permission');
+    expect(h.runtime.error).toBe('call.error.permission');
     expect(h.deps.sendSignal).not.toHaveBeenCalled();
     expect(h.deps.createEndpoint).not.toHaveBeenCalled();
   });
@@ -459,7 +459,7 @@ describe('call negotiation and lifetime', () => {
     await h.runtime.start(peer, 'video');
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     const microphone = {
       kind: 'audio',
       enabled: true,
@@ -476,10 +476,10 @@ describe('call negotiation and lifetime', () => {
     expect(h.microphone.stop).toHaveBeenCalledOnce();
     expect(microphone.enabled).toBe(false);
     expect(h.camera.stop).not.toHaveBeenCalled();
-    expect(h.runtime.localStream.value?.getVideoTracks()).toEqual([h.camera]);
-    expect(h.runtime.microphoneDeviceId.value).toBe('mic-2');
+    expect(h.runtime.localStream?.getVideoTracks()).toEqual([h.camera]);
+    expect(h.runtime.microphoneDeviceId).toBe('mic-2');
     expect(h.connection.send).toHaveBeenCalledWith(new Uint8Array([4]));
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.session?.phase).toBe('active');
   });
   it('exchanges mute state only after ready and tracks remote mute changes', async () => {
     const h = setup();
@@ -503,22 +503,22 @@ describe('call negotiation and lifetime', () => {
     h.runtime.toggleMicrophone();
     expect(h.connection.send).toHaveBeenCalledWith(new Uint8Array([8, 0]));
     deliver?.(new Uint8Array([8, 1]));
-    await vi.waitFor(() => expect(h.runtime.session.value?.remoteMicrophoneMuted).toBe(true));
+    await vi.waitFor(() => expect(h.runtime.session?.remoteMicrophoneMuted).toBe(true));
     deliver?.(new Uint8Array([8, 0]));
-    await vi.waitFor(() => expect(h.runtime.session.value?.remoteMicrophoneMuted).toBe(false));
+    await vi.waitFor(() => expect(h.runtime.session?.remoteMicrophoneMuted).toBe(false));
   });
   it('keeps the original microphone when a new input cannot be opened', async () => {
     const h = setup();
     await h.runtime.start(peer, 'audio');
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     h.deps.getMicrophone.mockRejectedValue(new DOMException('Busy', 'NotReadableError'));
     await h.runtime.selectMicrophone('busy-device');
-    expect(h.runtime.deviceError.value).toBe('call.error.deviceBusy');
-    expect(h.runtime.error.value).toBe('');
+    expect(h.runtime.deviceError).toBe('call.error.deviceBusy');
+    expect(h.runtime.error).toBe('');
     expect(h.microphone.stop).not.toHaveBeenCalled();
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.session?.phase).toBe('active');
   });
   it('adds and removes video in an audio call without stopping its audio recorder', async () => {
     const h = setup();
@@ -528,21 +528,21 @@ describe('call negotiation and lifetime', () => {
     await h.runtime.start(peer, 'audio');
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
-    const url = h.runtime.remoteMediaUrl.value;
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
+    const url = h.runtime.remoteMediaUrl;
     await h.runtime.toggleCamera();
-    expect(h.runtime.localStream.value?.getVideoTracks()).toEqual([h.camera]);
-    expect(h.runtime.session.value?.cameraMuted).toBe(false);
+    expect(h.runtime.localStream?.getVideoTracks()).toEqual([h.camera]);
+    expect(h.runtime.session?.cameraMuted).toBe(false);
     expect(h.deps.getCamera).toHaveBeenCalledOnce();
     expect(h.connection.send).toHaveBeenCalledWith(new Uint8Array([5, 1]));
     await h.runtime.toggleCamera();
     expect(h.camera.stop).toHaveBeenCalledOnce();
-    expect(h.runtime.localStream.value?.getVideoTracks()).toEqual([]);
+    expect(h.runtime.localStream?.getVideoTracks()).toEqual([]);
     expect(h.connection.send).toHaveBeenCalledWith(new Uint8Array([5, 0]));
     expect(videoStop).toHaveBeenCalledOnce();
     expect(audioStop).not.toHaveBeenCalled();
-    expect(h.runtime.remoteMediaUrl.value).toBe(url);
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.remoteMediaUrl).toBe(url);
+    expect(h.runtime.session?.phase).toBe('active');
   });
   it('replaces an active webcam without restarting audio and keeps it on acquisition failure', async () => {
     const h = setup();
@@ -551,7 +551,7 @@ describe('call negotiation and lifetime', () => {
     await h.runtime.start(peer, 'audio');
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     await h.runtime.toggleCamera();
     const replacement = {
       ...h.camera,
@@ -563,26 +563,26 @@ describe('call negotiation and lifetime', () => {
     );
     await h.runtime.selectCamera('camera-2');
     expect(h.deps.getCamera).toHaveBeenLastCalledWith('camera-2');
-    expect(h.runtime.cameraDeviceId.value).toBe('camera-2');
-    expect(h.runtime.localStream.value?.getVideoTracks()).toEqual([replacement]);
+    expect(h.runtime.cameraDeviceId).toBe('camera-2');
+    expect(h.runtime.localStream?.getVideoTracks()).toEqual([replacement]);
     expect(h.camera.stop).toHaveBeenCalledOnce();
     expect(audioStop).not.toHaveBeenCalled();
     expect(h.microphone.stop).not.toHaveBeenCalled();
     h.deps.getCamera.mockRejectedValueOnce(new DOMException('Busy', 'NotReadableError'));
     await h.runtime.selectCamera('busy');
-    expect(h.runtime.deviceError.value).toBe('call.error.deviceBusy');
+    expect(h.runtime.deviceError).toBe('call.error.deviceBusy');
     expect(replacement.stop).not.toHaveBeenCalled();
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.session?.phase).toBe('active');
   });
   it('remembers a webcam selection while muted without opening it', async () => {
     const h = setup();
     await h.runtime.start(peer, 'audio');
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     await h.runtime.selectCamera('camera-2');
     expect(h.deps.getCamera).not.toHaveBeenCalled();
-    expect(h.runtime.session.value?.cameraMuted).toBe(true);
+    expect(h.runtime.session?.cameraMuted).toBe(true);
     await h.runtime.toggleCamera();
     expect(h.deps.getCamera).toHaveBeenLastCalledWith('camera-2');
   });
@@ -591,20 +591,20 @@ describe('call negotiation and lifetime', () => {
     await h.runtime.start(peer, 'audio');
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     h.deps.getCamera.mockRejectedValue(new DOMException('Camera denied', 'NotAllowedError'));
     await h.runtime.toggleCamera();
-    expect(h.runtime.session.value?.phase).toBe('active');
-    expect(h.runtime.deviceError.value).toBe('call.error.permission');
+    expect(h.runtime.session?.phase).toBe('active');
+    expect(h.runtime.deviceError).toBe('call.error.permission');
     expect(h.microphone.stop).not.toHaveBeenCalled();
-    expect(h.runtime.localStream.value?.getVideoTracks()).toEqual([]);
+    expect(h.runtime.localStream?.getVideoTracks()).toEqual([]);
   });
   it('stops a late camera acquisition after hangup', async () => {
     const h = setup();
     await h.runtime.start(peer, 'audio');
     const offer = h.deps.sendSignal.mock.calls[0]?.[1] as CallSignal;
     await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     let complete: (value: MediaStream) => void = () => {};
     h.deps.getCamera.mockImplementation(
       () =>
@@ -617,8 +617,8 @@ describe('call negotiation and lifetime', () => {
     complete(new MediaStream([h.camera] as unknown as MediaStreamTrack[]));
     await pending;
     expect(h.camera.stop).toHaveBeenCalledOnce();
-    expect(h.runtime.localStream.value).toBeNull();
-    expect(h.runtime.session.value?.phase).toBe('ended');
+    expect(h.runtime.localStream).toBeNull();
+    expect(h.runtime.session?.phase).toBe('ended');
   });
   it('receives independent audio resets and video state without resetting the call', async () => {
     const h = setup();
@@ -646,9 +646,9 @@ describe('call negotiation and lifetime', () => {
     expect(audio.close).not.toHaveBeenCalled();
     expect(video.append).toHaveBeenCalledWith(new Uint8Array([12]));
     expect(video.close).toHaveBeenCalledOnce();
-    expect(h.runtime.remoteMediaUrl.value).toBe(audio.url);
-    expect(h.runtime.remoteVideoUrl.value).toBe('');
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.remoteMediaUrl).toBe(audio.url);
+    expect(h.runtime.remoteVideoUrl).toBe('');
+    expect(h.runtime.session?.phase).toBe('active');
   });
 });
 
@@ -657,11 +657,11 @@ describe('answer mode and independent screen sharing', () => {
     const h = setup();
     await h.runtime.receiveSignal(peer, invite({ mediaVersion: 2, videoSupported: true }));
     await h.runtime.accept('audio');
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     expect(h.deps.getMedia).toHaveBeenCalledWith('audio', '');
-    expect(h.runtime.localStream.value?.getVideoTracks()).toHaveLength(0);
-    expect(h.runtime.session.value?.cameraMuted).toBe(true);
-    expect(h.runtime.session.value?.mode).toBe('video');
+    expect(h.runtime.localStream?.getVideoTracks()).toHaveLength(0);
+    expect(h.runtime.session?.cameraMuted).toBe(true);
+    expect(h.runtime.session?.mode).toBe('video');
   });
   it('shares a separate screen container and stops it without ending audio', async () => {
     const h = setup();
@@ -670,22 +670,22 @@ describe('answer mode and independent screen sharing', () => {
       invite({ mediaVersion: 2, videoSupported: true, screenSupported: true })
     );
     await h.runtime.accept('audio');
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     await h.runtime.startScreenSharing();
-    expect(h.runtime.localScreenStream.value?.getVideoTracks()).toHaveLength(1);
+    expect(h.runtime.localScreenStream?.getVideoTracks()).toHaveLength(1);
     expect(h.connection.send).toHaveBeenCalledWith(new Uint8Array([7, 1]));
     expect(h.deps.record).toHaveBeenCalledTimes(2);
     await h.runtime.stopScreenSharing();
     expect(h.connection.send).toHaveBeenCalledWith(new Uint8Array([7, 0]));
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.session?.phase).toBe('active');
     expect(h.microphone.stop).not.toHaveBeenCalled();
-    expect(h.runtime.localScreenStream.value).toBeNull();
+    expect(h.runtime.localScreenStream).toBeNull();
   });
   it('does not send screen frames to a peer without the screen capability', async () => {
     const h = setup();
     await h.runtime.receiveSignal(peer, invite({ mediaVersion: 2, videoSupported: true }));
     await h.runtime.accept('audio');
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     await h.runtime.startScreenSharing();
     expect(h.deps.getScreen).not.toHaveBeenCalled();
   });
@@ -708,17 +708,17 @@ describe('answer mode and independent screen sharing', () => {
       invite({ mediaVersion: 2, videoSupported: true, screenSupported: true })
     );
     await h.runtime.accept('audio');
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     const pending = h.runtime.startScreenSharing();
     await h.runtime.stopScreenSharing();
     await h.runtime.startScreenSharing();
-    const current = h.runtime.localScreenStream.value;
+    const current = h.runtime.localScreenStream;
     const oldTrack = { ...h.camera, stop: vi.fn() };
     if (reject) fail(new Error('Cancelled'));
     else resolve(new MediaStream([oldTrack] as unknown as MediaStreamTrack[]));
     await pending;
-    expect(h.runtime.localScreenStream.value).toBe(current);
-    expect(h.runtime.deviceError.value).toBe('');
+    expect(h.runtime.localScreenStream).toBe(current);
+    expect(h.runtime.deviceError).toBe('');
     expect(h.camera.stop).not.toHaveBeenCalled();
     if (!reject) expect(oldTrack.stop).toHaveBeenCalledOnce();
   });
@@ -736,12 +736,12 @@ describe('answer mode and independent screen sharing', () => {
       invite({ mediaVersion: 2, videoSupported: true, screenSupported: true })
     );
     await h.runtime.accept('audio');
-    await vi.waitFor(() => expect(h.runtime.session.value?.phase).toBe('active'));
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
     const acquiring = h.runtime.startScreenSharing();
     h.runtime.end();
     finishCapture(new MediaStream([h.camera] as unknown as MediaStreamTrack[]));
     await acquiring;
     expect(h.camera.stop).toHaveBeenCalled();
-    expect(h.runtime.localScreenStream.value).toBeNull();
+    expect(h.runtime.localScreenStream).toBeNull();
   });
 });

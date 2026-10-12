@@ -74,7 +74,7 @@ for (const kind of ['dm', 'private', 'public'] as const) {
               ? { type: 'media' as const, url: item.text, mimeType: item.mimeType, size: 10 }
               : undefined;
             if (kind === 'public') {
-              const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+              const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
               const runtime = useNostrStore().publicGroups;
               await runtime.send(item.text, attachment);
               let id = '';
@@ -84,7 +84,7 @@ for (const kind of ['dm', 'private', 'public'] as const) {
               stop();
               return id;
             }
-            const { useMessageStore } = await import('/src/stores/messageStore.ts');
+            const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
             const store = useMessageStore();
             const message = attachment
               ? await store.sendMediaAttachment(chatId, attachment)

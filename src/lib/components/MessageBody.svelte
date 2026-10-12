@@ -13,9 +13,9 @@
   import { openExternalHttpUrl } from '#src/utils/externalLinks.ts';
   import { parseRoomLink } from '#src/utils/callRoom.ts';
   import { readCallHistory, callHistoryDuration } from '#src/utils/callHistory.ts';
-  import { useTrustedMediaStore } from '#src/stores/trustedMediaStore.ts';
+  import { useTrustedMediaStore } from '#src/stores/trustedMediaStore.svelte.ts';
   import { portal } from '#src/lib/actions/portal.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { toStore } from 'svelte/store';
   import { Notify } from '#src/lib/platform/ui.ts';
   import { translate } from '#src/i18n.ts';
   import type { NostrMentionProfile } from '#src/utils/nostrMentions.ts';
@@ -26,47 +26,37 @@
   import { previewUrl } from '#src/utils/linkPreview.ts';
   import { shouldCollapseMessageText } from '#src/utils/messageTextExpansion.ts';
   import type { CallMode } from '#src/types/call.ts';
-  export let mentionProfiles: NostrMentionProfile[] = [];
-  export let canRedial = false;
-  export let onredial: (mode: CallMode) => void = () => {};
-  export let message: Message;
-  export let bubbleLayout = false;
-  // Public rooms supply their owner-authorized media policy and sanitized formatting.
-  export let allowMedia = false;
-  export let formattedParts: FormattedMessagePart[] | undefined = undefined;
-  export let oncontact: (pubkey: string) => void;
-  export let onroom: (link: string) => void;
+
+  interface Props {
+    mentionProfiles?: NostrMentionProfile[];
+    canRedial?: boolean;
+    onredial?: (mode: CallMode) => void;
+    message: Message;
+    bubbleLayout?: boolean;
+    // Public rooms supply their owner-authorized media policy and sanitized formatting.
+    allowMedia?: boolean;
+    formattedParts?: FormattedMessagePart[] | undefined;
+    oncontact: (pubkey: string) => void;
+    onroom: (link: string) => void;
+  }
+
+  let {
+    mentionProfiles = [],
+    canRedial = false,
+    onredial = () => {},
+    message,
+    bubbleLayout = false,
+    allowMedia = false,
+    formattedParts = undefined,
+    oncontact,
+    onroom,
+  }: Props = $props();
   const trusted = useTrustedMediaStore();
-  const trust = observe(() => trusted.trustedImageSenderPublicKeys);
-  let imageUrl = '';
-  let imageName = '';
-  let expanded = false,
-    showMedia = false;
-  $: history = readCallHistory(message.meta.call_history);
-  $: formatted = formattedParts ?? formatMessage(message.text, mentionProfiles);
-  $: formatUrls = messageFormatUrls(formatted);
-  $: attachments = (message.meta.attachments ?? []).filter((attachment) => {
-    try {
-      const href = new URL(attachment.url).href;
-      return !formatUrls.hidden.has(href) || formatUrls.visible.has(href);
-    } catch {
-      return false;
-    }
-  });
-  $: content = mediaAllowed ? withoutFormattedMediaUrls(formatted, attachments) : formatted;
-  $: parts = expanded ? content : collapseFormattedMessage(content);
-  $: previewLinks = [...messageFormatUrls(parts).visible]
-    .filter(
-      (href) =>
-        !parseRoomLink(href) &&
-        !publicGroupLinkTarget(href) &&
-        previewUrl(href) &&
-        !attachments.some((attachment) => attachment.url === href) &&
-        !/\.(?:png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|pdf)(?:[?#]|$)/i.test(href),
-    )
-    .slice(0, 2);
-  $: mediaAllowed =
-    allowMedia || showMedia || message.sender === 'me' || $trust.includes(message.authorPublicKey);
+  const trust = toStore(() => trusted.trustedImageSenderPublicKeys);
+  let imageUrl = $state('');
+  let imageName = $state('');
+  let expanded = $state(false),
+    showMedia = $state(false);
   async function open(url: string) {
     const publicGroup = publicGroupLinkTarget(url);
     if (publicGroup) {
@@ -83,7 +73,7 @@
       Notify.create({ message: String(error), type: 'negative' });
     }
   }
-  let linkMenu: { href: string; x: number; y: number; media?: boolean } | null = null;
+  let linkMenu: { href: string; x: number; y: number; media?: boolean } | null = $state(null);
   let menuTrigger: HTMLButtonElement | null = null;
   function closeLinkMenu(restoreFocus = false) {
     linkMenu = null;
@@ -118,6 +108,38 @@
       Notify.create({ message: 'Could not copy link.', type: 'negative' });
     }
   }
+  let history = $derived(readCallHistory(message.meta.call_history));
+  let formatted = $derived(formattedParts ?? formatMessage(message.text, mentionProfiles));
+  let formatUrls = $derived(messageFormatUrls(formatted));
+  let attachments = $derived(
+    (message.meta.attachments ?? []).filter((attachment) => {
+      try {
+        const href = new URL(attachment.url).href;
+        return !formatUrls.hidden.has(href) || formatUrls.visible.has(href);
+      } catch {
+        return false;
+      }
+    }),
+  );
+  let mediaAllowed = $derived(
+    allowMedia || showMedia || message.sender === 'me' || $trust.includes(message.authorPublicKey),
+  );
+  let content = $derived(
+    mediaAllowed ? withoutFormattedMediaUrls(formatted, attachments) : formatted,
+  );
+  let parts = $derived(expanded ? content : collapseFormattedMessage(content));
+  let previewLinks = $derived(
+    [...messageFormatUrls(parts).visible]
+      .filter(
+        (href) =>
+          !parseRoomLink(href) &&
+          !publicGroupLinkTarget(href) &&
+          previewUrl(href) &&
+          !attachments.some((attachment) => attachment.url === href) &&
+          !/\.(?:png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|pdf)(?:[?#]|$)/i.test(href),
+      )
+      .slice(0, 2),
+  );
 </script>
 
 <svelte:window

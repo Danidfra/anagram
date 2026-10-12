@@ -43,7 +43,7 @@ test('outgoing messages render before persistence or relay publishing and use No
       bob.page.getByTestId('message-bubble').filter({ hasText: 'Visible before publishing' }),
     ).toBeVisible();
     const sentAt = await alice.page.evaluate(async (chatId) => {
-      const { useMessageStore } = await import('/src/stores/messageStore.ts');
+      const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
       return useMessageStore()
         .getMessages(chatId)
         .find((row) => row.text === 'Visible before publishing')!.sentAt;

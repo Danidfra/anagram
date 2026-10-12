@@ -26,7 +26,6 @@ import type {
 } from '#src/stores/nostr/types.ts';
 import { useRelayStore } from '#src/stores/relayStore.ts';
 import type { ContactMetadata } from '#src/types/contact.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
 
 interface DeveloperDiagnosticsDeps {
   applyPendingIncomingDeletionsForMessage: (
@@ -54,7 +53,7 @@ interface DeveloperDiagnosticsDeps {
   getRelaySnapshots: (relayUrls: string[]) => DeveloperRelaySnapshot[];
   getStoredAuthMethod: () => AuthMethod | null;
   hasNip07Extension: () => boolean;
-  isRestoringStartupState: Ref<boolean>;
+  isRestoringStartupState: boolean;
   listPrivateMessageRecipientPubkeys: () => Promise<string[]>;
   ndk: NostrClient;
   normalizeChatGroupEpochKeys: (value: unknown) => Array<{
@@ -68,14 +67,14 @@ interface DeveloperDiagnosticsDeps {
   normalizeRelayStatusUrls: (relayUrls: string[]) => string[];
   pendingIncomingDeletions: Map<string, PendingIncomingDeletion[]>;
   pendingIncomingReactions: Map<string, PendingIncomingReaction[]>;
-  privateMessagesSubscriptionLastEoseAt: Ref<string | null>;
-  privateMessagesSubscriptionLastEventCreatedAt: Ref<number | null>;
-  privateMessagesSubscriptionLastEventId: Ref<string | null>;
-  privateMessagesSubscriptionLastEventSeenAt: Ref<string | null>;
-  privateMessagesSubscriptionLiveCoverageAt: Ref<number | null>;
-  privateMessagesSubscriptionRelayUrls: Ref<string[]>;
-  privateMessagesSubscriptionSince: Ref<number | null>;
-  privateMessagesSubscriptionStartedAt: Ref<string | null>;
+  privateMessagesSubscriptionLastEoseAt: string | null;
+  privateMessagesSubscriptionLastEventCreatedAt: number | null;
+  privateMessagesSubscriptionLastEventId: string | null;
+  privateMessagesSubscriptionLastEventSeenAt: string | null;
+  privateMessagesSubscriptionLiveCoverageAt: number | null;
+  privateMessagesSubscriptionRelayUrls: string[];
+  privateMessagesSubscriptionSince: number | null;
+  privateMessagesSubscriptionStartedAt: string | null;
   processIncomingReactionDeletion: (
     reactionEventId: string,
     deletionAuthorPublicKey: string,
@@ -96,49 +95,41 @@ interface DeveloperDiagnosticsDeps {
   toOptionalIsoTimestampFromUnix: (value: number | null | undefined) => string | null;
 }
 
-export function createDeveloperDiagnosticsRuntime({
-  applyPendingIncomingDeletionsForMessage,
-  applyPendingIncomingReactionsForMessage,
-  buildRelaySnapshot,
-  bumpDeveloperDiagnosticsVersion,
-  configuredRelayUrls,
-  ensureRelayConnections,
-  ensureStoredEventSince,
-  flushPrivateMessagesUiRefreshNow,
-  getAppRelayUrls,
-  getFilterSince,
-  getLoggedInPublicKeyHex,
-  getNip46SignerSessionSnapshot,
-  getPrivateMessagesRestoreThrottleMs,
-  getPrivateMessagesSubscription,
-  getPrivateMessagesSubscriptionSignature,
-  getRelaySnapshots,
-  getStoredAuthMethod,
-  hasNip07Extension,
-  isRestoringStartupState,
-  listPrivateMessageRecipientPubkeys,
-  ndk,
-  normalizeChatGroupEpochKeys,
-  normalizeEventId,
-  normalizeRelayStatusUrl,
-  normalizeRelayStatusUrls,
-  pendingIncomingDeletions,
-  pendingIncomingReactions,
-  privateMessagesSubscriptionLastEoseAt,
-  privateMessagesSubscriptionLastEventCreatedAt,
-  privateMessagesSubscriptionLastEventId,
-  privateMessagesSubscriptionLastEventSeenAt,
-  privateMessagesSubscriptionLiveCoverageAt,
-  privateMessagesSubscriptionRelayUrls,
-  privateMessagesSubscriptionSince,
-  privateMessagesSubscriptionStartedAt,
-  processIncomingReactionDeletion,
-  resolveLoggedInPublishRelayUrls,
-  resolveLoggedInReadRelayUrls,
-  startPrivateMessagesHistoryRestore,
-  subscribePrivateMessagesForLoggedInUser,
-  toOptionalIsoTimestampFromUnix,
-}: DeveloperDiagnosticsDeps) {
+export function createDeveloperDiagnosticsRuntime(state: DeveloperDiagnosticsDeps) {
+  const {
+    applyPendingIncomingDeletionsForMessage,
+    applyPendingIncomingReactionsForMessage,
+    buildRelaySnapshot,
+    bumpDeveloperDiagnosticsVersion,
+    configuredRelayUrls,
+    ensureRelayConnections,
+    ensureStoredEventSince,
+    flushPrivateMessagesUiRefreshNow,
+    getAppRelayUrls,
+    getFilterSince,
+    getLoggedInPublicKeyHex,
+    getNip46SignerSessionSnapshot,
+    getPrivateMessagesRestoreThrottleMs,
+    getPrivateMessagesSubscription,
+    getPrivateMessagesSubscriptionSignature,
+    getRelaySnapshots,
+    getStoredAuthMethod,
+    hasNip07Extension,
+    listPrivateMessageRecipientPubkeys,
+    ndk,
+    normalizeChatGroupEpochKeys,
+    normalizeEventId,
+    normalizeRelayStatusUrl,
+    normalizeRelayStatusUrls,
+    pendingIncomingDeletions,
+    pendingIncomingReactions,
+    processIncomingReactionDeletion,
+    resolveLoggedInPublishRelayUrls,
+    resolveLoggedInReadRelayUrls,
+    startPrivateMessagesHistoryRestore,
+    subscribePrivateMessagesForLoggedInUser,
+    toOptionalIsoTimestampFromUnix,
+  } = state;
   function buildPendingReactionDiagnostics(): DeveloperPendingReactionSnapshot[] {
     return Array.from(pendingIncomingReactions.entries())
       .map(([targetEventId, entries]) => ({
@@ -180,7 +171,9 @@ export function createDeveloperDiagnosticsRuntime({
 
     return {
       ...meta,
-      ...(meta.group_private_key_encrypted ? { group_private_key_encrypted: '[redacted]' } : {}),
+      ...(meta.group_private_key_encrypted
+        ? { group_private_key_encrypted: '[redacted]' }
+        : {}),
       ...(Array.isArray(meta.group_members)
         ? {
             group_members: meta.group_members.map((member) => ({ ...member })),
@@ -192,7 +185,9 @@ export function createDeveloperDiagnosticsRuntime({
   function buildDeveloperGroupSubscriptionChatMeta(
     meta: Record<string, unknown> | undefined,
   ): Record<string, unknown> {
-    const normalizedEpochKeys = normalizeChatGroupEpochKeys(meta?.[GROUP_EPOCH_KEYS_CHAT_META_KEY]);
+    const normalizedEpochKeys = normalizeChatGroupEpochKeys(
+      meta?.[GROUP_EPOCH_KEYS_CHAT_META_KEY],
+    );
 
     return {
       ...(meta && typeof meta === 'object' ? { ...meta } : {}),
@@ -208,7 +203,8 @@ export function createDeveloperDiagnosticsRuntime({
             })),
           }
         : {}),
-      ...(typeof meta?.[GROUP_CURRENT_EPOCH_PRIVATE_KEY_ENCRYPTED_CHAT_META_KEY] === 'string' &&
+      ...(typeof meta?.[GROUP_CURRENT_EPOCH_PRIVATE_KEY_ENCRYPTED_CHAT_META_KEY] ===
+        'string' &&
       String(meta[GROUP_CURRENT_EPOCH_PRIVATE_KEY_ENCRYPTED_CHAT_META_KEY]).trim()
         ? {
             [GROUP_CURRENT_EPOCH_PRIVATE_KEY_ENCRYPTED_CHAT_META_KEY]: '[redacted]',
@@ -234,9 +230,11 @@ export function createDeveloperDiagnosticsRuntime({
       (await chatDataService.listChats()).map((chat) => [chat.public_key, chat] as const),
     );
 
-    const snapshots: Array<DeveloperGroupMessageSubscriptionSnapshot | null> = groupContacts.map(
-      (contact) => {
-        const normalizedGroupPubkey = inputSanitizerService.normalizeHexKey(contact.public_key);
+    const snapshots: Array<DeveloperGroupMessageSubscriptionSnapshot | null> =
+      groupContacts.map((contact) => {
+        const normalizedGroupPubkey = inputSanitizerService.normalizeHexKey(
+          contact.public_key,
+        );
         if (!normalizedGroupPubkey) {
           return null;
         }
@@ -281,8 +279,7 @@ export function createDeveloperDiagnosticsRuntime({
             chatMeta: buildDeveloperGroupSubscriptionChatMeta(groupChat?.meta),
           } as Record<string, unknown>,
         };
-      },
-    );
+      });
 
     return snapshots
       .filter((entry): entry is DeveloperGroupMessageSubscriptionSnapshot => entry !== null)
@@ -330,7 +327,8 @@ export function createDeveloperDiagnosticsRuntime({
 
     for (const pendingDeletion of pendingEntries) {
       const shouldTryReactionDeletion =
-        pendingDeletion.targetKind === null || pendingDeletion.targetKind === NostrKind.Reaction;
+        pendingDeletion.targetKind === null ||
+        pendingDeletion.targetKind === NostrKind.Reaction;
       if (!shouldTryReactionDeletion) {
         remainingEntries.push(pendingDeletion);
         continue;
@@ -383,7 +381,10 @@ export function createDeveloperDiagnosticsRuntime({
         const previousDeletionCount =
           pendingIncomingDeletions.get(normalizedTargetEventId)?.length ?? 0;
 
-        let nextMessage = await applyPendingIncomingReactionsForMessage(targetMessage, options);
+        let nextMessage = await applyPendingIncomingReactionsForMessage(
+          targetMessage,
+          options,
+        );
         nextMessage = await applyPendingIncomingDeletionsForMessage(nextMessage, options);
 
         const nextReactionCount =
@@ -458,7 +459,7 @@ export function createDeveloperDiagnosticsRuntime({
     const effectivePublishRelayUrls = await resolveLoggedInPublishRelayUrls();
     const configuredRelayList = Array.from(configuredRelayUrls);
     const privateMessagesRelayUrls = normalizeRelayStatusUrls(
-      privateMessagesSubscriptionRelayUrls.value,
+      state.privateMessagesSubscriptionRelayUrls,
     );
     const groupMessagesSubscription = await buildDeveloperGroupMessageSubscriptionSnapshot();
     const relayRows: DeveloperRelayRow[] = normalizeRelayStatusUrls([
@@ -491,7 +492,7 @@ export function createDeveloperDiagnosticsRuntime({
         eventSinceIso: toOptionalIsoTimestampFromUnix(storedEventSince),
         filterSince,
         filterSinceIso: toOptionalIsoTimestampFromUnix(filterSince),
-        isRestoringStartupState: isRestoringStartupState.value,
+        isRestoringStartupState: state.isRestoringStartupState,
         hasNip07Extension: hasNip07Extension(),
         appRelayUrls,
         myRelayEntries: nip65RelayStore.relayEntries.map((entry) => ({ ...entry })),
@@ -504,20 +505,20 @@ export function createDeveloperDiagnosticsRuntime({
         signature: getPrivateMessagesSubscriptionSignature() || null,
         relayUrls: privateMessagesRelayUrls,
         relaySnapshots: getRelaySnapshots(privateMessagesRelayUrls),
-        since: privateMessagesSubscriptionSince.value,
-        sinceIso: toOptionalIsoTimestampFromUnix(privateMessagesSubscriptionSince.value),
+        since: state.privateMessagesSubscriptionSince,
+        sinceIso: toOptionalIsoTimestampFromUnix(state.privateMessagesSubscriptionSince),
         restoreThrottleMs: getPrivateMessagesRestoreThrottleMs(),
-        startedAt: privateMessagesSubscriptionStartedAt.value,
-        lastEventSeenAt: privateMessagesSubscriptionLastEventSeenAt.value,
-        lastEventId: privateMessagesSubscriptionLastEventId.value,
-        lastEventCreatedAt: privateMessagesSubscriptionLastEventCreatedAt.value,
+        startedAt: state.privateMessagesSubscriptionStartedAt,
+        lastEventSeenAt: state.privateMessagesSubscriptionLastEventSeenAt,
+        lastEventId: state.privateMessagesSubscriptionLastEventId,
+        lastEventCreatedAt: state.privateMessagesSubscriptionLastEventCreatedAt,
         lastEventCreatedAtIso: toOptionalIsoTimestampFromUnix(
-          privateMessagesSubscriptionLastEventCreatedAt.value,
+          state.privateMessagesSubscriptionLastEventCreatedAt,
         ),
-        lastEoseAt: privateMessagesSubscriptionLastEoseAt.value,
-        liveCoverageAt: privateMessagesSubscriptionLiveCoverageAt.value,
+        lastEoseAt: state.privateMessagesSubscriptionLastEoseAt,
+        liveCoverageAt: state.privateMessagesSubscriptionLiveCoverageAt,
         liveCoverageAtIso: toOptionalIsoTimestampFromUnix(
-          privateMessagesSubscriptionLiveCoverageAt.value,
+          state.privateMessagesSubscriptionLiveCoverageAt,
         ),
       },
       groupMessagesSubscription,

@@ -5,7 +5,7 @@ test('formatting component renders text safely and reveals spoilers by keyboard'
 }) => {
   await page.goto('/');
   await page.evaluate(async () => {
-    const { mount } = await import('/node_modules/.vite/deps/svelte.js');
+    const { mount } = await import('/src/lib/dev/mountFixture.ts');
     const { default: FormattedMessage } =
       await import('/src/lib/components/FormattedMessage.svelte');
     const { formatMessage } = await import('/src/utils/messageFormatting.ts');

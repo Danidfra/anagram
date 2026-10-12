@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createRelayListStoreSetup } from '#src/stores/relayListStoreFactory.ts';
+import { createRelayListStoreSetup } from '#src/stores/relayListStoreFactory.svelte.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 function setup(defaultRelays = ['wss://default.example']) {
@@ -18,10 +18,10 @@ it('clears account relays at logout and restores defaults on the next initializa
   store.init();
   store.replaceRelayEntries([{ url: 'wss://previous-account.example', read: true, write: true }]);
   store.clear();
-  expect(store.relays.value).toEqual([]);
+  expect(store.relays).toEqual([]);
   expect(saved.has('relays')).toBe(false);
   store.init();
-  expect(store.relays.value).toEqual(['wss://default.example']);
+  expect(store.relays).toEqual(['wss://default.example']);
   expect(JSON.parse(saved.get('relays')!)).toEqual([
     { url: 'wss://default.example', read: true, write: true },
   ]);
@@ -35,15 +35,15 @@ it('loads the next account’s stored relays after clearing and respects an inte
     JSON.stringify([{ url: 'wss://next-account.example', read: true, write: false }]),
   );
   store.init();
-  expect(store.relays.value).toEqual(['wss://next-account.example']);
+  expect(store.relays).toEqual(['wss://next-account.example']);
   store.replaceRelayEntries([]);
   store.init();
-  expect(store.relays.value).toEqual([]);
+  expect(store.relays).toEqual([]);
 });
 it('does not add app defaults to relay stores that have no defaults', () => {
   const { store } = setup([]);
   store.init();
   store.clear();
   store.init();
-  expect(store.relays.value).toEqual([]);
+  expect(store.relays).toEqual([]);
 });

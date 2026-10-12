@@ -72,7 +72,7 @@ test('thread search finds hidden DB messages and previous or next navigation use
 
     await bob.page.goto('/chats');
     await refreshSession(bob.page);
-    await markChatAsRead(bob.page);
+    await markChatAsRead(bob.page, alice.account.displayName);
     await refreshSession(bob.page, alice.session.publicKey);
     await navigateToChat(bob.page, alice.session.publicKey);
     await waitForThreadMessage(bob.page, newerMessages[newerMessages.length - 1] ?? '', {

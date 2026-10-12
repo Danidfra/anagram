@@ -3,16 +3,16 @@
   import { onMount } from 'svelte';
   import DiagnosticFields from './DiagnosticFields.svelte';
   import { translate } from '#src/i18n.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { useAppUpdateStore } from '#src/stores/appUpdateStore.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
+  import { useAppUpdateStore } from '#src/stores/appUpdateStore.svelte.ts';
+  import { toStore } from 'svelte/store';
   import type {
     DeveloperDiagnosticsSnapshot,
     DeveloperTraceEntry,
   } from '#src/stores/nostr/types.ts';
   const nostr = useNostrStore(),
     update = useAppUpdateStore();
-  const state = observe(() => ({
+  const state = toStore(() => ({
     enabled: nostr.developerDiagnosticsEnabled,
     version: nostr.developerDiagnosticsVersion,
     trace: nostr.developerTraceVersion,

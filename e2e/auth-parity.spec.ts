@@ -64,7 +64,7 @@ test('startup progress updates without blocking the inbox and keeps private erro
     await expect
       .poll(() =>
         page.evaluate(async () => {
-          const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+          const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
           const nostr = useNostrStore();
           return (
             nostr.isRestoringStartupState ||
@@ -74,7 +74,7 @@ test('startup progress updates without blocking the inbox and keeps private erro
       )
       .toBe(false);
     await page.evaluate(async () => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       const nostr = useNostrStore();
       nostr.startupSteps = nostr.startupSteps.map((step) => ({
         ...step,
@@ -107,7 +107,7 @@ test('startup progress updates without blocking the inbox and keeps private erro
     await page.getByRole('button', { name: 'Hide startup history', exact: true }).click();
     await expect(page.locator('#startup-history-details')).toHaveCount(0);
     await page.evaluate(async () => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       const step = useNostrStore().startupSteps.find(
         (step) => step.id === 'message-history-restore',
       )!;

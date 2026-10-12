@@ -97,7 +97,7 @@ test('active thread only marks incoming messages as read after the app regains f
     });
 
     await waitForChatPreview(bob.page, hiddenMessage);
-    await waitForChatUnreadCount(bob.page, 1);
+    await waitForChatUnreadCount(bob.page, 1, alice.account.displayName);
     await waitForUnreadChatTotalBadge(bob.page, 1);
     await expect.poll(() => bob.page.title()).toBe('(1) Anagram');
 

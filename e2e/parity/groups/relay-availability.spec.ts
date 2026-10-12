@@ -62,7 +62,7 @@ test('private owner can invite, rotate and send when a recovery replica stops re
     await owner.page.getByRole('tab', { name: 'Recovery', exact: true }).click();
     await expect(owner.page.getByText(/We recommend one owner per group/)).toBeVisible();
     const urls = await owner.page.evaluate(async (group) => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       return (await useNostrStore().groupRecovery.secretFor(group)).recovery_state!.relays;
     }, group);
     expect(urls).toEqual(E2E_DUAL_RELAY_URLS);

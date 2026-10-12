@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { observe } from '#src/lib/state/store.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { toStore } from 'svelte/store';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { translate } from '#src/i18n.ts';
   import {
     isStartupLockedStepIdValue,
@@ -9,7 +9,7 @@
   import Icon from './Icon.svelte';
 
   const nostr = useNostrStore();
-  const state = observe(() => ({
+  const state = toStore(() => ({
     steps: nostr.startupSteps.map((step) => ({
       ...step,
       internalTasks: step.internalTasks.map((task) => ({ ...task })),

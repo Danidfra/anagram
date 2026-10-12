@@ -153,7 +153,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await expect
     .poll(() =>
       a.evaluate(async () => {
-        const path = '/src/stores/messageStore.ts';
+        const path = '/src/stores/messageStore.svelte.ts';
         const url = performance
           .getEntriesByType('resource')
           .map((entry) => entry.name)
@@ -405,7 +405,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
       body: JSON.stringify(
         await ownerPage.evaluate(async () => {
           const { contactsService } = await import('/src/services/contactsService.ts');
-          const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+          const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
           const group = location.pathname.split('/')[2];
           const contact = await contactsService.getContactByPublicKey(group);
           return {
@@ -443,8 +443,8 @@ test('switching cached groups renders and positions messages before history chec
   await page.evaluate(
     async ({ groups, own }) => {
       const { chatDataService } = await import('/src/services/chatDataService.ts');
-      const { useChatStore } = await import('/src/stores/chatStore.ts');
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useChatStore } = await import('/src/stores/chatStore.svelte.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       for (const [index, key] of groups.entries()) {
         await chatDataService.createChat({
           public_key: key,
@@ -501,7 +501,7 @@ test('switching cached groups renders and positions messages before history chec
       .filter({ hasText: `Switch group ${index}` })
       .click();
     await expect(thread).toHaveAttribute('data-chat-public-key', groups[index]);
-    await expect(thread.getByText(`Cached ${index} row 39`, { exact: true })).toBeInViewport();
+    await expect(thread.getByText(`Cached ${index} row 39`, { exact: false })).toBeInViewport();
     await expect
       .poll(() => page.evaluate(() => (window as any).__historyChecks.at(-1)?.id))
       .toBe(groups[index]);
@@ -509,6 +509,34 @@ test('switching cached groups renders and positions messages before history chec
     expect(
       await thread.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight),
     ).toBeLessThanOrEqual(1);
+    // Hydration can finish after the cached window has already reached the
+    // bottom. Growing the last bubble must keep its bottom visible too.
+    await page.evaluate(async (key) => {
+      const { chatDataService } = await import('/src/services/chatDataService.ts');
+      const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
+      const store = useMessageStore();
+      const id = Number(store.getMessages(key).at(-1)!.id);
+      const db = await chatDataService.getDatabase();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('messages', 'readwrite');
+        const messages = tx.objectStore('messages');
+        const request = messages.get(id);
+        request.onsuccess = () => {
+          const row = request.result;
+          row.message += '\nLate hydrated content'.repeat(4);
+          messages.put(row);
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      await store.refreshPersistedMessage(id);
+    }, groups[index]);
+    await expect(thread.getByText(/Late hydrated content/)).toBeVisible();
+    await expect
+      .poll(() =>
+        thread.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight),
+      )
+      .toBeLessThanOrEqual(1);
   }
   expect(
     await page.evaluate(() =>
@@ -517,7 +545,7 @@ test('switching cached groups renders and positions messages before history chec
   ).toBe(true);
   // A cache load finishing after another selection must not start stale relay work.
   await page.evaluate(async (key) => {
-    const { useMessageStore } = await import('/src/stores/messageStore.ts');
+    const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
     const store = useMessageStore();
     const original = store.loadMessages;
     let release!: () => void;
@@ -649,7 +677,7 @@ test('a 20,000-message account opens a bounded cached window', async ({ page }) 
   // Hold an older page open: wheel/touch must stay native, and completing the
   // page must preserve the user's new reading position rather than snap back.
   await page.evaluate(async () => {
-    const { useMessageStore } = await import('/src/stores/messageStore.ts');
+    const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
     const store = useMessageStore();
     const original = store.loadOlderMessages;
     let release!: () => void;
@@ -1253,8 +1281,8 @@ test('incoming DM committed during a cached load remains visible', async ({ page
   await expect(page.getByTestId('message-bubble')).toHaveCount(1);
   await page.evaluate(async () => {
     const { nostrEventDataService } = await import('/src/services/nostrEventDataService.ts');
-    const { useMessageStore } = await import('/src/stores/messageStore.ts');
-    const { useChatStore } = await import('/src/stores/chatStore.ts');
+    const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
+    const { useChatStore } = await import('/src/stores/chatStore.svelte.ts');
     const original = nostrEventDataService.getEventsByIds.bind(nostrEventDataService);
     let release: () => void;
     const barrier = new Promise<void>((resolve) => {
@@ -1299,8 +1327,8 @@ test('incoming DM committed during a cached load remains visible', async ({ page
   await expect
     .poll(async () =>
       page.evaluate(async (id) => {
-        const { useMessageStore } = await import('/src/stores/messageStore.ts');
-        const { useChatStore } = await import('/src/stores/chatStore.ts');
+        const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
+        const { useChatStore } = await import('/src/stores/chatStore.svelte.ts');
         return useMessageStore()
           .getMessages(useChatStore().selectedChatId)
           .some((message) => message.eventId === id && /^\d+$/.test(message.id));
@@ -1308,8 +1336,8 @@ test('incoming DM committed during a cached load remains visible', async ({ page
     )
     .toBe(true);
   const afterSnapshot = await page.evaluate(async () => {
-    const { useMessageStore } = await import('/src/stores/messageStore.ts');
-    const { useChatStore } = await import('/src/stores/chatStore.ts');
+    const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
+    const { useChatStore } = await import('/src/stores/chatStore.svelte.ts');
     (window as any).__releaseMessageSnapshot();
     await (window as any).__messageSnapshotLoad;
     return useMessageStore()

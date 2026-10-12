@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { translate } from '#src/i18n.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
+  import { toStore } from 'svelte/store';
   import {
     defaultIrohRelays,
     normalizeIrohRelayUrl,
@@ -12,7 +12,7 @@
   } from '#src/utils/irohRelays.ts';
   import Icon from '../Icon.svelte';
   const nostr = useNostrStore(),
-    restoring = observe(() => nostr.isRestoringStartupState);
+    restoring = toStore(() => nostr.isRestoringStartupState);
   let settings = nostr.getIrohRelaySettings(),
     input = '',
     busy = false,

@@ -44,7 +44,7 @@ test('message relay details update after retry and only standalone emoji are enl
     // Simulate a lost acknowledgement for a real signed event. Retry must use
     // its stored envelope and update the open dialog without a page reload.
     await alice.page.evaluate(async (chatId) => {
-      const { useMessageStore } = await import('/src/stores/messageStore.ts');
+      const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
       const store = useMessageStore();
       const message = store.getMessages(chatId).find((message) => message.text === '123')!;
       const relay = message.nostrEvent!.relay_statuses.find(
@@ -152,7 +152,7 @@ test('bubble authors sit inside the first bubble with avatars beside the last, w
     await waitForThreadMessage(alice.page, 'Gm');
     await alice.page.evaluate(
       async ({ chatId, caption, image, author }) => {
-        const { useTrustedMediaStore } = await import('/src/stores/trustedMediaStore.ts');
+        const { useTrustedMediaStore } = await import('/src/stores/trustedMediaStore.svelte.ts');
         useTrustedMediaStore().trustImageSender(author);
         await window.__appE2E__!.setStoredMessageAttachments({
           chatId,
@@ -195,15 +195,20 @@ test('bubble authors sit inside the first bubble with avatars beside the last, w
     const checkGeometry = async () => {
       // Image loading and scroll anchoring can move the row between separate
       // boundingBox calls. Read both rectangles in the same browser frame.
-      await expect
-        .poll(() =>
-          last.evaluate((row) => {
-            const avatar = row.querySelector('.bubble-avatar')!.getBoundingClientRect();
-            const bubble = row.querySelector('.message-content')!.getBoundingClientRect();
-            return avatar.right < bubble.left && Math.abs(avatar.bottom - bubble.bottom) < 2;
-          }),
-        )
-        .toBe(true);
+      if (alice.page.viewportSize()!.width < 768) {
+        // Compact mobile DMs intentionally hide author avatars and labels.
+        await expect(last.locator('.bubble-avatar')).toBeHidden();
+      } else {
+        await expect
+          .poll(() =>
+            last.evaluate((row) => {
+              const avatar = row.querySelector('.bubble-avatar')!.getBoundingClientRect();
+              const bubble = row.querySelector('.message-content')!.getBoundingClientRect();
+              return avatar.right < bubble.left && Math.abs(avatar.bottom - bubble.bottom) < 2;
+            }),
+          )
+          .toBe(true);
+      }
       await expect
         .poll(() =>
           first

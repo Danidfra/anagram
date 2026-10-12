@@ -1,16 +1,16 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import type { createCallRoomRuntime } from '#src/stores/nostr/callRoomRuntime.ts';
+import type { createCallRoomRuntime } from '#src/stores/nostr/callRoomRuntime.svelte.ts';
 const fixture = vi.hoisted(() => ({
   own: 'a'.repeat(64),
   identity: undefined as undefined | Parameters<typeof createCallRoomRuntime>[0]['getIdentity'],
 }));
-vi.mock('#src/stores/nostr/callRoomRuntime.ts', () => ({
+vi.mock('#src/stores/nostr/callRoomRuntime.svelte.ts', () => ({
   createCallRoomRuntime: (deps: Parameters<typeof createCallRoomRuntime>[0]) => {
     fixture.identity = deps.getIdentity;
     return {};
   },
 }));
-vi.mock('#src/stores/nostrStore.ts', () => ({
+vi.mock('#src/stores/nostrStore.svelte.ts', () => ({
   useNostrStore: () => ({
     getLoggedInPublicKeyHex: () => fixture.own,
     listPrivateMessageReadRelayUrls: async () => ['wss://relay.example'],

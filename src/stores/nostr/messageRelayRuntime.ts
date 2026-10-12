@@ -40,7 +40,7 @@ export function createMessageRelayRuntime({
 }: MessageRelayRuntimeDeps) {
   async function refreshMessageInLiveState(messageId: number): Promise<void> {
     try {
-      const { useMessageStore } = await import('#src/stores/messageStore.ts');
+      const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
       await useMessageStore().refreshPersistedMessage(messageId);
     } catch (error) {
       console.error('Failed to sync persisted message into live state', error);

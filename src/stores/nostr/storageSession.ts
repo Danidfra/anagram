@@ -19,37 +19,30 @@ import type {
 } from '#src/stores/nostr/types.ts';
 import { normalizeBlossomServerUrl } from '#src/utils/blossomServer.ts';
 import { normalizeIrohRelaySettings } from '#src/utils/irohRelays.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
+
 
 interface PendingEventSinceState {
   pendingEventSinceUpdate: number;
 }
 
 interface StorageSessionRuntimeDeps {
-  eventSince: Ref<number>;
+  eventSince: number;
   getDefaultEventSince: () => number;
   getLoggedInSignerUser: () => Promise<NostrUser>;
-  isRestoringStartupState: Ref<boolean>;
+  isRestoringStartupState: boolean;
   ndk: NostrClient;
   normalizeEventId: (value: unknown) => string | null;
   pendingEventSinceState: PendingEventSinceState;
 }
 
-export function createStorageSessionRuntime({
-  eventSince,
-  getDefaultEventSince,
-  getLoggedInSignerUser,
-  isRestoringStartupState,
-  ndk,
-  normalizeEventId,
-  pendingEventSinceState,
-}: StorageSessionRuntimeDeps) {
+export function createStorageSessionRuntime(state: StorageSessionRuntimeDeps) {
+  const { getDefaultEventSince, getLoggedInSignerUser, ndk, normalizeEventId, pendingEventSinceState } = state;
   function setStoredEventSince(value: number): number {
     const normalizedValue =
       Number.isInteger(value) && Number(value) > 0
         ? Math.floor(Number(value))
         : getDefaultEventSince();
-    eventSince.value = normalizedValue;
+    state.eventSince = normalizedValue;
 
     if (hasStorage()) {
       window.localStorage.setItem(EVENT_SINCE_STORAGE_KEY, String(normalizedValue));
@@ -59,8 +52,8 @@ export function createStorageSessionRuntime({
   }
 
   function ensureStoredEventSince(): number {
-    if (eventSince.value > 0) {
-      return eventSince.value;
+    if (state.eventSince > 0) {
+      return state.eventSince;
     }
 
     if (hasStorage()) {
@@ -69,13 +62,13 @@ export function createStorageSessionRuntime({
         10,
       );
       if (Number.isInteger(storedValue) && storedValue > 0) {
-        eventSince.value = storedValue;
+        state.eventSince = storedValue;
         return storedValue;
       }
     }
 
     const defaultSince = getDefaultEventSince();
-    eventSince.value = defaultSince;
+    state.eventSince = defaultSince;
     return defaultSince;
   }
 
@@ -156,7 +149,7 @@ export function createStorageSessionRuntime({
       return;
     }
 
-    if (isRestoringStartupState.value) {
+    if (state.isRestoringStartupState) {
       pendingEventSinceState.pendingEventSinceUpdate = Math.max(
         pendingEventSinceState.pendingEventSinceUpdate,
         createdAt,
@@ -177,7 +170,7 @@ export function createStorageSessionRuntime({
   }
 
   function resetEventSinceForFreshLogin(): void {
-    eventSince.value = getDefaultEventSince();
+    state.eventSince = getDefaultEventSince();
     pendingEventSinceState.pendingEventSinceUpdate = 0;
 
     if (hasStorage()) {

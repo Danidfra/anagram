@@ -29,8 +29,8 @@ async function deleteGroup(page: Page, group: string) {
 }
 async function refreshAndCheckDeleted(page: Page, group: string) {
   await page.evaluate(async () => {
-    const { useNostrStore } = await import('/src/stores/nostrStore.ts');
-    const { useChatStore } = await import('/src/stores/chatStore.ts');
+    const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
+    const { useChatStore } = await import('/src/stores/chatStore.svelte.ts');
     await useNostrStore().restoreGroupIdentitySecrets();
     await useNostrStore().refreshPrivateMessages();
     await useChatStore().reload();
@@ -101,7 +101,7 @@ for (const operation of ['profile', 'chat-list'] as const) {
       const group = await createGroup(user.page, { name: 'Deletion race', about: '' });
       const result = await user.page.evaluate(
         async ({ group, operation }) => {
-          const { useChatStore } = await import('/src/stores/chatStore.ts');
+          const { useChatStore } = await import('/src/stores/chatStore.svelte.ts');
           const { chatDataService } = await import('/src/services/chatDataService.ts');
           const { contactsService } = await import('/src/services/contactsService.ts');
           const store = useChatStore();

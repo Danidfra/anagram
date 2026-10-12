@@ -7,10 +7,9 @@
   import { toStore } from 'svelte/store';
   import { translate } from '#src/i18n.ts';
   import Icon from '../Icon.svelte';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { useChatStore } from '#src/stores/chatStore.ts';
-  import { useAppUpdateStore } from '#src/stores/appUpdateStore.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
+  import { useChatStore } from '#src/stores/chatStore.svelte.ts';
+  import { useAppUpdateStore } from '#src/stores/appUpdateStore.svelte.ts';
   import {
     readDesktopSidebarWidthPreference,
     saveDesktopSidebarWidthPreference,
@@ -21,7 +20,7 @@
   const route = toStore(() => page.url.pathname);
   const nostr = useNostrStore(),
     update = useAppUpdateStore();
-  const state = observe(() => ({
+  const state = toStore(() => ({
     update: update.hasUpdateAvailable,
     unread: useChatStore().unreadChatCount,
   }));

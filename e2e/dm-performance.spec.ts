@@ -44,8 +44,8 @@ test('NIP-17 large-history and burst benchmark', async ({ page }, testInfo) => {
         return import(url ?? path);
       }
       const { chatDataService: data } = await liveModule('/src/services/chatDataService.ts');
-      const { useChatStore } = await liveModule('/src/stores/chatStore.ts');
-      const { useNostrStore } = await liveModule('/src/stores/nostrStore.ts');
+      const { useChatStore } = await liveModule('/src/stores/chatStore.svelte.ts');
+      const { useNostrStore } = await liveModule('/src/stores/nostrStore.svelte.ts');
       await data.createChat({
         public_key: peer,
         name: 'Performance fixture',
@@ -198,7 +198,7 @@ test('NIP-17 large-history and burst benchmark', async ({ page }, testInfo) => {
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
   const replay = await page.evaluate(
     async ({ own, wrapped }) => {
-      const path = '/src/stores/nostrStore.ts';
+      const path = '/src/stores/nostrStore.svelte.ts';
       const url = performance
         .getEntriesByType('resource')
         .map((e) => e.name)

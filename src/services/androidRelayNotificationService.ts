@@ -25,7 +25,7 @@ import { chatDataService } from '#src/services/chatDataService.ts';
 import { contactsService } from '#src/services/contactsService.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import { resolveCurrentGroupChatEpochEntryValue } from '#src/stores/nostr/valueUtils.ts';
-import { useNostrStore } from '#src/stores/nostrStore.ts';
+import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
 import type { Chat } from '#src/types/chat.ts';
 import type { ContactRecord } from '#src/types/contact.ts';
 import { buildAvatarText } from '#src/utils/avatarText.ts';

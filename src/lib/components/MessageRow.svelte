@@ -3,29 +3,53 @@
   import { messagePress } from '#src/lib/actions/messagePress.ts';
   import type { Message } from '#src/types/chat.ts';
   import { locale } from '#src/i18n.ts';
+  import { chatTime } from '#src/utils/chatDate.ts';
   import Avatar from './Avatar.svelte';
   import MessageRelayStatus from './MessageRelayStatus.svelte';
   import MessageReactions from './MessageReactions.svelte';
-  export let message: Message;
-  export let author: { name: string; picture?: string };
-  export let authorLabel: Snippet | undefined = undefined;
-  export let allowAvatar = true;
-  export let bubbleLayout = false;
-  export let continuesSender = false;
-  export let senderContinues = false;
-  export let dayLabel: string;
-  export let highlighted = false;
-  export let contextOpen = false;
-  export let contactName = '';
-  export let contactRelayUrls: string[] = [];
-  export let publicGroup = false;
-  export let onreaction: ((emoji: string, remove: boolean) => Promise<void>) | undefined =
-    undefined;
-  export let reactionsReadonly = false;
-  export let onretry: ((url: string) => Promise<void>) | undefined = undefined;
-  export let onauthor: (key: string) => void;
-  export let onactions: ((event: MouseEvent) => void) | undefined = undefined;
-  export let children: Snippet;
+  interface Props {
+    message: Message;
+    author: { name: string; picture?: string };
+    authorLabel?: Snippet | undefined;
+    allowAvatar?: boolean;
+    bubbleLayout?: boolean;
+    continuesSender?: boolean;
+    senderContinues?: boolean;
+    dayLabel: string;
+    highlighted?: boolean;
+    contextOpen?: boolean;
+    contactName?: string;
+    contactRelayUrls?: string[];
+    publicGroup?: boolean;
+    onreaction?: ((emoji: string, remove: boolean) => Promise<void>) | undefined;
+    reactionsReadonly?: boolean;
+    onretry?: ((url: string) => Promise<void>) | undefined;
+    onauthor: (key: string) => void;
+    onactions?: ((event: MouseEvent) => void) | undefined;
+    children: Snippet;
+  }
+
+  let {
+    message,
+    author,
+    authorLabel = undefined,
+    allowAvatar = true,
+    bubbleLayout = false,
+    continuesSender = false,
+    senderContinues = false,
+    dayLabel,
+    highlighted = false,
+    contextOpen = false,
+    contactName = '',
+    contactRelayUrls = [],
+    publicGroup = false,
+    onreaction = undefined,
+    reactionsReadonly = false,
+    onretry = undefined,
+    onauthor,
+    onactions = undefined,
+    children,
+  }: Props = $props();
 </script>
 
 {#snippet name()}{#if authorLabel}{@render authorLabel()}{:else}{author.name}{/if}{/snippet}
@@ -74,7 +98,7 @@
       <strong>{@render name()}</strong>
     </button>
   {/if}
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
   <div
     class="message-content"
     tabindex={onactions && !message.meta.deleted ? 0 : undefined}
@@ -98,10 +122,10 @@
       <span class="message-time"
         >{#if message.meta.edited && !message.meta.deleted}<span data-testid="message-edited-label"
             >edited ·
-          </span>{/if}{new Date(message.sentAt).toLocaleTimeString($locale, {
-          hour: '2-digit',
-          minute: '2-digit',
-        })}{#if !message.meta.deleted}<MessageRelayStatus
+          </span>{/if}{chatTime(
+          message.sentAt,
+          $locale,
+        )}{#if !message.meta.deleted}<MessageRelayStatus
             {message}
             {contactName}
             {contactRelayUrls}

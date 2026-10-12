@@ -2,7 +2,7 @@ import { type ClientEvent, NostrKind } from '#src/lib/nostr/client.ts';
 import { createPrivateStateRuntime } from '#src/stores/nostr/privateStateRuntime.ts';
 import type { MessageRelayStatus } from '#src/types/chat.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
+
 
 const ndkMocks = vi.hoisted(() => {
   const groupPubkey = 'a'.repeat(64);
@@ -146,7 +146,7 @@ vi.mock('#src/services/contactsService.ts', () => ({
   contactsService: serviceMocks.contactsService,
 }));
 
-vi.mock('#src/stores/messageStore.ts', () => ({
+vi.mock('#src/stores/messageStore.svelte.ts', () => ({
   useMessageStore: () => messageStoreMock,
 }));
 
@@ -259,7 +259,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     getStartupStepSnapshot: vi.fn(() => ({
       status: 'pending',
     })),
-    isRestoringStartupState: ref(false),
+    isRestoringStartupState: false,
     ndk,
     normalizeEventId: vi.fn((value: unknown) =>
       typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null,

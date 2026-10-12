@@ -1,6 +1,5 @@
-import { defineStore } from '#src/lib/state/store.ts';
+import { createStore } from '#src/lib/state/store.svelte.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
-import { ref } from '#src/lib/state/reactivity.ts';
 
 const TRUSTED_IMAGE_SENDERS_STORAGE_KEY = 'nostr-chat:trusted-image-senders';
 
@@ -25,15 +24,15 @@ export function normalizeTrustedImageSenderPublicKeys(value: unknown): string[] 
     new Set(
       value
         .map((entry) => normalizeTrustedImageSenderPublicKey(entry))
-        .filter((entry): entry is string => Boolean(entry))
-    )
+        .filter((entry): entry is string => Boolean(entry)),
+    ),
   );
 }
 
 export function isTrustedImageSenderValue(
   senderPublicKey: unknown,
   trustedSenderPublicKeys: unknown,
-  loggedInPublicKey?: unknown
+  loggedInPublicKey?: unknown,
 ): boolean {
   const normalizedSenderPublicKey = normalizeTrustedImageSenderPublicKey(senderPublicKey);
   if (!normalizedSenderPublicKey) {
@@ -41,12 +40,15 @@ export function isTrustedImageSenderValue(
   }
 
   const normalizedLoggedInPublicKey = normalizeTrustedImageSenderPublicKey(loggedInPublicKey);
-  if (normalizedLoggedInPublicKey && normalizedSenderPublicKey === normalizedLoggedInPublicKey) {
+  if (
+    normalizedLoggedInPublicKey &&
+    normalizedSenderPublicKey === normalizedLoggedInPublicKey
+  ) {
     return true;
   }
 
   return normalizeTrustedImageSenderPublicKeys(trustedSenderPublicKeys).includes(
-    normalizedSenderPublicKey
+    normalizedSenderPublicKey,
   );
 }
 
@@ -57,7 +59,7 @@ function readTrustedImageSenders(): string[] {
 
   try {
     return normalizeTrustedImageSenderPublicKeys(
-      JSON.parse(window.localStorage.getItem(TRUSTED_IMAGE_SENDERS_STORAGE_KEY) ?? '[]')
+      JSON.parse(window.localStorage.getItem(TRUSTED_IMAGE_SENDERS_STORAGE_KEY) ?? '[]'),
     );
   } catch {
     return [];
@@ -71,18 +73,18 @@ function persistTrustedImageSenders(publicKeys: string[]): void {
 
   window.localStorage.setItem(
     TRUSTED_IMAGE_SENDERS_STORAGE_KEY,
-    JSON.stringify(normalizeTrustedImageSenderPublicKeys(publicKeys))
+    JSON.stringify(normalizeTrustedImageSenderPublicKeys(publicKeys)),
   );
 }
 
-export const useTrustedMediaStore = defineStore('trustedMediaStore', () => {
-  const trustedImageSenderPublicKeys = ref<string[]>(readTrustedImageSenders());
+export const useTrustedMediaStore = createStore('trustedMediaStore', () => {
+  let trustedImageSenderPublicKeys = $state<string[]>(readTrustedImageSenders());
 
   function isImageSenderTrusted(senderPublicKey: string, loggedInPublicKey?: string): boolean {
     return isTrustedImageSenderValue(
       senderPublicKey,
-      trustedImageSenderPublicKeys.value,
-      loggedInPublicKey
+      trustedImageSenderPublicKeys,
+      loggedInPublicKey,
     );
   }
 
@@ -92,20 +94,22 @@ export const useTrustedMediaStore = defineStore('trustedMediaStore', () => {
       return false;
     }
 
-    if (trustedImageSenderPublicKeys.value.includes(normalizedPublicKey)) {
+    if (trustedImageSenderPublicKeys.includes(normalizedPublicKey)) {
       return false;
     }
 
-    trustedImageSenderPublicKeys.value = [
-      ...trustedImageSenderPublicKeys.value,
-      normalizedPublicKey,
-    ];
-    persistTrustedImageSenders(trustedImageSenderPublicKeys.value);
+    trustedImageSenderPublicKeys = [...trustedImageSenderPublicKeys, normalizedPublicKey];
+    persistTrustedImageSenders(trustedImageSenderPublicKeys);
     return true;
   }
 
   return {
-    trustedImageSenderPublicKeys,
+    get trustedImageSenderPublicKeys() {
+      return trustedImageSenderPublicKeys;
+    },
+    set trustedImageSenderPublicKeys(value) {
+      trustedImageSenderPublicKeys = value;
+    },
     isImageSenderTrusted,
     trustImageSender,
   };

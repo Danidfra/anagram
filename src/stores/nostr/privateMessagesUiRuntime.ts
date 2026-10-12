@@ -48,7 +48,7 @@ export function createPrivateMessagesUiRuntime({
       }
 
       if (shouldReloadMessages) {
-        const { useMessageStore } = await import('#src/stores/messageStore.ts');
+        const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
         tasks.push(useMessageStore().reloadLoadedMessages());
       }
 
@@ -120,7 +120,7 @@ export function createPrivateMessagesUiRuntime({
       }
 
       await chatStore.reload();
-      const { useMessageStore } = await import('#src/stores/messageStore.ts');
+      const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
       const messageStore = useMessageStore();
 
       for (const chatId of chatIds) {
@@ -178,7 +178,7 @@ export function createPrivateMessagesUiRuntime({
           try {
             await waitForPrivateMessagesIngestQueue();
             await refreshDeveloperPendingQueues();
-            const { useMessageStore } = await import('#src/stores/messageStore.ts');
+            const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
             await useMessageStore().syncChatsReadStateFromSeenBoundary();
             scheduleChatChecks([], { allChats: true });
           } catch (error) {

@@ -1,11 +1,11 @@
 <script lang="ts">
   import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { autosizeTextarea } from '#src/lib/actions/autosizeTextarea.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { toStore } from 'svelte/store';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { translate } from '#src/i18n.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { NostrPrivateKeySigner, nip19 } from '#src/lib/nostr/client.ts';
   import { AUTH_METHOD_STORAGE_KEY, PRIVATE_KEY_STORAGE_KEY } from '#src/stores/nostr/constants.ts';
   import { useRelayStore } from '#src/stores/relayStore.ts';
@@ -23,7 +23,7 @@
     npub = nostr.encodeNpub(pubkey);
   let dirty = false,
     mounted = false;
-  const profileVersion = observe(() => nostr.contactListVersion);
+  const profileVersion = toStore(() => nostr.contactListVersion);
   $: if (mounted && !dirty && $profileVersion >= 0) void load();
   let form = createEmptyContactProfileForm(),
     busy = true,

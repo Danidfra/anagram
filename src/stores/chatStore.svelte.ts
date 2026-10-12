@@ -1,6 +1,6 @@
 import { STARTER_BOT } from '#src/constants/starterBot.ts';
 import { getPublicProfile, rememberPublicProfile } from '#src/lib/state/publicProfiles.ts';
-import { defineStore } from '#src/lib/state/store.ts';
+import { createStore } from '#src/lib/state/store.svelte.ts';
 import { chatDataService } from '#src/services/chatDataService.ts';
 import { contactsService } from '#src/services/contactsService.ts';
 import { nostrEventDataService } from '#src/services/nostrEventDataService.ts';
@@ -12,7 +12,6 @@ import { buildAvatarText } from '#src/utils/avatarText.ts';
 import { isIncomingUnreadMessageActivity } from '#src/utils/messageActivity.ts';
 import { buildImageAttachmentPreviewText } from '#src/utils/messageAttachments.ts';
 import { formatGroupMentionsForDisplay } from '#src/utils/nostrMentions.ts';
-import { computed, ref } from '#src/lib/state/reactivity.ts';
 
 interface ChatContactContext {
   picture: string;
@@ -201,7 +200,10 @@ function syncMetaLatestTimestamp(
   return true;
 }
 
-function syncMetaInboxState(meta: Record<string, unknown>, nextState: ChatInboxState): boolean {
+function syncMetaInboxState(
+  meta: Record<string, unknown>,
+  nextState: ChatInboxState,
+): boolean {
   const currentState = readMetaInboxState(meta);
   if (currentState === nextState) {
     return false;
@@ -244,8 +246,9 @@ function resolveChatCategory(meta: Record<string, unknown>): ChatListCategory {
 
 function resolveDefaultSelectedChatId(chatList: Chat[]): string | null {
   return (
-    chatList.find((chat) => resolveChatCategory(chat.meta as Record<string, unknown>) === 'chat')
-      ?.id ?? null
+    chatList.find(
+      (chat) => resolveChatCategory(chat.meta as Record<string, unknown>) === 'chat',
+    )?.id ?? null
   );
 }
 
@@ -305,7 +308,8 @@ function buildChatActivitySnapshotByPublicKey(
       }
     } else if (
       isIncomingUnreadMessageActivity(row, loggedInPublicKey) &&
-      toComparableTimestamp(row.created_at) > toComparableTimestamp(snapshot.lastIncomingMessageAt)
+      toComparableTimestamp(row.created_at) >
+        toComparableTimestamp(snapshot.lastIncomingMessageAt)
     ) {
       snapshot.lastIncomingMessageAt = row.created_at;
     }
@@ -454,7 +458,8 @@ function resolveMarkAsReadBoundaryAt(
   latestIncomingMessageAt: string,
 ): string {
   const latestIncomingBoundaryAt =
-    toComparableTimestamp(latestIncomingMessageAt) > toComparableTimestamp(lastIncomingMessageAt)
+    toComparableTimestamp(latestIncomingMessageAt) >
+    toComparableTimestamp(lastIncomingMessageAt)
       ? latestIncomingMessageAt
       : lastIncomingMessageAt;
 
@@ -607,7 +612,11 @@ function syncChatMeta(
   if (contactContext) {
     const writableMeta = ensureWritableMeta();
     const didChangePicture = syncMetaString(writableMeta, 'picture', contactContext.picture);
-    const didChangeGivenName = syncMetaString(writableMeta, 'given_name', contactContext.givenName);
+    const didChangeGivenName = syncMetaString(
+      writableMeta,
+      'given_name',
+      contactContext.givenName,
+    );
     const didChangeContactName = syncMetaString(
       writableMeta,
       'contact_name',
@@ -669,7 +678,8 @@ function mapChatRowToChat(
   const lastMessageAuthorPublicKey =
     row.last_message_at &&
     lastMessageAuthorSnapshot &&
-    toComparableTimestamp(lastMessageAuthorSnapshot.at) === toComparableTimestamp(lastMessageAt)
+    toComparableTimestamp(lastMessageAuthorSnapshot.at) ===
+      toComparableTimestamp(lastMessageAt)
       ? lastMessageAuthorSnapshot.authorPublicKey
       : normalizeChatIdentifier(readMetaString(row.meta, 'last_message_author_public_key'));
 
@@ -701,7 +711,9 @@ function buildAcceptedChatMeta(
 
   if (lastOutgoingMessageAt) {
     const currentOutgoingAt = readMetaString(nextMeta, CHAT_LAST_OUTGOING_MESSAGE_AT_META_KEY);
-    if (toComparableTimestamp(lastOutgoingMessageAt) > toComparableTimestamp(currentOutgoingAt)) {
+    if (
+      toComparableTimestamp(lastOutgoingMessageAt) > toComparableTimestamp(currentOutgoingAt)
+    ) {
       nextMeta[CHAT_LAST_OUTGOING_MESSAGE_AT_META_KEY] = lastOutgoingMessageAt;
     }
     syncMetaLatestTimestamp(
@@ -781,41 +793,41 @@ export const __chatStoreTestUtils = {
   syncChatActivityMeta,
 };
 
-export const useChatStore = defineStore('chatStore', () => {
-  const chats = ref<Chat[]>([]);
-  const selectedChatId = ref<string | null>(null);
-  const visibleChatId = ref<string | null>(null);
-  const searchQuery = ref('');
-  const composerDraftsByChatId = ref<Record<string, string>>({});
-  const isLoaded = ref(false);
+export const useChatStore = createStore('chatStore', () => {
+  let chats = $state<Chat[]>([]);
+  let selectedChatId = $state<string | null>(null);
+  let visibleChatId = $state<string | null>(null);
+  let searchQuery = $state('');
+  let composerDraftsByChatId = $state<Record<string, string>>({});
+  let isLoaded = $state(false);
   let initPromise: Promise<void> | null = null;
 
-  const selectedChat = computed(
-    () => chats.value.find((chat) => chat.id === selectedChatId.value) ?? null,
+  let selectedChat = $derived.by(
+    () => chats.find((chat) => chat.id === selectedChatId) ?? null,
   );
-  const inboxChats = computed(() =>
-    chats.value.filter(
+  let inboxChats = $derived.by(() =>
+    chats.filter(
       (chat) => resolveChatCategory(chat.meta as Record<string, unknown>) === 'chat',
     ),
   );
-  const requestChats = computed(() =>
-    chats.value.filter(
+  let requestChats = $derived.by(() =>
+    chats.filter(
       (chat) => resolveChatCategory(chat.meta as Record<string, unknown>) === 'request',
     ),
   );
-  const visibleChats = computed(() =>
-    inboxChats.value.filter((chat) => chatMatchesSearch(chat, searchQuery.value)),
+  let visibleChats = $derived.by(() =>
+    inboxChats.filter((chat) => chatMatchesSearch(chat, searchQuery)),
   );
-  const requestCount = computed(() => requestChats.value.length);
-  const unreadChatCount = computed(
+  let requestCount = $derived.by(() => requestChats.length);
+  let unreadChatCount = $derived.by(
     () =>
-      chats.value.filter((chat) => {
+      chats.filter((chat) => {
         const category = resolveChatCategory(chat.meta as Record<string, unknown>);
         return category !== 'blocked' && category !== 'hidden' && chat.unreadCount > 0;
       }).length,
   );
-  const unreadMessageCount = computed(() =>
-    chats.value.reduce((count, chat) => {
+  let unreadMessageCount = $derived.by(() =>
+    chats.reduce((count, chat) => {
       const category = resolveChatCategory(chat.meta as Record<string, unknown>);
       if (category === 'blocked' || category === 'hidden') {
         return count;
@@ -830,7 +842,7 @@ export const useChatStore = defineStore('chatStore', () => {
 
   async function loadChatsIntoState(): Promise<void> {
     const account = getLoggedInPublicKey();
-    const before = new Map(chats.value.map((chat) => [chat.id, chat]));
+    const before = new Map(chats.map((chat) => [chat.id, chat]));
     await Promise.all([chatDataService.init(), contactsService.init()]);
     // The chat record is the materialized inbox summary, updated during ingest/send.
     // Opening the inbox must never scan or deserialize the account's entire history.
@@ -842,13 +854,16 @@ export const useChatStore = defineStore('chatStore', () => {
       contacts.map((contact) => [contact.public_key.toLowerCase(), toContactContext(contact)]),
     );
     if (getLoggedInPublicKey() !== account) return;
-    const live = new Map(chats.value.map((chat) => [chat.id, chat]));
+    const live = new Map(chats.map((chat) => [chat.id, chat]));
     const next = rows.map((row) => {
       const mapped = mapChatRowToChat(row, contexts.get(row.public_key.toLowerCase()));
       const current = live.get(mapped.id);
       live.delete(mapped.id);
       // A delete/reopen completed while this database snapshot was loading.
-      if (current && current.meta.deleted_locally !== before.get(mapped.id)?.meta.deleted_locally)
+      if (
+        current &&
+        current.meta.deleted_locally !== before.get(mapped.id)?.meta.deleted_locally
+      )
         mapped.meta = { ...mapped.meta, deleted_locally: current.meta.deleted_locally };
 
       // IndexedDB may lag the UI during hydration. Keep a message that arrived
@@ -865,34 +880,36 @@ export const useChatStore = defineStore('chatStore', () => {
           lastMessageAuthorPublicKey: current.lastMessageAuthorPublicKey,
           unreadCount: current.unreadCount,
         };
-      if (current?.lastMessageAt === mapped.lastMessageAt && !mapped.lastMessageAuthorPublicKey)
+      if (
+        current?.lastMessageAt === mapped.lastMessageAt &&
+        !mapped.lastMessageAuthorPublicKey
+      )
         mapped.lastMessageAuthorPublicKey = current.lastMessageAuthorPublicKey;
       return mapped;
     });
     for (const chat of live.values()) if (chat !== before.get(chat.id)) next.push(chat);
-    chats.value = sortByLatest(next);
+    chats = sortByLatest(next);
 
     if (
-      selectedChatId.value &&
-      chats.value.some(
-        (chat) => chat.id === selectedChatId.value && chat.meta.deleted_locally !== true,
-      )
+      selectedChatId &&
+      chats.some((chat) => chat.id === selectedChatId && chat.meta.deleted_locally !== true)
     ) {
       return;
     }
 
-    selectedChatId.value = resolveDefaultSelectedChatId(chats.value);
+    selectedChatId = resolveDefaultSelectedChatId(chats);
   }
 
   async function ensureStarterChats(account: string | null): Promise<void> {
-    if (!account || !/^[a-f0-9]{64}$/.test(account) || getLoggedInPublicKey() !== account) return;
+    if (!account || !/^[a-f0-9]{64}$/.test(account) || getLoggedInPublicKey() !== account)
+      return;
     const key = `anagram-starter-self-chat:${account}`;
     if (window.localStorage.getItem(key)) return;
     // Retain the existing setup marker: upgrades must not add new defaults to
     // established accounts, and deleting or blocking a starter chat must stick.
     for (const starter of [{ name: 'My Self', publicKey: account }, STARTER_BOT]) {
       if (getLoggedInPublicKey() !== account) return;
-      if (!chats.value.some((chat) => chat.publicKey === starter.publicKey)) {
+      if (!chats.some((chat) => chat.publicKey === starter.publicKey)) {
         const chat = await addContact(starter.name, starter.publicKey);
         if (!chat || getLoggedInPublicKey() !== account) return;
       }
@@ -909,10 +926,10 @@ export const useChatStore = defineStore('chatStore', () => {
           await ensureStarterChats(account);
         } catch (error) {
           console.error('Failed to initialize chats', error);
-          chats.value = [];
-          selectedChatId.value = null;
+          chats = [];
+          selectedChatId = null;
         } finally {
-          isLoaded.value = true;
+          isLoaded = true;
         }
       })();
     }
@@ -935,7 +952,7 @@ export const useChatStore = defineStore('chatStore', () => {
       console.error('Failed to reload chats', error);
       throw error;
     } finally {
-      isLoaded.value = true;
+      isLoaded = true;
     }
   }
 
@@ -943,17 +960,17 @@ export const useChatStore = defineStore('chatStore', () => {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     if (
       !normalizedChatId ||
-      chats.value.some((chat) => chat.id === normalizedChatId && chat.meta.deleted_locally === true)
+      chats.some((chat) => chat.id === normalizedChatId && chat.meta.deleted_locally === true)
     ) {
       return;
     }
 
-    selectedChatId.value = normalizedChatId;
+    selectedChatId = normalizedChatId;
   }
 
   function setVisibleChatId(chatId: string | null): void {
     const nextChatId = normalizeChatIdentifier(chatId);
-    visibleChatId.value = nextChatId;
+    visibleChatId = nextChatId;
   }
 
   async function setLastSeenReceivedActivityAt(chatId: string, at: string): Promise<void> {
@@ -964,7 +981,7 @@ export const useChatStore = defineStore('chatStore', () => {
     }
 
     let nextMetaToPersist: Record<string, unknown> | null = null;
-    const existingChat = chats.value.find((chat) => chat.id === normalizedChatId) ?? null;
+    const existingChat = chats.find((chat) => chat.id === normalizedChatId) ?? null;
 
     if (existingChat) {
       const currentMeta = existingChat.meta as Record<string, unknown>;
@@ -978,7 +995,7 @@ export const useChatStore = defineStore('chatStore', () => {
         [LAST_SEEN_RECEIVED_ACTIVITY_AT_META_KEY]: normalizedAt,
       };
 
-      chats.value = chats.value.map((chat) =>
+      chats = chats.map((chat) =>
         chat.id === normalizedChatId
           ? {
               ...chat,
@@ -993,7 +1010,10 @@ export const useChatStore = defineStore('chatStore', () => {
         return;
       }
 
-      const currentAt = readMetaString(existingRow.meta, LAST_SEEN_RECEIVED_ACTIVITY_AT_META_KEY);
+      const currentAt = readMetaString(
+        existingRow.meta,
+        LAST_SEEN_RECEIVED_ACTIVITY_AT_META_KEY,
+      );
       if (toComparableTimestamp(currentAt) >= toComparableTimestamp(normalizedAt)) {
         return;
       }
@@ -1021,7 +1041,7 @@ export const useChatStore = defineStore('chatStore', () => {
       return false;
     }
 
-    const chat = chats.value.find((candidate) => candidate.id === normalizedChatId);
+    const chat = chats.find((candidate) => candidate.id === normalizedChatId);
     if (!chat) {
       return false;
     }
@@ -1037,7 +1057,7 @@ export const useChatStore = defineStore('chatStore', () => {
     }
 
     let nextMetaToPersist: ChatMetadata | null = null;
-    const existingChat = chats.value.find((chat) => chat.id === normalizedChatId) ?? null;
+    const existingChat = chats.find((chat) => chat.id === normalizedChatId) ?? null;
 
     if (existingChat) {
       const currentMeta = existingChat.meta as Record<string, unknown>;
@@ -1051,7 +1071,7 @@ export const useChatStore = defineStore('chatStore', () => {
         [CHAT_LAST_INCOMING_MESSAGE_AT_META_KEY]: normalizedAt,
       };
 
-      chats.value = chats.value.map((chat) =>
+      chats = chats.map((chat) =>
         chat.id === normalizedChatId
           ? {
               ...chat,
@@ -1066,7 +1086,10 @@ export const useChatStore = defineStore('chatStore', () => {
         return;
       }
 
-      const currentAt = readMetaString(existingRow.meta, CHAT_LAST_INCOMING_MESSAGE_AT_META_KEY);
+      const currentAt = readMetaString(
+        existingRow.meta,
+        CHAT_LAST_INCOMING_MESSAGE_AT_META_KEY,
+      );
       if (toComparableTimestamp(currentAt) >= toComparableTimestamp(normalizedAt)) {
         return;
       }
@@ -1107,7 +1130,7 @@ export const useChatStore = defineStore('chatStore', () => {
 
     let nextMetaToPersist: ChatMetadata | null = null;
     let nextUnreadCountToPersist: number | null = null;
-    const existingChat = chats.value.find((chat) => chat.id === normalizedChatId) ?? null;
+    const existingChat = chats.find((chat) => chat.id === normalizedChatId) ?? null;
 
     if (existingChat) {
       nextMetaToPersist = buildAcceptedChatMeta(
@@ -1148,7 +1171,7 @@ export const useChatStore = defineStore('chatStore', () => {
     }
 
     if (existingChat) {
-      chats.value = chats.value.map((chat) =>
+      chats = chats.map((chat) =>
         chat.id === normalizedChatId
           ? {
               ...chat,
@@ -1157,7 +1180,9 @@ export const useChatStore = defineStore('chatStore', () => {
                 deleted_locally: chat.meta.deleted_locally,
               },
               unreadCount:
-                nextUnreadCountToPersist === null ? chat.unreadCount : nextUnreadCountToPersist,
+                nextUnreadCountToPersist === null
+                  ? chat.unreadCount
+                  : nextUnreadCountToPersist,
             }
           : chat,
       );
@@ -1168,7 +1193,12 @@ export const useChatStore = defineStore('chatStore', () => {
         chatDataService.updateChatMeta(normalizedChatId, nextMetaToPersist),
         ...(nextUnreadCountToPersist === null
           ? []
-          : [chatDataService.updateChatUnreadCount(normalizedChatId, nextUnreadCountToPersist)]),
+          : [
+              chatDataService.updateChatUnreadCount(
+                normalizedChatId,
+                nextUnreadCountToPersist,
+              ),
+            ]),
       ]);
     } catch (error) {
       console.error('Failed to accept chat request', error);
@@ -1181,7 +1211,7 @@ export const useChatStore = defineStore('chatStore', () => {
       return null;
     }
 
-    const existingChat = chats.value.find((chat) => chat.id === normalizedChatId) ?? null;
+    const existingChat = chats.find((chat) => chat.id === normalizedChatId) ?? null;
     let persistedMeta: Record<string, unknown> = {};
     if (!existingChat) {
       await chatDataService.init();
@@ -1213,7 +1243,10 @@ export const useChatStore = defineStore('chatStore', () => {
       getLoggedInPublicKey(),
     );
     const latestIncomingActivity = latestIncomingRow
-      ? { at: latestIncomingRow.created_at, eventId: normalizeEventId(latestIncomingRow.event_id) }
+      ? {
+          at: latestIncomingRow.created_at,
+          eventId: normalizeEventId(latestIncomingRow.event_id),
+        }
       : null;
     const latestIncomingMessageAt = latestIncomingActivity?.at ?? '';
     const nextLastSeenReceivedActivityAt = resolveMarkAsReadBoundaryAt(
@@ -1245,7 +1278,7 @@ export const useChatStore = defineStore('chatStore', () => {
       return;
     }
 
-    const targetChat = chats.value.find((chat) => chat.id === normalizedChatId);
+    const targetChat = chats.find((chat) => chat.id === normalizedChatId);
     if (!targetChat) {
       return;
     }
@@ -1260,7 +1293,7 @@ export const useChatStore = defineStore('chatStore', () => {
       muted: true,
     };
 
-    chats.value = chats.value.map((chat) =>
+    chats = chats.map((chat) =>
       chat.id === normalizedChatId
         ? {
             ...chat,
@@ -1285,7 +1318,7 @@ export const useChatStore = defineStore('chatStore', () => {
     const blockedAt = new Date().toISOString();
     let nextMetaToPersist: ChatMetadata | null = null;
 
-    chats.value = chats.value.map((chat) => {
+    chats = chats.map((chat) => {
       if (chat.id !== normalizedChatId) {
         return chat;
       }
@@ -1308,9 +1341,9 @@ export const useChatStore = defineStore('chatStore', () => {
       nextMetaToPersist = buildBlockedChatMeta(existingRow.meta as ChatMetadata, blockedAt);
     }
 
-    if (selectedChatId.value === normalizedChatId) {
-      selectedChatId.value = resolveDefaultSelectedChatId(
-        chats.value.filter((chat) => chat.id !== normalizedChatId),
+    if (selectedChatId === normalizedChatId) {
+      selectedChatId = resolveDefaultSelectedChatId(
+        chats.filter((chat) => chat.id !== normalizedChatId),
       );
     }
 
@@ -1336,7 +1369,7 @@ export const useChatStore = defineStore('chatStore', () => {
 
     try {
       await chatDataService.init();
-      const existingChat = chats.value.find((chat) => chat.id === normalizedChatId) ?? null;
+      const existingChat = chats.find((chat) => chat.id === normalizedChatId) ?? null;
       const existingRow = existingChat
         ? null
         : await chatDataService.getChatByPublicKey(normalizedChatId);
@@ -1390,7 +1423,7 @@ export const useChatStore = defineStore('chatStore', () => {
       }
 
       const nextChats = isGroup
-        ? chats.value.map((chat) =>
+        ? chats.map((chat) =>
             chat.id === normalizedChatId
               ? {
                   ...chat,
@@ -1400,18 +1433,18 @@ export const useChatStore = defineStore('chatStore', () => {
                 }
               : chat,
           )
-        : chats.value.filter((chat) => chat.id !== normalizedChatId);
-      chats.value = nextChats;
+        : chats.filter((chat) => chat.id !== normalizedChatId);
+      chats = nextChats;
       if (isGroup) {
-        const { useMessageStore } = await import('#src/stores/messageStore.ts');
+        const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
         useMessageStore().removeChatMessages(normalizedChatId);
       }
-      const nextComposerDraftsByChatId = { ...composerDraftsByChatId.value };
+      const nextComposerDraftsByChatId = { ...composerDraftsByChatId };
       delete nextComposerDraftsByChatId[normalizedChatId];
-      composerDraftsByChatId.value = nextComposerDraftsByChatId;
+      composerDraftsByChatId = nextComposerDraftsByChatId;
 
-      if (selectedChatId.value === normalizedChatId) {
-        selectedChatId.value = resolveDefaultSelectedChatId(nextChats);
+      if (selectedChatId === normalizedChatId) {
+        selectedChatId = resolveDefaultSelectedChatId(nextChats);
       }
 
       return true;
@@ -1422,7 +1455,7 @@ export const useChatStore = defineStore('chatStore', () => {
   }
 
   function setSearchQuery(query: string | null | undefined): void {
-    searchQuery.value = typeof query === 'string' ? query : '';
+    searchQuery = typeof query === 'string' ? query : '';
   }
 
   function getComposerDraft(chatId: string | null | undefined): string {
@@ -1431,7 +1464,7 @@ export const useChatStore = defineStore('chatStore', () => {
       return '';
     }
 
-    const storedDraft = composerDraftsByChatId.value[normalizedChatId];
+    const storedDraft = composerDraftsByChatId[normalizedChatId];
     return typeof storedDraft === 'string' ? storedDraft : '';
   }
 
@@ -1442,24 +1475,24 @@ export const useChatStore = defineStore('chatStore', () => {
     }
 
     const normalizedDraft = typeof draft === 'string' ? draft : '';
-    const currentDraft = composerDraftsByChatId.value[normalizedChatId] ?? '';
+    const currentDraft = composerDraftsByChatId[normalizedChatId] ?? '';
     if (currentDraft === normalizedDraft) {
       return;
     }
 
     if (!normalizedDraft) {
-      if (!(normalizedChatId in composerDraftsByChatId.value)) {
+      if (!(normalizedChatId in composerDraftsByChatId)) {
         return;
       }
 
-      const nextComposerDraftsByChatId = { ...composerDraftsByChatId.value };
+      const nextComposerDraftsByChatId = { ...composerDraftsByChatId };
       delete nextComposerDraftsByChatId[normalizedChatId];
-      composerDraftsByChatId.value = nextComposerDraftsByChatId;
+      composerDraftsByChatId = nextComposerDraftsByChatId;
       return;
     }
 
-    composerDraftsByChatId.value = {
-      ...composerDraftsByChatId.value,
+    composerDraftsByChatId = {
+      ...composerDraftsByChatId,
       [normalizedChatId]: normalizedDraft,
     };
   }
@@ -1469,11 +1502,11 @@ export const useChatStore = defineStore('chatStore', () => {
   }
 
   function clearAllComposerDrafts(): void {
-    if (Object.keys(composerDraftsByChatId.value).length === 0) {
+    if (Object.keys(composerDraftsByChatId).length === 0) {
       return;
     }
 
-    composerDraftsByChatId.value = {};
+    composerDraftsByChatId = {};
   }
 
   async function updateChatPreview(
@@ -1491,8 +1524,8 @@ export const useChatStore = defineStore('chatStore', () => {
     const authorPublicKey = getLoggedInPublicKey();
     let previewText = buildImageAttachmentPreviewText(text, options.messageMeta);
     let previewChatType: Chat['type'] | null = null;
-    chats.value = sortByLatest(
-      chats.value.map((chat) => {
+    chats = sortByLatest(
+      chats.map((chat) => {
         if (chat.id !== normalizedChatId) {
           return chat;
         }
@@ -1502,7 +1535,7 @@ export const useChatStore = defineStore('chatStore', () => {
           chat,
           text,
           at,
-          visibleChatId.value === normalizedChatId,
+          visibleChatId === normalizedChatId,
           options.messageMeta,
           authorPublicKey,
         );
@@ -1525,8 +1558,8 @@ export const useChatStore = defineStore('chatStore', () => {
             : buildImageAttachmentPreviewText(text, options.messageMeta);
         if (contactPreviewText !== text && contactPreviewText !== previewText) {
           previewText = contactPreviewText;
-          chats.value = sortByLatest(
-            chats.value.map((chat) =>
+          chats = sortByLatest(
+            chats.map((chat) =>
               chat.id === normalizedChatId ? { ...chat, lastMessage: previewText } : chat,
             ),
           );
@@ -1553,7 +1586,7 @@ export const useChatStore = defineStore('chatStore', () => {
 
     const normalizedCount = Math.max(0, Math.floor(Number(count) || 0));
 
-    chats.value = chats.value.map((chat) => {
+    chats = chats.map((chat) => {
       if (chat.id !== normalizedChatId) {
         return chat;
       }
@@ -1586,7 +1619,7 @@ export const useChatStore = defineStore('chatStore', () => {
 
     const normalizedCount = Math.max(0, Math.floor(Number(count) || 0));
 
-    chats.value = chats.value.map((chat) =>
+    chats = chats.map((chat) =>
       chat.id === normalizedChatId
         ? {
             ...chat,
@@ -1612,13 +1645,17 @@ export const useChatStore = defineStore('chatStore', () => {
     const fallbackName = input.fallbackName.trim() || nextPublicKey;
     const authorPublicKey = normalizeChatIdentifier(input.authorPublicKey);
     const nextChatId = nextPublicKey;
-    const existingChat = chats.value.find((chat) => chat.id === nextChatId) ?? null;
-    if (existingChat?.meta.deleted_locally === true || input.meta?.deleted_locally === true) return;
+    const existingChat = chats.find((chat) => chat.id === nextChatId) ?? null;
+    if (existingChat?.meta.deleted_locally === true || input.meta?.deleted_locally === true)
+      return;
     const currentMeta = {
       ...((existingChat?.meta as Record<string, unknown> | undefined) ?? {}),
       ...(input.meta ? { ...input.meta } : {}),
     };
-    const currentIncomingAt = readMetaString(currentMeta, CHAT_LAST_INCOMING_MESSAGE_AT_META_KEY);
+    const currentIncomingAt = readMetaString(
+      currentMeta,
+      CHAT_LAST_INCOMING_MESSAGE_AT_META_KEY,
+    );
     if (toComparableTimestamp(input.at) > toComparableTimestamp(currentIncomingAt)) {
       currentMeta[CHAT_LAST_INCOMING_MESSAGE_AT_META_KEY] = input.at;
     }
@@ -1648,27 +1685,27 @@ export const useChatStore = defineStore('chatStore', () => {
       ),
       lastMessageAuthorPublicKey: authorPublicKey,
       lastMessageAt: input.at,
-      unreadCount: visibleChatId.value === nextChatId ? 0 : Math.max(0, input.unreadCount),
+      unreadCount: visibleChatId === nextChatId ? 0 : Math.max(0, input.unreadCount),
       meta: nextMeta,
     };
 
     // Preserve unrelated row identities and only reposition the changed chat.
     // Stable ties retain the original ordering, matching sortByLatest.
-    const previousIndex = chats.value.findIndex((item) => item.id === nextChatId);
+    const previousIndex = chats.findIndex((item) => item.id === nextChatId);
     const timestamp = toComparableTimestamp(nextChat.lastMessageAt);
     if (
       previousIndex >= 0 &&
-      timestamp === toComparableTimestamp(chats.value[previousIndex]!.lastMessageAt)
+      timestamp === toComparableTimestamp(chats[previousIndex]!.lastMessageAt)
     ) {
-      chats.value[previousIndex] = nextChat;
+      chats[previousIndex] = nextChat;
       return;
     }
-    if (previousIndex >= 0) chats.value.splice(previousIndex, 1);
+    if (previousIndex >= 0) chats.splice(previousIndex, 1);
     let low = 0,
-      high = chats.value.length;
+      high = chats.length;
     while (low < high) {
       const middle = (low + high) >>> 1;
-      const other = toComparableTimestamp(chats.value[middle]!.lastMessageAt);
+      const other = toComparableTimestamp(chats[middle]!.lastMessageAt);
       if (
         other > timestamp ||
         (other === timestamp && (previousIndex < 0 || middle < previousIndex))
@@ -1676,7 +1713,7 @@ export const useChatStore = defineStore('chatStore', () => {
         low = middle + 1;
       else high = middle;
     }
-    chats.value.splice(low, 0, nextChat);
+    chats.splice(low, 0, nextChat);
   }
 
   async function addContact(
@@ -1698,16 +1735,14 @@ export const useChatStore = defineStore('chatStore', () => {
       ? toContactContext(contact)
       : toContactContextFromOptions(options, cleanName);
 
-    const existingInStore = chats.value.find(
+    const existingInStore = chats.find(
       (chat) => chat.publicKey.toLowerCase() === cleanPublicKey.toLowerCase(),
     );
     if (existingInStore?.meta.deleted_locally === true) {
       const reopened = await chatDataService.reopenDeletedGroupChat(cleanPublicKey);
       if (!reopened) return null;
       const mapped = mapChatRowToChat(reopened, contactContext);
-      chats.value = sortByLatest(
-        chats.value.map((chat) => (chat.id === mapped.id ? mapped : chat)),
-      );
+      chats = sortByLatest(chats.map((chat) => (chat.id === mapped.id ? mapped : chat)));
       return mapped;
     }
     if (existingInStore) {
@@ -1722,7 +1757,7 @@ export const useChatStore = defineStore('chatStore', () => {
       }
 
       let nextChat: Chat | null = null;
-      chats.value = chats.value.map((chat) => {
+      chats = chats.map((chat) => {
         if (chat.id !== existingInStore.id) {
           return chat;
         }
@@ -1744,8 +1779,8 @@ export const useChatStore = defineStore('chatStore', () => {
       existingInDb = await chatDataService.reopenDeletedGroupChat(cleanPublicKey);
     if (existingInDb) {
       const mapped = mapChatRowToChat(existingInDb, contactContext);
-      if (!chats.value.some((chat) => chat.id === mapped.id)) {
-        chats.value = sortByLatest([...chats.value, mapped]);
+      if (!chats.some((chat) => chat.id === mapped.id)) {
+        chats = sortByLatest([...chats, mapped]);
       }
 
       return mapped;
@@ -1775,7 +1810,7 @@ export const useChatStore = defineStore('chatStore', () => {
     }
 
     const newChat = mapChatRowToChat(created, contactContext);
-    chats.value = sortByLatest([...chats.value, newChat]);
+    chats = sortByLatest([...chats, newChat]);
     return newChat;
   }
 
@@ -1788,7 +1823,7 @@ export const useChatStore = defineStore('chatStore', () => {
     await Promise.all([chatDataService.init(), contactsService.init()]);
 
     const existingChatRow = await chatDataService.getChatByPublicKey(normalizedPublicKey);
-    const existingChatInStore = chats.value.find(
+    const existingChatInStore = chats.find(
       (chat) => chat.publicKey.trim().toLowerCase() === normalizedPublicKey,
     );
     if (!existingChatRow && !existingChatInStore) {
@@ -1801,7 +1836,8 @@ export const useChatStore = defineStore('chatStore', () => {
     }
 
     const contactContext = toContactContext(contact);
-    const currentName = existingChatRow?.name || existingChatInStore?.name || normalizedPublicKey;
+    const currentName =
+      existingChatRow?.name || existingChatInStore?.name || normalizedPublicKey;
     const nextName = contactContext.contactName || currentName;
     const currentMeta =
       (existingChatRow?.meta as Record<string, unknown> | undefined) ??
@@ -1822,13 +1858,13 @@ export const useChatStore = defineStore('chatStore', () => {
       });
     }
 
-    if (!isLoaded.value || !existingChatInStore) {
+    if (!isLoaded || !existingChatInStore) {
       await reload();
       return;
     }
 
-    chats.value = sortByLatest(
-      chats.value.map((chat) =>
+    chats = sortByLatest(
+      chats.map((chat) =>
         chat.publicKey.trim().toLowerCase() === normalizedPublicKey
           ? {
               ...chat,
@@ -1848,19 +1884,63 @@ export const useChatStore = defineStore('chatStore', () => {
   }
 
   return {
-    chats,
-    inboxChats,
-    visibleChats,
-    requestChats,
-    requestCount,
-    unreadChatCount,
-    unreadMessageCount,
-    isLoaded,
-    searchQuery,
-    composerDraftsByChatId,
-    selectedChat,
-    selectedChatId,
-    visibleChatId,
+    get chats() {
+      return chats;
+    },
+    set chats(value) {
+      chats = value;
+    },
+    get inboxChats() {
+      return inboxChats;
+    },
+    get visibleChats() {
+      return visibleChats;
+    },
+    get requestChats() {
+      return requestChats;
+    },
+    get requestCount() {
+      return requestCount;
+    },
+    get unreadChatCount() {
+      return unreadChatCount;
+    },
+    get unreadMessageCount() {
+      return unreadMessageCount;
+    },
+    get isLoaded() {
+      return isLoaded;
+    },
+    set isLoaded(value) {
+      isLoaded = value;
+    },
+    get searchQuery() {
+      return searchQuery;
+    },
+    set searchQuery(value) {
+      searchQuery = value;
+    },
+    get composerDraftsByChatId() {
+      return composerDraftsByChatId;
+    },
+    set composerDraftsByChatId(value) {
+      composerDraftsByChatId = value;
+    },
+    get selectedChat() {
+      return selectedChat;
+    },
+    get selectedChatId() {
+      return selectedChatId;
+    },
+    set selectedChatId(value) {
+      selectedChatId = value;
+    },
+    get visibleChatId() {
+      return visibleChatId;
+    },
+    set visibleChatId(value) {
+      visibleChatId = value;
+    },
     isRequestChat,
     recordIncomingActivity,
     acceptChat,

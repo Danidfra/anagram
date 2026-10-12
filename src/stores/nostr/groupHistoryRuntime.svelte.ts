@@ -1,4 +1,3 @@
-import { ref } from '#src/lib/state/reactivity.ts';
 import { HistoryPager } from '#src/stores/nostr/historyPager.ts';
 
 export interface GroupHistoryContext {
@@ -22,7 +21,13 @@ export function createGroupHistoryRuntime(deps: {
   query: (query: GroupHistoryQuery) => Promise<{ eventCount: number }>;
   onError: (error: unknown) => void;
 }) {
-  const state = ref({ chat: '', loading: false, hasOlder: true, phase: 'messages', failed: false });
+  const state = $state({
+    chat: '',
+    loading: false,
+    hasOlder: true,
+    phase: 'messages',
+    failed: false,
+  });
   type Cursor = { pager: HistoryPager; retryAt: number; failures: number };
   let selected = '';
   let abort = new AbortController();
@@ -40,13 +45,19 @@ export function createGroupHistoryRuntime(deps: {
     relayOffset = 0;
     cursors = new Map();
     active = undefined;
-    state.value = { chat: '', loading: false, hasOlder: true, phase: 'messages', failed: false };
+    Object.assign(state, {
+      chat: '',
+      loading: false,
+      hasOlder: true,
+      phase: 'messages',
+      failed: false,
+    });
   }
   function load(chat: string, before?: number): Promise<void> {
     if (chat !== selected) {
       stop();
       selected = chat;
-      state.value.chat = chat;
+      state.chat = chat;
     }
     if (active) return active;
     const owner = deps.owner();
@@ -56,7 +67,9 @@ export function createGroupHistoryRuntime(deps: {
       saved = cursors;
     const cancelled = () => signal.aborted || generation !== token || deps.owner() !== owner;
     const now = Math.floor(Date.now() / 1000);
-    const until = Number.isFinite(before) ? Math.min(now, Math.floor(before!) + 2 * 86400) : now;
+    const until = Number.isFinite(before)
+      ? Math.min(now, Math.floor(before!) + 2 * 86400)
+      : now;
     // Newly discovered keys can change a batch after earlier pages were read.
     // Seed every new batch from the session boundary, never from an old visible
     // ticket row: otherwise unread messages in the previous batch can be skipped.
@@ -73,8 +86,8 @@ export function createGroupHistoryRuntime(deps: {
       }
       return value;
     };
-    state.value.loading = true;
-    state.value.failed = false;
+    state.loading = true;
+    state.failed = false;
     const work = (async () => {
       let context = await deps.context(chat);
       if (!context || cancelled()) return;
@@ -113,7 +126,7 @@ export function createGroupHistoryRuntime(deps: {
           if (cancelled()) return undefined;
           progress.retryAt =
             Date.now() + Math.min(30000, 1000 * 2 ** Math.min(progress.failures++, 5));
-          state.value.failed = true;
+          state.failed = true;
           deps.onError(error);
           return undefined;
         }
@@ -142,20 +155,21 @@ export function createGroupHistoryRuntime(deps: {
       await Promise.all(
         scheduled.map(async (relay, index) => {
           const budget = {
-            remaining: Math.floor(6 / scheduled.length) + (index < 6 % scheduled.length ? 1 : 0),
+            remaining:
+              Math.floor(6 / scheduled.length) + (index < 6 % scheduled.length ? 1 : 0),
           };
           if (
             (before !== undefined || !context!.routes.length) &&
             context!.discoveryRelays.includes(relay) &&
             (budget.remaining > 1 || !batches(context!, relay).length)
           ) {
-            state.value.phase = 'keys';
+            state.phase = 'keys';
             await request([owner!], relay, true, budget);
           }
           if (cancelled()) return;
           const updated = await deps.context(chat);
           if (!updated || cancelled()) return;
-          state.value.phase = 'messages';
+          state.phase = 'messages';
           for (const recipients of batches(updated, relay)) {
             const progress = cursor(`messages:${relay}:${recipients.join(',')}`, false);
             if (progress.pager.done) continue;
@@ -177,24 +191,26 @@ export function createGroupHistoryRuntime(deps: {
       );
       const keysDone =
         context.discoveryRelays.length > 0 &&
-        context.discoveryRelays.every((relay) => cursor(`keys:${relay}:${owner}`, true).pager.done);
-      state.value.hasOlder = !messagesDone || !keysDone || state.value.failed;
+        context.discoveryRelays.every(
+          (relay) => cursor(`keys:${relay}:${owner}`, true).pager.done,
+        );
+      state.hasOlder = !messagesDone || !keysDone || state.failed;
     })()
       .catch((error) => {
         if (!cancelled()) {
-          state.value.failed = true;
+          state.failed = true;
           deps.onError(error);
         }
       })
       .finally(() => {
-        if (!cancelled()) state.value.loading = false;
+        if (!cancelled()) state.loading = false;
         if (active === work) active = undefined;
       });
     active = work;
     return work;
   }
   function invalidate(chat: string) {
-    if (selected === chat) state.value.hasOlder = true;
+    if (selected === chat) state.hasOlder = true;
   }
   return { state, load, stop, invalidate };
 }

@@ -229,12 +229,21 @@ try {
   `);
   let media;
   let videoVerified = false;
+  let requestedPlayback = false;
   await until(
     async () => {
       const state = await execute(
         'return {result: window.__callMediaSmoke.result, video: window.__callMediaSmoke.video}',
       );
       if (state.video && !videoVerified && !state.result) {
+        // Some WebKit configurations require the same playback gesture as a real call.
+        if (
+          !requestedPlayback &&
+          (await execute('return document.querySelector("video")?.paused'))
+        ) {
+          await click('video');
+          requestedPlayback = true;
+        }
         const screenshot = Buffer.from(
           await request(`/session/${session}/screenshot`, undefined, 'GET'),
           'base64',
@@ -323,6 +332,13 @@ try {
   await until(() => bodyIncludes('packaged-release-outbound'), 'saved message after restart');
   await send('packaged-release-after-restart');
   await secureRelayRead();
+  let resources;
+  if (process.env.ANAGRAM_RESOURCE_ROOT_PID) {
+    const { checkLinuxIdleResources } = await import('./linux-resources.mjs');
+    const rootPid = Number(process.env.ANAGRAM_RESOURCE_ROOT_PID);
+    resources = [await checkLinuxIdleResources(execute, rootPid),
+      await checkLinuxIdleResources(execute, rootPid, false)];
+  }
   await writeFile(
     `${output}/result.json`,
     JSON.stringify(
@@ -330,6 +346,7 @@ try {
         passed: true,
         binary,
         loginReadyMs,
+        resources,
         checks: [
           'login',
           'call-audio-video-recording-and-playback',

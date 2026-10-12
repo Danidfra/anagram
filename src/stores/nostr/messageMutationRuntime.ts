@@ -119,7 +119,7 @@ export function createMessageMutationRuntime({
 
   async function syncChatUnseenReactionCount(chatPublicKey: string): Promise<void> {
     try {
-      const { useMessageStore } = await import('#src/stores/messageStore.ts');
+      const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
       await useMessageStore().syncChatUnseenReactionCount(chatPublicKey);
     } catch (error) {
       console.warn('Failed to synchronize unseen reaction count for chat', chatPublicKey, error);

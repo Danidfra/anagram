@@ -148,7 +148,7 @@ for (const width of [1280, 390])
             page.evaluate(
               async ({ peer, start, index, content }) => {
                 const { chatDataService } = await import('/src/services/chatDataService.ts');
-                const { useMessageStore } = await import('/src/stores/messageStore.ts');
+                const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
                 const eventId = index.toString(16).padStart(64, '0');
                 let row = await chatDataService.getMessageByEventId(eventId);
                 if (row) {
@@ -181,7 +181,7 @@ for (const width of [1280, 390])
           await dialog.getByRole('button', { name: 'Create public group', exact: true }).click();
           await expect(page.getByLabel('Public message', { exact: true })).toBeVisible();
           const address = await page.evaluate(async () => {
-            const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+            const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
             return new Promise<string>((resolve) => {
               const off = useNostrStore().publicGroups.state.subscribe((state) =>
                 resolve(state.room!.address),
@@ -202,7 +202,7 @@ for (const width of [1280, 390])
             ),
           );
           await page.evaluate(async (events) => {
-            const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+            const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
             useNostrStore().publicGroups.state.update((state) => ({
               ...state,
               messages: events,
@@ -217,10 +217,13 @@ for (const width of [1280, 390])
             );
             await page.evaluate(
               async ({ event, oldId }) => {
-                const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+                const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
                 useNostrStore().publicGroups.state.update((state) => ({
                   ...state,
-                  messages: [...state.messages.filter((message) => message.id !== oldId), event],
+                  messages: [...state.messages.filter((message) => message.id !== oldId), event]
+                    // Match the runtime's chronological display window when
+                    // replacing an earlier message with its hydrated contents.
+                    .sort((a, b) => a.created_at - b.created_at || a.id!.localeCompare(b.id!)),
                 }));
               },
               { event, oldId: events[index]?.id },
@@ -242,11 +245,17 @@ for (const width of [1280, 390])
         await expectAnchor(page, saved);
         await expect(input).toBeFocused();
         await expect(input).toHaveValue('Keep my draft');
-        // A later message must not pull a reader down, including while at the old bottom.
+        // Opening at the latest message remains attached as hydration finishes.
+        // Reading-position anchoring takes over once the user scrolls away.
         await inject(90, 'A later restored message');
         await expect(thread).toContainText('A later restored message');
-        await expectAnchor(page, saved);
-        await expect(page.getByRole('button', { name: 'Jump to latest messages' })).toBeVisible();
+        await expect
+          .poll(() =>
+            thread.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop),
+          )
+          .toBeLessThan(2);
+        await expect(page.getByRole('button', { name: 'Jump to latest messages' })).toHaveCount(0);
+        saved = await anchor(page);
 
         await thread.hover();
         await page.mouse.wheel(0, -450);
@@ -279,7 +288,7 @@ for (const width of [1280, 390])
           });
           (window as any).__releasePositionSend = release;
           if (kind === 'private') {
-            const { useMessageStore } = await import('/src/stores/messageStore.ts');
+            const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
             const store = useMessageStore();
             const original = store.sendMessage;
             store.sendMessage = async (chatId) => {
@@ -288,7 +297,7 @@ for (const width of [1280, 390])
               return store.getMessages(chatId).at(-1) ?? null;
             };
           } else {
-            const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+            const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
             const runtime = useNostrStore().publicGroups;
             const original = runtime.send;
             runtime.send = async () => {

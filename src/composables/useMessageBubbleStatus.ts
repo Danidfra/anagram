@@ -2,7 +2,6 @@ import { t } from '#src/i18n.ts';
 import type { Message, MessageRelayStatus } from '#src/types/chat.ts';
 import { isMessageRelayStatus } from '#src/utils/messageRelayStatus.ts';
 import { uniqueRelayUrls } from '#src/utils/relayUrls.ts';
-import { type ComputedRef, computed, type Ref } from '#src/lib/state/reactivity.ts';
 
 export interface StatusSegment {
   key:
@@ -62,7 +61,7 @@ function getStatusSegmentClassName(status: StatusSegment['key']): string {
 
 function getStatusDotClassName(
   status: StatusListItem['status'],
-  scope: StatusListScope = 'derived'
+  scope: StatusListScope = 'derived',
 ): string {
   switch (status) {
     case 'published':
@@ -78,7 +77,7 @@ function getStatusDotClassName(
 
 function buildStatusListItems(
   relayStatuses: MessageRelayStatus[],
-  predicate: (relayStatus: MessageRelayStatus) => boolean
+  predicate: (relayStatus: MessageRelayStatus) => boolean,
 ): StatusListItem[] {
   const statusPriority: Record<'published' | 'failed' | 'pending', number> = {
     published: 0,
@@ -89,14 +88,14 @@ function buildStatusListItems(
   return relayStatuses
     .filter(
       (
-        relayStatus
+        relayStatus,
       ): relayStatus is MessageRelayStatus & {
         status: 'published' | 'failed' | 'pending';
       } =>
         predicate(relayStatus) &&
         (relayStatus.status === 'published' ||
           relayStatus.status === 'failed' ||
-          relayStatus.status === 'pending')
+          relayStatus.status === 'pending'),
     )
     .slice()
     .sort((first, second) => {
@@ -133,7 +132,7 @@ function countRetryableItems(items: StatusListItem[]): number {
 function buildOutboundStatusSection(
   key: RetryableStatusScope,
   title: string,
-  items: StatusListItem[]
+  items: StatusListItem[],
 ): StatusSection {
   const successCount = countPublishedItems(items);
   const totalCount = items.length;
@@ -154,14 +153,15 @@ export function isRetryableStatusScope(scope: StatusListScope): scope is Retryab
   return scope === 'recipient' || scope === 'self';
 }
 
+// A per-render projection: creating derived signals here would retain the calling UI.
 export function useMessageBubbleStatus(options: {
-  contactName: ComputedRef<string>;
-  contactRelayUrls: ComputedRef<string[]>;
-  isMine: ComputedRef<boolean>;
-  message: Readonly<Ref<Message>>;
+  contactName: string;
+  contactRelayUrls: string[];
+  isMine: boolean;
+  message: Readonly<Message>;
 }) {
-  const relayStatuses = computed(() => {
-    const value = options.message.value.nostrEvent?.relay_statuses;
+  const relayStatuses = (() => {
+    const value = options.message.nostrEvent?.relay_statuses;
     if (!Array.isArray(value)) {
       return [] as MessageRelayStatus[];
     }
@@ -179,31 +179,27 @@ export function useMessageBubbleStatus(options: {
 
       return first.scope.localeCompare(second.scope);
     });
-  });
+  })();
 
-  const outboundRelayStatuses = computed(() => {
-    return relayStatuses.value.filter((relayStatus) => relayStatus.direction === 'outbound');
-  });
-
-  const inboundReceivedRelayStatuses = computed(() => {
-    return relayStatuses.value.filter(
-      (
-        relayStatus
-      ): relayStatus is MessageRelayStatus & {
-        direction: 'inbound';
-        status: 'received';
-      } => relayStatus.direction === 'inbound' && relayStatus.status === 'received'
-    );
-  });
-
-  const normalizedContactRelayUrls = computed(() =>
-    uniqueRelayUrls(options.contactRelayUrls.value)
+  const outboundRelayStatuses = relayStatuses.filter(
+    (relayStatus) => relayStatus.direction === 'outbound',
   );
 
-  const inboundReceivedRelayUrls = computed(() => {
+  const inboundReceivedRelayStatuses = relayStatuses.filter(
+    (
+      relayStatus,
+    ): relayStatus is MessageRelayStatus & {
+      direction: 'inbound';
+      status: 'received';
+    } => relayStatus.direction === 'inbound' && relayStatus.status === 'received',
+  );
+
+  const normalizedContactRelayUrls = uniqueRelayUrls(options.contactRelayUrls);
+
+  const inboundReceivedRelayUrls = (() => {
     const uniqueRelayUrlSet = new Set<string>();
 
-    for (const relayStatus of inboundReceivedRelayStatuses.value) {
+    for (const relayStatus of inboundReceivedRelayStatuses) {
       const relayUrl = formatRelayStatusItem(relayStatus).trim();
       if (!relayUrl) {
         continue;
@@ -213,56 +209,46 @@ export function useMessageBubbleStatus(options: {
     }
 
     return Array.from(uniqueRelayUrlSet).sort((first, second) => first.localeCompare(second));
-  });
+  })();
 
-  const inboundReceivedRelayUrlSet = computed(() => {
-    return new Set(inboundReceivedRelayUrls.value);
-  });
+  const inboundReceivedRelayUrlSet = new Set(inboundReceivedRelayUrls);
 
-  const inboundMissingRelayUrls = computed(() => {
-    return normalizedContactRelayUrls.value.filter(
-      (relayUrl) => !inboundReceivedRelayUrlSet.value.has(relayUrl)
-    );
-  });
+  const inboundMissingRelayUrls = normalizedContactRelayUrls.filter(
+    (relayUrl) => !inboundReceivedRelayUrlSet.has(relayUrl),
+  );
 
-  const hasPendingRelayStatuses = computed(() => {
-    return outboundRelayStatuses.value.some((relayStatus) => relayStatus.status === 'pending');
-  });
+  const hasPendingRelayStatuses = outboundRelayStatuses.some(
+    (relayStatus) => relayStatus.status === 'pending',
+  );
 
   // Restored copies of our own messages have inbound observations, not the
   // sending device's publish acknowledgements. Keep that evidence visible.
-  const showOutboundStatus = computed(
-    () => options.isMine.value && outboundRelayStatuses.value.length > 0,
-  );
-  const hasRelayStatuses = computed(
-    () => showOutboundStatus.value || inboundReceivedRelayUrls.value.length > 0,
-  );
+  const showOutboundStatus = options.isMine && outboundRelayStatuses.length > 0;
+  const hasRelayStatuses = showOutboundStatus || inboundReceivedRelayUrls.length > 0;
 
-  const contactRelaysTitle = computed(() => {
-    return t('relays.contactTitle', {
-      name: options.contactName.value || t('contacts.contact.label'),
-    });
+  const contactRelaysTitle = t('relays.contactTitle', {
+    name: options.contactName || t('contacts.contact.label'),
   });
 
-  const outboundContactRelaysTitle = computed(() => t('relays.contactRelays'));
-  const outboundMyRelaysTitle = computed(() => t('relays.myRelays'));
+  const outboundContactRelaysTitle = t('relays.contactRelays');
+  const outboundMyRelaysTitle = t('relays.myRelays');
 
-  const statusDialogTitle = computed(() => {
-    return showOutboundStatus.value ? t('relays.relayStatus') : t('relays.receivedRelayStatus');
-  });
+  const statusDialogTitle = showOutboundStatus
+    ? t('relays.relayStatus')
+    : t('relays.receivedRelayStatus');
 
-  const statusSegments = computed<StatusSegment[]>(() => {
-    if (!showOutboundStatus.value) {
+  const statusSegments: StatusSegment[] = ((): StatusSegment[] => {
+    if (!showOutboundStatus) {
       const segments: StatusSegment[] = [
         {
           key: 'received',
           className: getStatusSegmentClassName('received'),
-          weight: inboundReceivedRelayUrls.value.length,
+          weight: inboundReceivedRelayUrls.length,
         },
         {
           key: 'missing',
           className: getStatusSegmentClassName('missing'),
-          weight: options.isMine.value ? 0 : inboundMissingRelayUrls.value.length,
+          weight: options.isMine ? 0 : inboundMissingRelayUrls.length,
         },
       ];
 
@@ -271,9 +257,9 @@ export function useMessageBubbleStatus(options: {
 
     function countByStatus(
       status: MessageRelayStatus['status'],
-      scope?: MessageRelayStatus['scope']
+      scope?: MessageRelayStatus['scope'],
     ) {
-      return outboundRelayStatuses.value.filter((relayStatus) => {
+      return outboundRelayStatuses.filter((relayStatus) => {
         if (relayStatus.status !== status) {
           return false;
         }
@@ -311,25 +297,21 @@ export function useMessageBubbleStatus(options: {
     ];
 
     return segments.filter((segment) => segment.weight > 0);
-  });
+  })();
 
-  const contactStatusListItems = computed<StatusListItem[]>(() => {
-    return buildStatusListItems(
-      outboundRelayStatuses.value,
-      (relayStatus) => relayStatus.scope === 'recipient'
-    );
-  });
+  const contactStatusListItems: StatusListItem[] = buildStatusListItems(
+    outboundRelayStatuses,
+    (relayStatus) => relayStatus.scope === 'recipient',
+  );
 
-  const myStatusListItems = computed<StatusListItem[]>(() => {
-    return buildStatusListItems(
-      outboundRelayStatuses.value,
-      (relayStatus) => relayStatus.scope === 'self'
-    );
-  });
+  const myStatusListItems: StatusListItem[] = buildStatusListItems(
+    outboundRelayStatuses,
+    (relayStatus) => relayStatus.scope === 'self',
+  );
 
-  const inboundContactStatusListItems = computed<StatusListItem[]>(() => {
-    return normalizedContactRelayUrls.value.map((relayUrl) => {
-      const status: StatusListItem['status'] = inboundReceivedRelayUrlSet.value.has(relayUrl)
+  const inboundContactStatusListItems: StatusListItem[] = normalizedContactRelayUrls.map(
+    (relayUrl) => {
+      const status: StatusListItem['status'] = inboundReceivedRelayUrlSet.has(relayUrl)
         ? 'received'
         : 'missing';
 
@@ -342,24 +324,24 @@ export function useMessageBubbleStatus(options: {
         status,
         retryable: false,
       };
-    });
-  });
+    },
+  );
 
-  const inboundReceivedStatusListItems = computed<StatusListItem[]>(() => {
-    return inboundReceivedRelayUrls.value.map((relayUrl) => ({
+  const inboundReceivedStatusListItems: StatusListItem[] = inboundReceivedRelayUrls.map(
+    (relayUrl) => ({
       key: `received-${relayUrl}`,
       relayUrl,
       dotClass: getStatusDotClassName('received'),
       scope: 'subscription',
       status: 'received',
       retryable: false,
-    }));
-  });
+    }),
+  );
 
-  const inboundExtraReceivedStatusListItems = computed<StatusListItem[]>(() => {
-    const contactRelayUrlSet = new Set(normalizedContactRelayUrls.value);
+  const inboundExtraReceivedStatusListItems: StatusListItem[] = ((): StatusListItem[] => {
+    const contactRelayUrlSet = new Set(normalizedContactRelayUrls);
 
-    return inboundReceivedRelayUrls.value
+    return inboundReceivedRelayUrls
       .filter((relayUrl) => !contactRelayUrlSet.has(relayUrl))
       .map((relayUrl) => ({
         key: `received-extra-${relayUrl}`,
@@ -370,35 +352,31 @@ export function useMessageBubbleStatus(options: {
         status: 'received',
         retryable: false,
       }));
-  });
+  })();
 
-  const statusSections = computed<StatusSection[]>(() => {
-    if (showOutboundStatus.value) {
+  const statusSections: StatusSection[] = ((): StatusSection[] => {
+    if (showOutboundStatus) {
       return [
-        buildOutboundStatusSection(
-          'recipient',
-          outboundContactRelaysTitle.value,
-          contactStatusListItems.value
-        ),
-        buildOutboundStatusSection('self', outboundMyRelaysTitle.value, myStatusListItems.value),
+        buildOutboundStatusSection('recipient', outboundContactRelaysTitle, contactStatusListItems),
+        buildOutboundStatusSection('self', outboundMyRelaysTitle, myStatusListItems),
       ];
     }
 
-    if (!options.isMine.value && normalizedContactRelayUrls.value.length > 0) {
+    if (!options.isMine && normalizedContactRelayUrls.length > 0) {
       const sections: StatusSection[] = [
         {
           key: 'contact',
-          title: contactRelaysTitle.value,
-          items: inboundContactStatusListItems.value,
+          title: contactRelaysTitle,
+          items: inboundContactStatusListItems,
           emptyLabel: t('relays.empty.noRelays'),
         },
       ];
 
-      if (inboundExtraReceivedStatusListItems.value.length > 0) {
+      if (inboundExtraReceivedStatusListItems.length > 0) {
         sections.push({
           key: 'extra-received',
           title: t('relays.otherReceivedRelays'),
-          items: inboundExtraReceivedStatusListItems.value,
+          items: inboundExtraReceivedStatusListItems,
           emptyLabel: t('relays.empty.noRelays'),
         });
       }
@@ -406,17 +384,17 @@ export function useMessageBubbleStatus(options: {
       return sections;
     }
 
-    return inboundReceivedStatusListItems.value.length > 0
+    return inboundReceivedStatusListItems.length > 0
       ? [
           {
             key: 'received',
             title: t('common.received'),
-            items: inboundReceivedStatusListItems.value,
+            items: inboundReceivedStatusListItems,
             emptyLabel: t('relays.empty.noRelays'),
           },
         ]
       : [];
-  });
+  })();
 
   return {
     showOutboundStatus,

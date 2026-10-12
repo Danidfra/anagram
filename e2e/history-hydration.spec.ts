@@ -480,7 +480,7 @@ test('healthy history survives AUTH rejection and recovered history survives a d
     await expect
       .poll(() =>
         page.evaluate(async () => {
-          const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+          const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
           return useNostrStore().startupSteps.find((step) => step.id === 'message-history-restore')
             ?.status;
         }),

@@ -106,7 +106,7 @@ vi.mock('#src/utils/browserNotificationPreference.ts', () => ({
   saveBrowserNotificationsPreference: moduleMocks.saveBrowserNotificationsPreference,
 }));
 
-vi.mock('#src/stores/nostrStore.ts', () => ({
+vi.mock('#src/stores/nostrStore.svelte.ts', () => ({
   useNostrStore: () => moduleMocks.nostrStore,
 }));
 
@@ -118,11 +118,11 @@ vi.mock('#src/stores/nip65RelayStore.ts', () => ({
   useNip65RelayStore: () => moduleMocks.nip65RelayStore,
 }));
 
-vi.mock('#src/stores/chatStore.ts', () => ({
+vi.mock('#src/stores/chatStore.svelte.ts', () => ({
   useChatStore: () => moduleMocks.chatStore,
 }));
 
-vi.mock('#src/stores/messageStore.ts', () => ({
+vi.mock('#src/stores/messageStore.svelte.ts', () => ({
   useMessageStore: () => moduleMocks.messageStore,
 }));
 

@@ -3,7 +3,7 @@ import { chatDataService } from '#src/services/chatDataService.ts';
 import { contactsService } from '#src/services/contactsService.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import { useNip65RelayStore } from '#src/stores/nip65RelayStore.ts';
-import { useNostrStore } from '#src/stores/nostrStore.ts';
+import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
 import { useRelayStore } from '#src/stores/relayStore.ts';
 
 const ANDROID_NOTIFICATION_RELAY_SELECTION_STORAGE_KEY =

@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { translate } from '#src/i18n.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { useRelayStore } from '#src/stores/relayStore.ts';
   import { useNip65RelayStore } from '#src/stores/nip65RelayStore.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { toStore } from 'svelte/store';
   import { normalizeRelayUrl } from '#src/lib/nostr/client.ts';
   import { DEFAULT_RELAYS } from '#src/constants/relays.ts';
-  import type { RelayListEntry } from '#src/stores/relayListStoreFactory.ts';
+  import type { RelayListEntry } from '#src/stores/relayListStoreFactory.svelte.ts';
   import RelayInfo from './RelayInfo.svelte';
   import Icon from '../Icon.svelte';
   import IrohSettings from './IrohSettings.svelte';
@@ -16,7 +16,7 @@
     mine = useNip65RelayStore();
   app.init();
   mine.init();
-  const state = observe(() => ({
+  const state = toStore(() => ({
     mine: mine.relayEntries,
     app: app.relayEntries,
     version: nostr.relayStatusVersion,

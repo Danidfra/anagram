@@ -1,8 +1,8 @@
 <script lang="ts">
   import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onMount } from 'svelte';
-  import { observe } from '#src/lib/state/store.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { toStore } from 'svelte/store';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { useRelayStore } from '#src/stores/relayStore.ts';
   import { translate } from '#src/i18n.ts';
   import {
@@ -18,7 +18,7 @@
   export let subtitle = 'relays.stayHereAppChecks';
   const nostr = useNostrStore(),
     relays = useRelayStore();
-  const relayStatus = observe(() => {
+  const relayStatus = toStore(() => {
     void nostr.relayStatusVersion;
     return Object.fromEntries(
       relays.relays.map((url) => [url, nostr.getRelayConnectionState(url)]),
@@ -43,6 +43,7 @@
   let lookupGeneration = 0,
     mounted = true;
   let checking = new Set<string>();
+  const relayChecks = new Set<Promise<void>>();
   $: title =
     status === 'found'
       ? 'profile.confirmProfile'
@@ -74,7 +75,12 @@
       lookupGeneration++;
     };
   });
-  async function probeRelay(url: string) {
+  function probeRelay(url: string) {
+    const pending = checkRelay(url).finally(() => relayChecks.delete(pending));
+    relayChecks.add(pending);
+    return pending;
+  }
+  async function checkRelay(url: string) {
     checking = new Set([...checking, url]);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -104,6 +110,11 @@
     error = '';
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
+      // Next can be clicked as soon as one relay connects. Keep slower probes
+      // in the lookup instead of discarding them while their selection is pending.
+      await Promise.all(relayChecks);
+      if (generation !== lookupGeneration) return;
+      entries = entries.filter((entry) => entry.selected);
       profile = await Promise.race([
         nostr.fetchUserProfileFromRelays(
           nostr.getLoggedInPublicKeyHex() ?? '',
@@ -229,10 +240,7 @@
       ><button
         class="primary"
         disabled={!entries.some((e) => e.selected)}
-        onclick={() => {
-          entries = entries.filter((entry) => entry.selected);
-          void lookup(true);
-        }}
+        onclick={() => void lookup(true)}
         data-testid="auth-onboarding-relays-next-button">{$translate('common.next')}</button
       >
     </div>

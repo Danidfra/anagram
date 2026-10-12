@@ -54,11 +54,12 @@
   import { goto } from '$app/navigation';
   import { page as routeState } from '$app/state';
   import { toStore } from 'svelte/store';
+  import { coalesceStore } from '#src/lib/state/coalesceStore.ts';
   const page = toStore(() => ({ url: routeState.url }));
   import { countUnseenReactionsForAuthor } from '#src/utils/messageReactions.ts';
-  import { useChatStore } from '#src/stores/chatStore.ts';
-  import { useMessageStore } from '#src/stores/messageStore.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useChatStore } from '#src/stores/chatStore.svelte.ts';
+  import { useMessageStore } from '#src/stores/messageStore.svelte.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { useRelayStore } from '#src/stores/relayStore.ts';
   import { useCallStore } from '#src/stores/callStore.ts';
   import { useCallRoomStore } from '#src/stores/callRoomStore.ts';
@@ -70,7 +71,6 @@
   } from '#src/lib/state/composerUpload.ts';
   import type { MessageAttachmentMetadata } from '#src/types/chat.ts';
   import { getPublicProfile, type PublicProfile } from '#src/lib/state/publicProfiles.ts';
-  import { observe } from '#src/lib/state/store.ts';
   import {
     readTopLevelBunkerLoginQueryParam,
     removeTopLevelBunkerLoginQueryParam,
@@ -129,7 +129,7 @@
   const publicGroups = nostr.publicGroups;
   const publicState = publicGroups.sidebar;
   relays.init();
-  const state = observe(() => ({
+  const state = coalesceStore(toStore(() => ({
     chats: chats.visibleChats,
     requests: chats.requestChats,
     selected: chats.selectedChat,
@@ -154,7 +154,7 @@
     relayEntries: relays.relayEntries,
     relayVersion: nostr.relayStatusVersion,
     contactVersion: nostr.contactListVersion,
-  }));
+  })));
   let section: 'chats' | 'contacts' | 'settings' = 'chats';
   let mobileThread = false;
   let mobileViewport = matchMedia('(max-width: 767px)').matches;
@@ -353,7 +353,7 @@
     } else if (action === 'delete')
       await act(() => messages.deleteMessage(message.chatId, message.id));
   }
-  const callState = observe(() => ({
+  const callState = toStore(() => ({
     phase: useCallStore().session?.phase,
     room: useCallRoomStore().session,
   }));
@@ -506,22 +506,15 @@
     if (revision !== historyRevision) return;
     await tick();
     if (revision !== historyRevision) return;
+    // Explicit navigation must commit the cached UI before relay work starts;
+    // an animation frame can otherwise beat the normal 16ms hydration batch.
+    state.flush();
+    await tick();
+    if (revision !== historyRevision) return;
     // Give the cached thread a paint before starting relay queries/decryption.
     // Both callbacks are cancellable when another conversation is selected.
     function afterCachedRender() {
       if (revision !== historyRevision) return;
-      // The store bridge batches updates. A disk read finishing does not mean
-      // Svelte has received that window yet, especially while sync is busy.
-      const cached = messages.getMessages(chatId);
-      if (
-        $state.selected?.id !== chatId ||
-        $state.thread.items.length !== cached.length ||
-        $state.thread.items[0]?.id !== cached[0]?.id ||
-        $state.thread.items.at(-1)?.id !== cached.at(-1)?.id
-      ) {
-        historyFrame = requestAnimationFrame(afterCachedRender);
-        return;
-      }
       historyTimer = setTimeout(() => {
         if (revision === historyRevision) nostr.prioritizeThreadHistory(chatId);
       }, 0);
@@ -709,12 +702,6 @@
         await messages.loadMessages(chatId, true);
       }
       await messages.loadOlderMessages(chatId);
-      // The Vue-to-Svelte bridge batches notifications. Wait for the actual
-      // window, not a fixed number of frames: busy/backgrounded tabs can take
-      // longer. Follow the latest first row if ingestion/deletion changes it,
-      // and stop waiting if the user navigates away.
-      while (current() && $state.thread.items[0]?.id !== messages.getMessages(chatId)[0]?.id)
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       await tick();
       if (!current()) return;
       scheduleVisibleReactions();

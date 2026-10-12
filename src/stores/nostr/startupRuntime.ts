@@ -11,7 +11,7 @@ import {
   type StartupStepSnapshot,
   type StartupTrackId,
 } from '#src/stores/nostr/startupState.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
+
 
 interface StartupRuntimeState {
   startupDisplayShownAt: number;
@@ -20,9 +20,9 @@ interface StartupRuntimeState {
 }
 
 interface StartupRuntimeDeps {
-  startupDisplay: Ref<StartupDisplaySnapshot>;
+  startupDisplay: StartupDisplaySnapshot;
   startupState: StartupRuntimeState;
-  startupSteps: Ref<StartupStepSnapshot[]>;
+  startupSteps: StartupStepSnapshot[];
   startupStepMinProgressMs: number;
 }
 
@@ -36,12 +36,8 @@ interface StartupStepUpdate {
   label?: string;
 }
 
-export function createStartupRuntime({
-  startupDisplay,
-  startupState,
-  startupSteps,
-  startupStepMinProgressMs,
-}: StartupRuntimeDeps) {
+export function createStartupRuntime(state: StartupRuntimeDeps) {
+  const { startupState, startupStepMinProgressMs } = state;
   function clearStartupDisplayTimer(): void {
     if (startupState.startupDisplayTimer !== null) {
       globalThis.clearTimeout(startupState.startupDisplayTimer);
@@ -51,12 +47,12 @@ export function createStartupRuntime({
 
   function getStartupStepSnapshot(stepId: StartupTrackId): StartupStepSnapshot {
     const parentStepId = resolveStartupStepIdValue(stepId);
-    const step = startupSteps.value.find((entry) => entry.id === stepId);
+    const step = state.startupSteps.find((entry) => entry.id === stepId);
     if (step) {
       return step;
     }
 
-    const parentStep = startupSteps.value.find((entry) => entry.id === parentStepId);
+    const parentStep = state.startupSteps.find((entry) => entry.id === parentStepId);
     if (parentStep) {
       return parentStep;
     }
@@ -79,7 +75,7 @@ export function createStartupRuntime({
       return parentStep.internalTasks.find((entry) => entry.id === taskId) ?? null;
     }
 
-    for (const step of startupSteps.value) {
+    for (const step of state.startupSteps) {
       const task = step.internalTasks.find((entry) => entry.id === taskId);
       if (task) {
         return task;
@@ -147,7 +143,7 @@ export function createStartupRuntime({
     startupState.startupDisplayToken += 1;
     startupState.startupDisplayShownAt = Date.now();
     clearStartupDisplayTimer();
-    startupDisplay.value = {
+    state.startupDisplay = {
       stepId: parentStepId,
       label: getStartupTrackLabel(stepId),
       status: 'in_progress',
@@ -157,7 +153,7 @@ export function createStartupRuntime({
 
   function finalizeStartupStepDisplay(stepId: StartupTrackId, status: 'success' | 'error'): void {
     const parentStepId = resolveStartupStepIdValue(stepId);
-    if (startupDisplay.value.stepId !== parentStepId) {
+    if (state.startupDisplay.stepId !== parentStepId) {
       return;
     }
 
@@ -168,7 +164,7 @@ export function createStartupRuntime({
         return;
       }
 
-      startupDisplay.value = {
+      state.startupDisplay = {
         stepId: parentStepId,
         label,
         status,
@@ -263,8 +259,8 @@ export function createStartupRuntime({
     clearStartupDisplayTimer();
     startupState.startupDisplayToken += 1;
     startupState.startupDisplayShownAt = 0;
-    startupSteps.value = resetStartupStepSnapshotsValue();
-    startupDisplay.value = {
+    state.startupSteps = resetStartupStepSnapshotsValue();
+    state.startupDisplay = {
       stepId: null,
       label: null,
       status: null,
@@ -280,14 +276,14 @@ export function createStartupRuntime({
     }
 
     Object.assign(step, nextStep);
-    if (startupDisplay.value.stepId !== stepId) {
+    if (state.startupDisplay.stepId !== stepId) {
       return;
     }
 
     clearStartupDisplayTimer();
     startupState.startupDisplayToken += 1;
     startupState.startupDisplayShownAt = 0;
-    startupDisplay.value = {
+    state.startupDisplay = {
       stepId: null,
       label: null,
       status: null,
@@ -352,9 +348,9 @@ export function createStartupRuntime({
 
     if (updates.label) {
       step.label = updates.label;
-      if (startupDisplay.value.stepId === stepId) {
-        startupDisplay.value = {
-          ...startupDisplay.value,
+      if (state.startupDisplay.stepId === stepId) {
+        state.startupDisplay = {
+          ...state.startupDisplay,
           label: updates.label,
         };
       }

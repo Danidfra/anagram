@@ -37,6 +37,9 @@ printf '%s\n' 'libgiognutls.so: gio-tls-backend' > "$state/host-gio/giomodule.ca
 export GIO_EXTRA_MODULES="$state/host-gio"
 tauri-driver > "$output/driver.log" 2>&1 &
 driver_pid=$!
+if [[ "${ANAGRAM_RESOURCE_TEST:-}" == 1 ]]; then
+  export ANAGRAM_RESOURCE_ROOT_PID="$driver_pid"
+fi
 for attempt in $(seq 1 30); do
   curl -s http://127.0.0.1:4444/status >/dev/null && break
   kill -0 "$driver_pid"

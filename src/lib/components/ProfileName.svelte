@@ -1,7 +1,7 @@
 <script lang="ts">
   import { observePublicProfile } from '#src/lib/state/publicProfiles.ts';
   import { onDestroy } from 'svelte';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   export let hydrate = false;
   let release = () => {};
   function hydrateProfile(key: string, enabled: boolean) {

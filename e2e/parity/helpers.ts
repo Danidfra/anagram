@@ -31,7 +31,7 @@ export async function waitForAppBridge(page: Page) {
   await page.evaluate(async (diagnostics) => {
     const { installAppE2EBridge } = await import('/src/testing/e2eBridge.ts');
     installAppE2EBridge();
-    const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+    const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
     useNostrStore().setDeveloperDiagnosticsEnabled(diagnostics);
   }, process.env.ANAGRAM_E2E_DIAGNOSTICS === '1');
 }
@@ -66,7 +66,7 @@ export async function bootstrapUser(
   if (!options.passiveRestore)
     await page.evaluate(
       async ({ name, relayUrls }) => {
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         await useNostrStore().publishMyRelayList(
           relayUrls.map((url) => ({ url, read: true, write: true })),
           relayUrls,
@@ -93,7 +93,7 @@ export async function disposeUsers(...users: BootstrappedUser[]) {
     for (const user of users) {
       try {
         const diagnostics = await user.page.evaluate(async () => {
-          const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+          const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
           return {
             snapshot: await window.__appE2E__?.getDeveloperDiagnosticsSnapshot(),
             trace: await useNostrStore().listDeveloperTraceEntries(),
@@ -143,7 +143,7 @@ export async function navigateToChat(page: Page, publicKey: string) {
   await expect
     .poll(() =>
       page.evaluate(async () => {
-        const { useChatStore } = await import('/src/stores/chatStore.ts');
+        const { useChatStore } = await import('/src/stores/chatStore.svelte.ts');
         return useChatStore().selectedChatId;
       }),
     )
@@ -232,12 +232,15 @@ export async function establishAcceptedDirectChat(alice: BootstrappedUser, bob: 
   await sendMessage(alice.page, 'Establish conversation');
   await openRequests(bob.page);
   await acceptFirstRequest(bob.page);
+  // Acceptance opens the DM asynchronously; do not race it with a second navigation.
+  await expect(bob.page).toHaveURL(new RegExp(`/chats/${alice.session.publicKey}$`));
   await navigateToChat(bob.page, alice.session.publicKey);
   await sendMessage(bob.page, 'Accepted conversation');
   await waitForThreadMessage(alice.page, 'Accepted conversation');
 }
 export async function reloadAndWaitForApp(page: Page) {
-  await page.reload();
+  // App readiness is asserted below; third-party profile images need not finish.
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
   await waitForAppBridge(page);
 }
@@ -266,6 +269,11 @@ export async function removeStoredMessageByEventId(page: Page, chatId: string, e
       { chatId, eventId },
     ),
   ).toBe(true);
+  // The fixture changes IndexedDB first; wait for the batched UI removal before
+  // starting the separate, strict observation window for forbidden reappearance.
+  await expect(
+    page.locator(`[data-testid="message-bubble"][data-event-id="${eventId}"]`),
+  ).toHaveCount(0);
 }
 export async function action(page: Page, text: string, name: string) {
   const message = threadMessage(page, text);

@@ -50,7 +50,7 @@ async function uploads(page: Page, account: string) {
     });
   });
   await page.evaluate(async (server) => {
-    const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+    const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
     await useNostrStore().saveBlossomServerUrl(server);
   }, server);
   return {

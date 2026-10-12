@@ -145,9 +145,9 @@ test('late kind-0 names and pictures render before persistence and survive a cac
           key,
         ),
       );
-    await expect(mine.locator('.message-author img')).toHaveAttribute('src', ownPicture);
-    await expect(theirs.locator('.message-author img')).toHaveAttribute('src', peerPicture);
-    await expect(theirs.locator('.message-author strong')).toHaveText('Peer profile');
+    await expect(mine.locator('[data-testid="thread-author-profile-link"] img')).toHaveAttribute('src', ownPicture);
+    await expect(theirs.locator('[data-testid="thread-author-profile-link"] img')).toHaveAttribute('src', peerPicture);
+    await expect(theirs.locator('.message-author strong, .bubble-author-name')).toHaveText('Peer profile');
     await expect(page.locator('.thread-identity strong')).toHaveText('Peer profile');
     await expect(page.getByTestId('chat-item').filter({ hasText: 'Peer profile' })).toBeVisible();
     await expect
@@ -165,9 +165,9 @@ test('late kind-0 names and pictures render before persistence and survive a cac
       .toBe(peerPicture);
     offline = true;
     await page.reload();
-    await expect(mine.locator('.message-author img')).toHaveAttribute('src', ownPicture);
-    await expect(theirs.locator('.message-author img')).toHaveAttribute('src', peerPicture);
-    await expect(theirs.locator('.message-author strong')).toHaveText('Peer profile');
+    await expect(mine.locator('[data-testid="thread-author-profile-link"] img')).toHaveAttribute('src', ownPicture);
+    await expect(theirs.locator('[data-testid="thread-author-profile-link"] img')).toHaveAttribute('src', peerPicture);
+    await expect(theirs.locator('.message-author strong, .bubble-author-name')).toHaveText('Peer profile');
   } finally {
     for (const socket of server.clients) socket.terminate();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -286,10 +286,10 @@ test('refresh recovers missing group and historical-author profiles from capped 
       .getByTestId('message-bubble')
       .filter({ hasText: 'Historical group message' });
     await expect(bubble).toBeVisible();
-    await expect(bubble.locator('.message-author strong')).toHaveText('Historical author', {
+    await expect(bubble.locator('.message-author strong, .bubble-author-name')).toHaveText('Historical author', {
       timeout: 20000,
     });
-    await expect(bubble.locator('.message-author img')).toHaveAttribute(
+    await expect(bubble.locator('[data-testid="thread-author-profile-link"] img')).toHaveAttribute(
       'src',
       `https://profiles.test/${member}.png`,
     );
@@ -319,8 +319,8 @@ test('refresh recovers missing group and historical-author profiles from capped 
       .toBe(true);
     offline = true;
     await page.reload();
-    await expect(bubble.locator('.message-author strong')).toHaveText('Historical author');
-    await expect(bubble.locator('.message-author img')).toHaveAttribute(
+    await expect(bubble.locator('.message-author strong, .bubble-author-name')).toHaveText('Historical author');
+    await expect(bubble.locator('[data-testid="thread-author-profile-link"] img')).toHaveAttribute(
       'src',
       `https://profiles.test/${member}.png`,
     );

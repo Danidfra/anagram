@@ -40,7 +40,6 @@ import type {
 } from '#src/stores/nostr/types.ts';
 import { clearLinkPreviews } from '#src/services/linkPreviewService.ts';
 import { clearPersistedAppState } from '#src/utils/logoutCleanup.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
 
 interface RestoreRuntimeState {
   restoreContactCursorStatePromise: Promise<void> | null;
@@ -60,14 +59,14 @@ interface AuthSessionRuntimeDeps {
   clearRelayStoreState: () => void;
   clearStoredPrivateMessagesLastReceivedCreatedAt: () => void;
   configuredRelayUrls: { clear: () => void };
-  contactListVersion: Ref<number>;
-  eventSince: Ref<number>;
+  contactListVersion: number;
+  eventSince: number;
   getPrivateMessagesEpochSubscriptionRefreshTimerId: () => ReturnType<
     typeof globalThis.setTimeout
   > | null;
   groupContactRefreshPromises: { clear: () => void };
   hasNip07Extension: () => boolean;
-  isRestoringStartupState: Ref<boolean>;
+  isRestoringStartupState: boolean;
   loggedInvalidGroupEpochConflictKeys: { clear: () => void };
   ndk: NostrClient;
   pendingContactCursorPublishStates: { clear: () => void };
@@ -79,7 +78,7 @@ interface AuthSessionRuntimeDeps {
   pendingIncomingReactions: { clear: () => void };
   relayConnectRetryStateByUrl: { clear: () => void };
   relayConnectPromises: { clear: () => void };
-  relayStatusVersion: Ref<number>;
+  relayStatusVersion: number;
   resetContactSubscriptionsRuntimeState: (reason?: string) => void;
   resetCalls?: () => void;
   resetEventSinceForFreshLogin: () => void;
@@ -114,61 +113,58 @@ interface AuthSessionRuntimeDeps {
   stopPrivateMessagesSubscription: (reason?: string) => void;
 }
 
-export function createAuthSessionRuntime({
-  authenticatedRelayUrls,
-  backgroundGroupContactRefreshStartedAt,
-  bumpDeveloperDiagnosticsVersion,
-  chatStoreClearAllComposerDrafts,
-  clearDeveloperTraceEntries,
-  clearNip65RelayStoreState,
-  clearPrivateMessagesBackfillState,
-  clearPrivatePreferencesStorage,
-  clearRelayStoreState,
-  clearStoredPrivateMessagesLastReceivedCreatedAt,
-  configuredRelayUrls,
-  contactListVersion,
-  eventSince,
-  getPrivateMessagesEpochSubscriptionRefreshTimerId,
-  groupContactRefreshPromises,
-  hasNip07Extension,
-  isRestoringStartupState,
-  loggedInvalidGroupEpochConflictKeys,
-  ndk,
-  pendingContactCursorPublishStates,
-  pendingContactCursorPublishTimers,
-  pendingEventSinceState,
-  pendingIncomingDeletions,
-  pendingIncomingReactions,
-  relayConnectRetryStateByUrl,
-  relayConnectPromises,
-  relayStatusVersion,
-  resetContactSubscriptionsRuntimeState,
-  resetCalls,
-  resetEventSinceForFreshLogin,
-  resetGroupRosterSubscriptionRuntimeState,
-  resetMyRelayListRuntimeState,
-  resetMuteListRuntimeState,
-  resetOutboundMessageReplayRuntimeState,
-  resetPrivateContactListRuntimeState,
-  resetPrivateMessagesBackfillRuntimeState,
-  resetReconnectHealingRuntimeState,
-  resetPrivateMessagesIngestRuntimeState,
-  resetPrivateMessagesSubscriptionRuntimeState,
-  resetPrivateMessagesUiRuntimeState,
-  resetStartupSessionInitialization,
-  resetStartupStepTracking,
-  resetTrackedContactEventState,
-  restoreRuntimeState,
-  setCachedSigner,
-  setCachedSignerSessionKey,
-  setPendingPrivateMessagesEpochSubscriptionRefreshOptions,
-  setPrivateMessagesEpochSubscriptionRefreshQueue,
-  setPrivateMessagesEpochSubscriptionRefreshTimerId,
-  setRestoreStartupStatePromise,
-  setSyncLoggedInContactProfilePromise,
-  setSyncRecentChatContactsPromise,
-  stopPrivateMessagesSubscription,
-}: AuthSessionRuntimeDeps) {
+export function createAuthSessionRuntime(state: AuthSessionRuntimeDeps) {
+  const {
+    authenticatedRelayUrls,
+    backgroundGroupContactRefreshStartedAt,
+    bumpDeveloperDiagnosticsVersion,
+    chatStoreClearAllComposerDrafts,
+    clearDeveloperTraceEntries,
+    clearNip65RelayStoreState,
+    clearPrivateMessagesBackfillState,
+    clearPrivatePreferencesStorage,
+    clearRelayStoreState,
+    clearStoredPrivateMessagesLastReceivedCreatedAt,
+    configuredRelayUrls,
+    getPrivateMessagesEpochSubscriptionRefreshTimerId,
+    groupContactRefreshPromises,
+    hasNip07Extension,
+    loggedInvalidGroupEpochConflictKeys,
+    ndk,
+    pendingContactCursorPublishStates,
+    pendingContactCursorPublishTimers,
+    pendingEventSinceState,
+    pendingIncomingDeletions,
+    pendingIncomingReactions,
+    relayConnectRetryStateByUrl,
+    relayConnectPromises,
+    resetContactSubscriptionsRuntimeState,
+    resetCalls,
+    resetEventSinceForFreshLogin,
+    resetGroupRosterSubscriptionRuntimeState,
+    resetMyRelayListRuntimeState,
+    resetMuteListRuntimeState,
+    resetOutboundMessageReplayRuntimeState,
+    resetPrivateContactListRuntimeState,
+    resetPrivateMessagesBackfillRuntimeState,
+    resetReconnectHealingRuntimeState,
+    resetPrivateMessagesIngestRuntimeState,
+    resetPrivateMessagesSubscriptionRuntimeState,
+    resetPrivateMessagesUiRuntimeState,
+    resetStartupSessionInitialization,
+    resetStartupStepTracking,
+    resetTrackedContactEventState,
+    restoreRuntimeState,
+    setCachedSigner,
+    setCachedSignerSessionKey,
+    setPendingPrivateMessagesEpochSubscriptionRefreshOptions,
+    setPrivateMessagesEpochSubscriptionRefreshQueue,
+    setPrivateMessagesEpochSubscriptionRefreshTimerId,
+    setRestoreStartupStatePromise,
+    setSyncLoggedInContactProfilePromise,
+    setSyncRecentChatContactsPromise,
+    stopPrivateMessagesSubscription,
+  } = state;
   let cachedPrivateKeyHex: string | null = null;
   let loadPrivateKeyHexPromise: Promise<string | null> | null = null;
   let privateKeyGeneration = 0;
@@ -232,7 +228,8 @@ export function createAuthSessionRuntime({
 
   function isSecurePrivateKeyStorageAvailable(): boolean {
     return (
-      isAndroidSecurePrivateKeyStorageAvailable() || isElectronSecurePrivateKeyStorageAvailable()
+      isAndroidSecurePrivateKeyStorageAvailable() ||
+      isElectronSecurePrivateKeyStorageAvailable()
     );
   }
 
@@ -255,7 +252,8 @@ export function createAuthSessionRuntime({
   function readSecurePrivateKeyHex(): Promise<string | null> {
     return queueSecureStorage(async () => {
       if (isAndroidSecurePrivateKeyStorageAvailable()) return readAndroidSecurePrivateKeyHex();
-      if (isElectronSecurePrivateKeyStorageAvailable()) return readElectronSecurePrivateKeyHex();
+      if (isElectronSecurePrivateKeyStorageAvailable())
+        return readElectronSecurePrivateKeyHex();
       return null;
     });
   }
@@ -577,9 +575,9 @@ export function createAuthSessionRuntime({
   async function logout(): Promise<void> {
     clearPrivateKey({ clearSecureStorage: false });
     await removePersistedSecurePrivateKey();
-    eventSince.value = 0;
+    state.eventSince = 0;
     pendingEventSinceState.pendingEventSinceUpdate = 0;
-    isRestoringStartupState.value = false;
+    state.isRestoringStartupState = false;
     setRestoreStartupStatePromise(null);
     setSyncLoggedInContactProfilePromise(null);
     setSyncRecentChatContactsPromise(null);
@@ -596,8 +594,8 @@ export function createAuthSessionRuntime({
     setPendingPrivateMessagesEpochSubscriptionRefreshOptions(null);
     setPrivateMessagesEpochSubscriptionRefreshQueue(Promise.resolve());
     loggedInvalidGroupEpochConflictKeys.clear();
-    contactListVersion.value = 0;
-    relayStatusVersion.value += 1;
+    state.contactListVersion = 0;
+    state.relayStatusVersion += 1;
     clearRelayStoreState();
     clearNip65RelayStoreState();
 

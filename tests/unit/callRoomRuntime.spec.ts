@@ -1,4 +1,4 @@
-import { createCallRoomRuntime } from '#src/stores/nostr/callRoomRuntime.ts';
+import { createCallRoomRuntime } from '#src/stores/nostr/callRoomRuntime.svelte.ts';
 import {
   type CallRoomLink,
   type CallRoomMember,
@@ -131,7 +131,7 @@ describe('link-based Iroh call rooms', () => {
     const oldTrack = new Track('video');
     resolve(new MediaStream([oldTrack] as unknown as MediaStreamTrack[]));
     await pending;
-    expect(h.runtime.localScreenStream.value).toBe(current);
+    expect(h.runtime.localScreenStream).toBe(current);
     expect(oldTrack.stop).toHaveBeenCalledOnce();
     expect(newTrack.stop).not.toHaveBeenCalled();
   });
@@ -140,10 +140,10 @@ describe('link-based Iroh call rooms', () => {
     await h.runtime.create();
     await h.runtime.selectCamera('camera-2');
     expect(h.deps.media.getCamera).not.toHaveBeenCalled();
-    expect(h.runtime.cameraMuted.value).toBe(true);
+    expect(h.runtime.cameraMuted).toBe(true);
     await h.runtime.toggleCamera();
     expect(h.deps.media.getCamera).toHaveBeenLastCalledWith('camera-2');
-    const previous = h.runtime.localStream.value?.getVideoTracks()[0];
+    const previous = h.runtime.localStream?.getVideoTracks()[0];
     h.deps.media.getCamera.mockRejectedValueOnce(new DOMException('Busy', 'NotReadableError'));
     await h.runtime.selectCamera('busy');
     expect(previous?.stop).not.toHaveBeenCalled();
@@ -154,20 +154,20 @@ describe('link-based Iroh call rooms', () => {
     );
     await h.runtime.selectCamera('camera-3');
     expect(previous?.stop).toHaveBeenCalledOnce();
-    expect(h.runtime.cameraDeviceId.value).toBe('camera-3');
+    expect(h.runtime.cameraDeviceId).toBe('camera-3');
     expect(h.microphone.stop).not.toHaveBeenCalled();
-    expect(h.runtime.busy.value).toBe(true);
+    expect(h.runtime.busy).toBe(true);
   });
   it('reserves one room and captures input only once, then closes all tracks', async () => {
     const h = setup();
     await Promise.all([h.runtime.create(), h.runtime.create()]);
     expect(h.deps.media.getMedia).toHaveBeenCalledOnce();
-    expect(h.runtime.session.value?.phase).toBe('active');
-    expect(h.runtime.session.value?.link.secret).toMatch(/^[0-9a-f]{64}$/);
-    expect(h.runtime.session.value?.members).toHaveLength(1);
+    expect(h.runtime.session?.phase).toBe('active');
+    expect(h.runtime.session?.link.secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(h.runtime.session?.members).toHaveLength(1);
     h.runtime.leave();
     expect(h.microphone.stop).toHaveBeenCalledOnce();
-    expect(h.runtime.localStream.value).toBeNull();
+    expect(h.runtime.localStream).toBeNull();
   });
   it('shares each participant’s own chosen name through join and roster controls', async () => {
     const host = setup();
@@ -175,7 +175,7 @@ describe('link-based Iroh call rooms', () => {
     host.deps.getIdentity = async () => ({ name: 'Host chosen name', relays: ['wss://relay.example'] });
     guest.deps.getIdentity = async () => ({ name: 'Guest chosen name', relays: ['wss://relay.example'] });
     await host.runtime.create();
-    const link = host.runtime.session.value!.link;
+    const link = host.runtime.session!.link;
     await guest.runtime.join(link);
     const request = guest.deps.send.mock.calls.find(([, body]) => body.action === 'join')![1];
     expect(request.member.name).toBe('Guest chosen name');
@@ -183,11 +183,11 @@ describe('link-based Iroh call rooms', () => {
     await host.runtime.receive('b'.repeat(64), request);
     const roster = host.deps.send.mock.calls.find(([, body]) => body.action === 'roster')![1];
     await guest.runtime.receive(link.host, roster);
-    expect(host.runtime.session.value!.members.map((member) => member.name)).toEqual([
+    expect(host.runtime.session!.members.map((member) => member.name)).toEqual([
       'Host chosen name',
       'Guest chosen name',
     ]);
-    expect(guest.runtime.session.value!.members).toEqual(host.runtime.session.value!.members);
+    expect(guest.runtime.session!.members).toEqual(host.runtime.session!.members);
     expect(JSON.stringify(roster)).not.toContain('css');
   });
   it.each([false, true])(
@@ -195,7 +195,7 @@ describe('link-based Iroh call rooms', () => {
     async (dismiss) => {
       const h = setup();
       await h.runtime.create();
-      const first = h.runtime.session.value!.link;
+      const first = h.runtime.session!.link;
       const oldJoin = join(first);
       h.runtime.leave();
       if (dismiss) h.runtime.dismiss();
@@ -204,17 +204,17 @@ describe('link-based Iroh call rooms', () => {
         new MediaStream([new Track('audio')] as unknown as MediaStreamTrack[]),
       );
       await h.runtime.create();
-      expect(h.runtime.session.value!.phase).toBe('active');
-      const second = h.runtime.session.value!.link;
+      expect(h.runtime.session!.phase).toBe('active');
+      const second = h.runtime.session!.link;
       expect(second.id).not.toBe(first.id);
       expect(second.secret).not.toBe(first.secret);
-      expect(h.runtime.session.value!.own.sessionId).not.toBe(first.id);
+      expect(h.runtime.session!.own.sessionId).not.toBe(first.id);
       await h.runtime.receive('b'.repeat(64), oldJoin);
-      expect(h.runtime.session.value!.members).toHaveLength(1);
+      expect(h.runtime.session!.members).toHaveLength(1);
       await h.runtime.receive('b'.repeat(64), { ...join(second), secret: first.secret });
-      expect(h.runtime.session.value!.members).toHaveLength(1);
+      expect(h.runtime.session!.members).toHaveLength(1);
       await h.runtime.receive('b'.repeat(64), join(second));
-      expect(h.runtime.session.value!.members).toHaveLength(2);
+      expect(h.runtime.session!.members).toHaveLength(2);
     },
   );
   it('shares live host and guest name edits without restarting media or accepting stale/spoofed edits', async () => {
@@ -222,7 +222,7 @@ describe('link-based Iroh call rooms', () => {
       guest = setup('b'.repeat(64)),
       observer = setup('c'.repeat(64));
     await host.runtime.create();
-    const link = host.runtime.session.value!.link;
+    const link = host.runtime.session!.link;
     for (const user of [guest, observer]) {
       await user.runtime.join(link);
       await host.runtime.receive(
@@ -244,7 +244,7 @@ describe('link-based Iroh call rooms', () => {
     const endpointCounts = [host, guest, observer].map(
       (user) => user.deps.media.createEndpoint.mock.calls.length,
     );
-    const streams = [host, guest, observer].map((user) => user.runtime.localStream.value);
+    const streams = [host, guest, observer].map((user) => user.runtime.localStream);
     const latestJoin = () =>
       guest.deps.send.mock.calls.filter(([, body]) => body.action === 'join').at(-1)![1];
     await guest.runtime.updateName('Guest first');
@@ -255,31 +255,31 @@ describe('link-based Iroh call rooms', () => {
     await deliverRosters();
     for (const user of [host, observer])
       expect(
-        user.runtime.participants.value.find((member) => member.pubkey === guest.deps.getOwnPubkey())
+        user.runtime.participants.find((member) => member.pubkey === guest.deps.getOwnPubkey())
           ?.name,
       ).toBe('Guest latest');
-    expect(guest.runtime.session.value!.own.name).toBe('Guest latest');
+    expect(guest.runtime.session!.own.name).toBe('Guest latest');
     await host.runtime.receive(guest.deps.getOwnPubkey(), older);
     await host.runtime.receive(observer.deps.getOwnPubkey(), {
       ...latest,
       member: { ...latest.member!, name: 'Spoofed', nameRevision: 100 },
     });
     expect(
-      host.runtime.participants.value.find((member) => member.pubkey === guest.deps.getOwnPubkey())
+      host.runtime.participants.find((member) => member.pubkey === guest.deps.getOwnPubkey())
         ?.name,
     ).toBe('Guest latest');
     await host.runtime.updateName('Host changed');
     await deliverRosters();
     for (const user of [guest, observer])
       expect(
-        user.runtime.participants.value.find((member) => member.pubkey === link.host)?.name,
+        user.runtime.participants.find((member) => member.pubkey === link.host)?.name,
       ).toBe('Host changed');
     for (const [index, user] of [host, guest, observer].entries()) {
-      expect(user.runtime.localStream.value).toBe(streams[index]);
+      expect(user.runtime.localStream).toBe(streams[index]);
       expect(user.deps.media.createEndpoint).toHaveBeenCalledTimes(endpointCounts[index]);
       expect(user.deps.media.getMedia).toHaveBeenCalledOnce();
       expect(user.microphone.stop).not.toHaveBeenCalled();
-      expect(user.runtime.session.value!.phase).toBe('active');
+      expect(user.runtime.session!.phase).toBe('active');
     }
   });
   it('ignores a delayed name lookup after leaving the call', async () => {
@@ -294,19 +294,19 @@ describe('link-based Iroh call rooms', () => {
     h.runtime.leave();
     finish({ name: 'Too late', relays: ['wss://relay.example'] });
     await pending;
-    expect(h.runtime.session.value!.own.name).toBe('Alice');
-    expect(h.runtime.session.value!.phase).toBe('ended');
+    expect(h.runtime.session!.own.name).toBe('Alice');
+    expect(h.runtime.session!.phase).toBe('ended');
   });
   it('requires the link secret and authenticated joining identity', async () => {
     const h = setup();
     await h.runtime.create();
-    const link = h.runtime.session.value?.link;
+    const link = h.runtime.session?.link;
     const request = join(link);
     await h.runtime.receive('b'.repeat(64), { ...request, secret: 'f'.repeat(64) });
     await h.runtime.receive('c'.repeat(64), request);
-    expect(h.runtime.session.value?.members).toHaveLength(1);
+    expect(h.runtime.session?.members).toHaveLength(1);
     await h.runtime.receive('b'.repeat(64), request);
-    expect(h.runtime.session.value?.members).toHaveLength(2);
+    expect(h.runtime.session?.members).toHaveLength(2);
     expect(h.deps.send).toHaveBeenCalledWith(
       'b'.repeat(64),
       expect.objectContaining({ action: 'roster', revision: 2 }),
@@ -316,15 +316,15 @@ describe('link-based Iroh call rooms', () => {
   it('caps rooms at six members and ignores blocked users even with the link', async () => {
     const h = setup();
     await h.runtime.create();
-    const link = h.runtime.session.value?.link;
+    const link = h.runtime.session?.link;
     h.deps.isBlocked.mockReturnValueOnce(true);
     await h.runtime.receive('b'.repeat(64), join(link));
-    expect(h.runtime.session.value?.members).toHaveLength(1);
+    expect(h.runtime.session?.members).toHaveLength(1);
     for (const digit of ['b', 'c', 'd', 'e', 'f'])
       await h.runtime.receive(digit.repeat(64), join(link, digit.repeat(64)));
     const extra = '1'.repeat(64);
     await h.runtime.receive(extra, join(link, extra));
-    expect(h.runtime.session.value?.members).toHaveLength(6);
+    expect(h.runtime.session?.members).toHaveLength(6);
     expect(h.deps.send).toHaveBeenCalledWith(
       extra,
       expect.objectContaining({ action: 'rejected', reason: 'full' }),
@@ -341,42 +341,42 @@ describe('link-based Iroh call rooms', () => {
       relays: ['wss://relay.example'],
     };
     await h.runtime.join(link);
-    const own = h.runtime.session.value?.own;
+    const own = h.runtime.session?.own;
     const host = { pubkey: link.host, sessionId: link.id, name: 'Host', relays: link.relays };
     const roster = signal(link, { action: 'roster', members: [host, own], revision: 2 });
     await h.runtime.receive('d'.repeat(64), roster);
-    expect(h.runtime.session.value?.phase).toBe('joining');
+    expect(h.runtime.session?.phase).toBe('joining');
     await h.runtime.receive(link.host, roster);
-    expect(h.runtime.session.value?.phase).toBe('active');
+    expect(h.runtime.session?.phase).toBe('active');
     await h.runtime.receive(link.host, { ...roster, revision: 1, members: [host] });
-    expect(h.runtime.session.value?.phase).toBe('active');
-    expect(h.runtime.session.value?.members).toHaveLength(2);
+    expect(h.runtime.session?.phase).toBe('active');
+    expect(h.runtime.session?.members).toHaveLength(2);
     await h.runtime.receive(link.host, signal(link, { action: 'closed' }));
-    expect(h.runtime.session.value?.phase).toBe('ended');
+    expect(h.runtime.session?.phase).toBe('ended');
     expect(h.microphone.stop).toHaveBeenCalled();
   });
   it('ignores stale joins and departures after a participant rejoins', async () => {
     const h = setup();
     await h.runtime.create();
-    const link = h.runtime.session.value?.link;
+    const link = h.runtime.session?.link;
     const first = join(link);
     const second = join(link);
     await h.runtime.receive('b'.repeat(64), first);
     await h.runtime.receive('b'.repeat(64), second);
     await h.runtime.receive('b'.repeat(64), first);
-    expect(h.runtime.session.value?.members[1]?.sessionId).toBe(second.senderSession);
+    expect(h.runtime.session?.members[1]?.sessionId).toBe(second.senderSession);
     await h.runtime.receive(
       'b'.repeat(64),
       signal(link, { action: 'leave', senderSession: first.senderSession })
     );
-    expect(h.runtime.session.value?.members).toHaveLength(2);
+    expect(h.runtime.session?.members).toHaveLength(2);
     await h.runtime.receive(
       'b'.repeat(64),
       signal(link, { action: 'leave', senderSession: second.senderSession })
     );
-    expect(h.runtime.session.value?.members).toHaveLength(1);
+    expect(h.runtime.session?.members).toHaveLength(1);
     await h.runtime.receive('b'.repeat(64), second);
-    expect(h.runtime.session.value?.members).toHaveLength(1);
+    expect(h.runtime.session?.members).toHaveLength(1);
     expect(h.microphone.stop).not.toHaveBeenCalled();
   });
   it('cleans up capture which completes after cancellation', async () => {
@@ -393,7 +393,7 @@ describe('link-based Iroh call rooms', () => {
     complete(h.stream);
     await starting;
     expect(h.microphone.stop).toHaveBeenCalledOnce();
-    expect(h.runtime.localStream.value).toBeNull();
+    expect(h.runtime.localStream).toBeNull();
     expect(h.deps.send).not.toHaveBeenCalled();
   });
   it('times out joining an offline host and releases media', async () => {
@@ -407,15 +407,15 @@ describe('link-based Iroh call rooms', () => {
       relays: ['wss://relay.example'],
     });
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.runtime.error.value).toBe('room.error.timeout');
+    expect(h.runtime.error).toBe('room.error.timeout');
     expect(h.microphone.stop).toHaveBeenCalled();
-    expect(h.runtime.busy.value).toBe(false);
+    expect(h.runtime.busy).toBe(false);
   });
   it('refuses starting a room during another call', async () => {
     const h = setup();
     h.deps.otherCallBusy.mockReturnValue(true);
     await h.runtime.create();
-    expect(h.runtime.error.value).toBe('room.error.busy');
+    expect(h.runtime.error).toBe('room.error.busy');
     expect(h.deps.media.getMedia).not.toHaveBeenCalled();
   });
 });

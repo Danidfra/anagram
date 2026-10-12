@@ -1,4 +1,4 @@
-import { createGroupHistoryRuntime } from '#src/stores/nostr/groupHistoryRuntime.ts';
+import { createGroupHistoryRuntime } from '#src/stores/nostr/groupHistoryRuntime.svelte.ts';
 import { createThreadHistoryRuntime } from '#src/stores/nostr/threadHistoryRuntime.ts';
 import { MESSAGE_HYDRATION_VERSION } from '#src/lib/nostr/hydrationVersion.ts';
 import { messageInbox } from '#src/lib/nostr/inbox.ts';
@@ -184,7 +184,10 @@ export function createPrivateMessagesBackfillRuntime({
   let historyAbort: AbortController | null = null;
   const coverage = createHistoryCoverage(getLoggedInPublicKeyHex);
   const historyRelaySeeds = new Set<string>();
-  const missingMessageDependencyRepairs = new Map<string, MissingMessageDependencyRepairState>();
+  const missingMessageDependencyRepairs = new Map<
+    string,
+    MissingMessageDependencyRepairState
+  >();
 
   function normalizeRepairDelayMs(value: number): number {
     return Math.max(0, Math.floor(value));
@@ -205,7 +208,10 @@ export function createPrivateMessagesBackfillRuntime({
     return normalizedValue > 0 ? normalizedValue : null;
   }
 
-  function mergeSeedRelayUrls(currentRelayUrls: string[], nextRelayUrls: string[] = []): string[] {
+  function mergeSeedRelayUrls(
+    currentRelayUrls: string[],
+    nextRelayUrls: string[] = [],
+  ): string[] {
     return Array.from(
       new Set(
         [...currentRelayUrls, ...nextRelayUrls]
@@ -332,123 +338,136 @@ export function createPrivateMessagesBackfillRuntime({
         while (!pager.done) {
           if (cancelled()) throw new Error('History restore cancelled');
           const relaySet = NostrRelaySet.fromRelayUrls([relayUrl], ndk, false);
-          const page = await new Promise<{ count: number; oldest: number }>((resolve, reject) => {
-            let settled = false,
-              receivedEose = false,
-              count = 0,
-              oldest = Infinity;
-            let subscription: ReturnType<NostrClient['subscribe']> | undefined;
-            const ingestions: Array<Promise<boolean | void>> = [];
-            const finish = (error?: unknown) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(deadline);
-              options.signal?.removeEventListener('abort', aborted);
-              if (subscription) {
-                historySubscriptions.delete(subscription);
-                subscription.stop();
-              }
-              if (error) reject(error);
-              else resolve({ count, oldest });
-            };
-            const aborted = () => finish(new Error('Thread history cancelled'));
-            const deadline = setTimeout(
-              () => finish(new Error('Message history relay timed out')),
-              options.timeoutMs ?? 30000,
-            );
-            options.signal?.addEventListener('abort', aborted, { once: true });
-            if (cancelled()) {
-              aborted();
-              return;
-            }
-            try {
-              subscription = subscribeWithReqLogging(
-                'private-messages',
-                options.requestLabel ?? 'private-messages-backfill',
-                {
-                  kinds: [NostrKind.GiftWrap],
-                  '#p': options.recipientPubkeys,
-                  since: pager.since,
-                  until: pager.until,
-                  limit: pageLimit(),
-                },
-                {
-                  relaySet,
-                  cacheUsage: NostrSubscriptionCacheUsage.ONLY_RELAY,
-                  closeOnEose: true,
-                  onEvent: (event) => {
-                    if (settled || receivedEose || cancelled()) return;
-                    const wrap = event instanceof ClientEvent ? event : new ClientEvent(ndk, event);
-                    if (
-                      count >= pageLimit() ||
-                      !Number.isFinite(wrap.created_at) ||
-                      wrap.created_at! < pager.since ||
-                      wrap.created_at! > pager.until
-                    ) {
-                      finish(new Error('Relay returned an invalid history page'));
-                      return;
-                    }
-                    count++;
-                    eventCount++;
-                    oldest = Math.min(oldest, wrap.created_at ?? Infinity);
-                    if (options.startupTaskId)
-                      updateStartupInternalTask('message-history-restore', options.startupTaskId, {
-                        eventCount,
-                      });
-                    ingestions.push(
-                      Promise.resolve(
-                        queuePrivateMessageIngestion(wrap, options.loggedInPubkeyHex, {
-                          uiThrottleMs: options.foreground
-                            ? 0
-                            : PRIVATE_MESSAGES_STARTUP_RESTORE_THROTTLE_MS,
-                          ...(options.foreground ? { priority: 'foreground' as const } : {}),
-                          ...(options.reprocess ? { reprocess: true } : {}),
-                        }),
-                      ).then(async (accepted) => {
-                        if (cancelled()) throw new Error('History restore cancelled');
-                        // An undecryptable envelope must not trap paging on this
-                        // window. Its ciphertext stays in the account's durable
-                        // inbox for replay when keys/signer become available.
-                        if (
-                          accepted === false &&
-                          !(await messageInbox.hasPending(options.loggedInPubkeyHex, wrap.id))
-                        )
-                          throw new Error('History message has not committed');
-                        if (cancelled()) throw new Error('History restore cancelled');
-                        updateStoredPrivateMessagesLastReceivedFromCreatedAt(wrap.created_at);
-                        updateStoredEventSinceFromCreatedAt(wrap.created_at);
-                        return accepted;
-                      }),
-                    );
-                    // Attach a rejection handler immediately; EOSE still awaits the result.
-                    void ingestions[ingestions.length - 1]!.catch(() => {});
-                  },
-                  onEose: () => {
-                    receivedEose = true;
-                    clearTimeout(deadline);
-                    // The adapter closes after EOSE; disk work can complete afterwards.
-                    if (subscription) historySubscriptions.delete(subscription);
-                    void Promise.all(ingestions).then(() => finish(), finish);
-                  },
-                  onClose: () => {
-                    if (!receivedEose) finish(new Error('Message history closed before EOSE'));
-                  },
-                },
-                {
-                  ...options.details,
-                  signature: options.signature,
-                  relayUrl,
-                  since: pager.since,
-                  until: pager.until,
-                  limit: pageLimit(),
-                },
+          const page = await new Promise<{ count: number; oldest: number }>(
+            (resolve, reject) => {
+              let settled = false,
+                receivedEose = false,
+                count = 0,
+                oldest = Infinity;
+              let subscription: ReturnType<NostrClient['subscribe']> | undefined;
+              const ingestions: Array<Promise<boolean | void>> = [];
+              const finish = (error?: unknown) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(deadline);
+                options.signal?.removeEventListener('abort', aborted);
+                if (subscription) {
+                  historySubscriptions.delete(subscription);
+                  subscription.stop();
+                }
+                if (error) reject(error);
+                else resolve({ count, oldest });
+              };
+              const aborted = () => finish(new Error('Thread history cancelled'));
+              const deadline = setTimeout(
+                () => finish(new Error('Message history relay timed out')),
+                options.timeoutMs ?? 30000,
               );
-              if (settled || receivedEose) subscription.stop();
-              else if (!options.signal) historySubscriptions.add(subscription);
-            } catch (error) {
-              finish(error);
-            }
-          });
+              options.signal?.addEventListener('abort', aborted, { once: true });
+              if (cancelled()) {
+                aborted();
+                return;
+              }
+              try {
+                subscription = subscribeWithReqLogging(
+                  'private-messages',
+                  options.requestLabel ?? 'private-messages-backfill',
+                  {
+                    kinds: [NostrKind.GiftWrap],
+                    '#p': options.recipientPubkeys,
+                    since: pager.since,
+                    until: pager.until,
+                    limit: pageLimit(),
+                  },
+                  {
+                    relaySet,
+                    cacheUsage: NostrSubscriptionCacheUsage.ONLY_RELAY,
+                    closeOnEose: true,
+                    onEvent: (event) => {
+                      if (settled || receivedEose || cancelled()) return;
+                      const wrap =
+                        event instanceof ClientEvent ? event : new ClientEvent(ndk, event);
+                      if (
+                        count >= pageLimit() ||
+                        !Number.isFinite(wrap.created_at) ||
+                        wrap.created_at! < pager.since ||
+                        wrap.created_at! > pager.until
+                      ) {
+                        finish(new Error('Relay returned an invalid history page'));
+                        return;
+                      }
+                      count++;
+                      eventCount++;
+                      oldest = Math.min(oldest, wrap.created_at ?? Infinity);
+                      if (options.startupTaskId)
+                        updateStartupInternalTask(
+                          'message-history-restore',
+                          options.startupTaskId,
+                          {
+                            eventCount,
+                          },
+                        );
+                      ingestions.push(
+                        Promise.resolve(
+                          queuePrivateMessageIngestion(wrap, options.loggedInPubkeyHex, {
+                            uiThrottleMs: options.foreground
+                              ? 0
+                              : PRIVATE_MESSAGES_STARTUP_RESTORE_THROTTLE_MS,
+                            ...(options.foreground ? { priority: 'foreground' as const } : {}),
+                            ...(options.reprocess ? { reprocess: true } : {}),
+                          }),
+                        ).then(async (accepted) => {
+                          if (cancelled()) throw new Error('History restore cancelled');
+                          // An undecryptable envelope must not trap paging on this
+                          // window. Its ciphertext stays in the account's durable
+                          // inbox for replay when keys/signer become available.
+                          if (
+                            accepted === false &&
+                            !(await messageInbox.hasPending(
+                              options.loggedInPubkeyHex,
+                              wrap.id,
+                            ))
+                          )
+                            throw new Error('History message has not committed');
+                          if (cancelled()) throw new Error('History restore cancelled');
+                          updateStoredPrivateMessagesLastReceivedFromCreatedAt(
+                            wrap.created_at,
+                          );
+                          updateStoredEventSinceFromCreatedAt(wrap.created_at);
+                          return accepted;
+                        }),
+                      );
+                      // Attach a rejection handler immediately; EOSE still awaits the result.
+                      void ingestions[ingestions.length - 1]!.catch(() => {});
+                    },
+                    onEose: () => {
+                      receivedEose = true;
+                      clearTimeout(deadline);
+                      // The adapter closes after EOSE; disk work can complete afterwards.
+                      if (subscription) historySubscriptions.delete(subscription);
+                      void Promise.all(ingestions).then(() => finish(), finish);
+                    },
+                    onClose: () => {
+                      if (!receivedEose)
+                        finish(new Error('Message history closed before EOSE'));
+                    },
+                  },
+                  {
+                    ...options.details,
+                    signature: options.signature,
+                    relayUrl,
+                    since: pager.since,
+                    until: pager.until,
+                    limit: pageLimit(),
+                  },
+                );
+                if (settled || receivedEose) subscription.stop();
+                else if (!options.signal) historySubscriptions.add(subscription);
+              } catch (error) {
+                finish(error);
+              }
+            },
+          );
           if (cancelled()) throw new Error('History restore cancelled');
           oldestEvent = Math.min(oldestEvent, page.oldest);
           if (!options.probe) pager.advance(page.count, page.oldest);
@@ -657,7 +676,9 @@ export function createPrivateMessagesBackfillRuntime({
       repairReason: state.reason,
       attemptIndex: state.attemptIndex,
       recipientCount: repairTarget.recipientPubkeys.length,
-      recipients: repairTarget.recipientPubkeys.map((value) => formatSubscriptionLogValue(value)),
+      recipients: repairTarget.recipientPubkeys.map((value) =>
+        formatSubscriptionLogValue(value),
+      ),
       groupPublicKey: formatSubscriptionLogValue(repairTarget.groupPublicKey),
       windowSeconds,
       ...buildFilterSinceDetails(since),
@@ -759,7 +780,10 @@ export function createPrivateMessagesBackfillRuntime({
     const currentAttemptPromise = (async () => {
       try {
         const found = await runMissingMessageDependencyRepairAttempt(state);
-        if (missingMessageDependencyRepairs.get(state.targetEventId) !== state || state.cancelled) {
+        if (
+          missingMessageDependencyRepairs.get(state.targetEventId) !== state ||
+          state.cancelled
+        ) {
           return found;
         }
 
@@ -806,7 +830,10 @@ export function createPrivateMessagesBackfillRuntime({
           state.targetEventId,
           error,
         );
-        if (missingMessageDependencyRepairs.get(state.targetEventId) !== state || state.cancelled) {
+        if (
+          missingMessageDependencyRepairs.get(state.targetEventId) !== state ||
+          state.cancelled
+        ) {
           return false;
         }
 
@@ -923,7 +950,8 @@ export function createPrivateMessagesBackfillRuntime({
 
     if (options.force === true && state.runningPromise === null) {
       state.attemptIndex = 0;
-      state.minimumWindowIndex = resolveInitialMissingMessageDependencyRepairWindowIndex(options);
+      state.minimumWindowIndex =
+        resolveInitialMissingMessageDependencyRepairWindowIndex(options);
     }
 
     if (state.runningPromise) {
@@ -967,7 +995,9 @@ export function createPrivateMessagesBackfillRuntime({
     if (!owner || !group || !epoch) return;
     const chat = await chatDataService.getChatByPublicKey(group);
     if (!chat || chat.type !== 'group' || chat.meta.deleted_locally === true) return;
-    const recipients = resolveGroupChatEpochEntries(chat).map((entry) => entry.epoch_public_key);
+    const recipients = resolveGroupChatEpochEntries(chat).map(
+      (entry) => entry.epoch_public_key,
+    );
     if (!recipients.includes(epoch)) return;
     if (owner !== getLoggedInPublicKeyHex()) return;
     groupHistory.invalidate(group);
@@ -1003,7 +1033,11 @@ export function createPrivateMessagesBackfillRuntime({
           .filter((pubkey): pubkey is string => Boolean(pubkey)),
       ),
     );
-    if (!normalizedPubkey || relayUrls.length === 0 || normalizedRecipientPubkeys.length === 0) {
+    if (
+      !normalizedPubkey ||
+      relayUrls.length === 0 ||
+      normalizedRecipientPubkeys.length === 0
+    ) {
       completeStartupStep('message-history-restore');
       return;
     }
@@ -1157,7 +1191,10 @@ export function createPrivateMessagesBackfillRuntime({
       },
       onError: (target, error) => {
         failStartupInternalTask('message-history-restore', `history:${target.key}`, error);
-        logSubscription('private-messages', 'backfill-retry', { relayUrl: target.relayUrl, error });
+        logSubscription('private-messages', 'backfill-retry', {
+          relayUrl: target.relayUrl,
+          error,
+        });
       },
     })
       .then(() => {
@@ -1285,9 +1322,12 @@ export function createPrivateMessagesBackfillRuntime({
         if (row?.type === 'group') void groupHistory.load(chat);
         else threadHistory.select(chat, refresh);
       })
-      .catch((error) => logSubscription('private-messages', 'thread-history-error', { error }));
+      .catch((error) =>
+        logSubscription('private-messages', 'thread-history-error', { error }),
+      );
   }
-  const loadOlderGroupHistory = (chat: string, before: number) => groupHistory.load(chat, before);
+  const loadOlderGroupHistory = (chat: string, before: number) =>
+    groupHistory.load(chat, before);
 
   function resetPrivateMessagesBackfillRuntimeState(): void {
     selectedThread = null;
@@ -1305,7 +1345,9 @@ export function createPrivateMessagesBackfillRuntime({
   }
 
   return {
-    groupHistoryState: groupHistory.state,
+    get groupHistoryState() {
+      return groupHistory.state;
+    },
     loadOlderGroupHistory,
     prioritizeThreadHistory,
     repairMissingMessageDependency,

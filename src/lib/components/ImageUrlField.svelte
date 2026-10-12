@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { uploadBlossomMedia } from '#src/services/blossomUploadService.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { previewUrl } from '#src/utils/linkPreview.ts';
 
   export let value: string | undefined = '';

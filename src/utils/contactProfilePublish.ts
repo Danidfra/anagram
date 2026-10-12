@@ -1,4 +1,4 @@
-import type { PublishUserMetadataInput } from '#src/stores/nostrStore.ts';
+import type { PublishUserMetadataInput } from '#src/stores/nostrStore.svelte.ts';
 import type { ContactProfileForm } from '#src/types/contactProfile.ts';
 
 function cleanString(value: string): string | undefined {

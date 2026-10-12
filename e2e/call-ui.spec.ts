@@ -404,7 +404,7 @@ test('group-call shared names use saved local CSS in the call and recording wind
   const peer = 'b'.repeat(64);
   await page.evaluate(async (peer) => {
     const { useCallRoomStore } = await import('/src/stores/callRoomStore.ts');
-    const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+    const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
     const nostr = useNostrStore();
     const own = {
       pubkey: nostr.getLoggedInPublicKeyHex()!,
@@ -799,7 +799,10 @@ test('duplicate controls stay live while the main tray is hidden and close witho
   await page.getByTestId('call-controls-edge').click();
   await page.getByTestId('call-hide-controls').click();
   popup = await open();
-  await popup.getByTestId('call-hangup').click();
+  // Ending the call closes this window during the click itself.
+  await popup.getByTestId('call-hangup').click({ noWaitAfter: true }).catch((error) => {
+    if (!popup.isClosed() || !String(error).includes('has been closed')) throw error;
+  });
   await expect.poll(() => popup.isClosed()).toBe(true);
   await expect(page.getByTestId('call-dismiss')).toBeVisible();
   expect(errors).toEqual([]);

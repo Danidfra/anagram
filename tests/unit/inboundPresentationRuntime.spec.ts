@@ -4,7 +4,7 @@ import {
 } from '#src/services/foregroundMessageActivityService.ts';
 import { createInboundPresentationRuntime } from '#src/stores/nostr/inboundPresentationRuntime.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
+
 
 class TestCustomEvent<T = unknown> extends Event {
   readonly detail: T;
@@ -24,8 +24,8 @@ function createRuntime(options: {
     formatSubscriptionLogValue: (value) => value ?? null,
     getLoggedInPublicKeyHex: () => 'f'.repeat(64),
     getVisibleChatId: () => options.visibleChatId ?? null,
-    isAppForeground: ref(options.foreground),
-    isRestoringStartupState: ref(Boolean(options.restoring)),
+    isAppForeground: options.foreground,
+    isRestoringStartupState: Boolean(options.restoring),
     logDeveloperTrace: vi.fn(),
     normalizeEventId: (value: unknown) =>
       typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null,

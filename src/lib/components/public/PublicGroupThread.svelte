@@ -25,7 +25,7 @@
   export let messageLayout: string = 'bubbles';
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { roomPolicy, publicGroupShareLink } from '#src/stores/nostr/publicGroups.ts';
   import ProfileName from '../ProfileName.svelte';
   import { publicMessageState } from '#src/stores/nostr/publicMessageActions.ts';
@@ -438,7 +438,8 @@
       if (log.scrollTop !== lastScrollTop) actionMessage = undefined;
       lastScrollTop = log.scrollTop;
       if (paging || jumping) return;
-      if (nearBottom && $state.hasNewer) void pageHistory(false);
+      if ($state.hasNewer && log.scrollHeight - log.clientHeight - log.scrollTop <= 1)
+        void pageHistory(false);
     }}
   >
     {#each displayed as message, index (message.id)}

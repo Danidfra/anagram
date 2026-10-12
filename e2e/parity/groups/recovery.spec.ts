@@ -1,4 +1,4 @@
-// Behavioral scenarios ported from original Anagram; Svelte helpers, unlimited hydration.
+// Behavioral scenarios ported from original Anagram; bounded history and on-demand repair.
 import { expect, test } from '@playwright/test';
 import {
   acceptFirstRequest,
@@ -13,6 +13,7 @@ import {
   openGroupContact,
   openGroupEpochsTab,
   openRequests,
+  openReplyPreview,
   readGroupEpochNumbers,
   reloadAndWaitForApp,
   removeStoredMessageByEventId,
@@ -158,12 +159,18 @@ test('member restart restores group history from both the current and prior epoc
     bob = await bootstrapUser(browser, TEST_ACCOUNTS.groupEpochHistoryBob);
 
     await navigateToChat(bob.page, groupPublicKey);
-    await waitForThreadMessage(bob.page, epochZeroMessage, {
-      chatId: groupPublicKey,
-    });
     await waitForThreadMessage(bob.page, epochOneMessage, {
       chatId: groupPublicKey,
     });
+    // Fresh sessions load a bounded recent window. Earlier epochs are requested
+    // through history paging, rather than requiring an eager full-group restore.
+    await expect(async () => {
+      const older = threadMessage(bob.page, epochZeroMessage);
+      if (!(await older.isVisible())) {
+        await bob.page.getByTestId('thread-load-older').click({ timeout: 1500 });
+      }
+      await expect(older).toBeVisible({ timeout: 1500 });
+    }).toPass({ timeout: 30000, intervals: [250, 500] });
 
     await openGroupContact(bob.page, groupPublicKey);
     await openGroupEpochsTab(bob.page);
@@ -227,8 +234,7 @@ test('missing prior-epoch reply targets are restored after restart', async ({ br
     });
 
     await rotateGroupEpoch(owner.page, groupPublicKey, [bob.session.publicKey], [E2E_RELAY_URL]);
-    // Remove the persisted copy. Unlimited hydration may recover it immediately;
-    // do not require an artificial period in which the message stays missing.
+    // Remove the persisted copy so opening the reply can exercise targeted repair.
     await removeStoredMessageByEventId(bob.page, groupPublicKey, seededTarget.eventId);
     await navigateToChat(owner.page, groupPublicKey);
     await waitForThreadMessage(owner.page, epochZeroMessage, {
@@ -248,6 +254,7 @@ test('missing prior-epoch reply targets are restored after restart', async ({ br
     await waitForThreadMessage(bob.page, epochOneReplyMessage, {
       chatId: groupPublicKey,
     });
+    await openReplyPreview(bob.page, epochOneReplyMessage);
     await waitForThreadMessage(bob.page, epochZeroMessage, {
       chatId: groupPublicKey,
     });

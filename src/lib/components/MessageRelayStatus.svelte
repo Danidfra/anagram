@@ -1,13 +1,12 @@
 <script lang="ts">
   import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import type { Message } from '#src/types/chat.ts';
-  import { computed } from '#src/lib/state/reactivity.ts';
   import {
     useMessageBubbleStatus,
     isRetryableStatusScope,
     type StatusListItem,
   } from '#src/composables/useMessageBubbleStatus.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { locale, translate } from '#src/i18n.ts';
   import { portal } from '#src/lib/actions/portal.ts';
   import Icon from './Icon.svelte';
@@ -31,23 +30,25 @@
     _locale: string,
     publicGroup: boolean,
   ) {
+    if (!message.nostrEvent?.relay_statuses?.length)
+      return { visible: false, outbound: false, title: '', segments: [], sections: [] };
     const state = useMessageBubbleStatus({
-      message: computed(() => message),
-      isMine: computed(() => message.sender === 'me'),
-      contactName: computed(() => name),
-      contactRelayUrls: computed(() => urls),
+      message,
+      isMine: message.sender === 'me',
+      contactName: name,
+      contactRelayUrls: urls,
     });
     return {
-      visible: state.hasRelayStatuses.value,
-      outbound: state.showOutboundStatus.value,
-      title: state.statusDialogTitle.value,
-      segments: state.statusSegments.value,
+      visible: state.hasRelayStatuses,
+      outbound: state.showOutboundStatus,
+      title: state.statusDialogTitle,
+      segments: state.statusSegments,
       sections:
-        publicGroup && state.showOutboundStatus.value
-          ? state.statusSections.value
+        publicGroup && state.showOutboundStatus
+          ? state.statusSections
               .filter((s) => s.key === 'recipient')
               .map((s) => ({ ...s, title: name || 'Group relays' }))
-          : state.statusSections.value,
+          : state.statusSections,
     };
   }
   $: view = viewFor(message, contactName, contactRelayUrls, $locale, publicGroup);

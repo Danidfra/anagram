@@ -50,7 +50,7 @@ async function uploads(page: Page, account: string) {
     });
   });
   await page.evaluate(async (server) => {
-    const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+    const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
     await useNostrStore().saveBlossomServerUrl(server);
   }, server);
   return {
@@ -109,7 +109,7 @@ test('profile pictures and banners upload to the configured Blossom server and p
     await expect(page.getByTestId('profile-banner')).toHaveValue(`${server}/4.png`);
     // Contact hydration must not overwrite an uploaded draft before publication.
     await page.evaluate(async () => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       const nostr = useNostrStore();
       await nostr.refreshContactByPublicKey(nostr.getLoggedInPublicKeyHex()!);
     });

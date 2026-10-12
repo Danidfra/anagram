@@ -2,7 +2,7 @@
   import { onDestroy } from 'svelte';
   import { loadLinkPreview, loadPreviewImage } from '#src/services/linkPreviewService.ts';
   import { previewUrl, type LinkPreview } from '#src/utils/linkPreview.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   export let url: string;
   export let allowed = false;
   export let onopen: (url: string) => void;

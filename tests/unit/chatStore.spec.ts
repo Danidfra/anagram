@@ -1,5 +1,5 @@
 import { nip19 } from '#src/lib/nostr/client.ts';
-import { __chatStoreTestUtils } from '#src/stores/chatStore.ts';
+import { __chatStoreTestUtils } from '#src/stores/chatStore.svelte.ts';
 import { describe, expect, it } from 'vitest';
 
 const {

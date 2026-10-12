@@ -1,6 +1,8 @@
-import NostrClient, { NostrPrivateKeySigner, NostrRelayStatus } from '#src/lib/nostr/client.ts';
+import NostrClient, {
+  NostrPrivateKeySigner,
+  NostrRelayStatus,
+} from '#src/lib/nostr/client.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
 
 const developerTraceDataServiceMock = vi.hoisted(() => ({
   appendEntry: vi.fn(async () => {}),
@@ -32,7 +34,10 @@ vi.mock('#src/utils/browserNotificationPreference.ts', () => ({
 }));
 
 import { createAuthIdentityRuntime } from '#src/stores/nostr/authIdentityRuntime.ts';
-import { AUTH_METHOD_STORAGE_KEY, PUBLIC_KEY_STORAGE_KEY } from '#src/stores/nostr/constants.ts';
+import {
+  AUTH_METHOD_STORAGE_KEY,
+  PUBLIC_KEY_STORAGE_KEY,
+} from '#src/stores/nostr/constants.ts';
 import { createDeveloperRelayRuntime } from '#src/stores/nostr/developerRelayRuntime.ts';
 import {
   createDeveloperTraceRuntime,
@@ -334,13 +339,13 @@ describe('nostr runtime core logic', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-02T00:00:00.000Z'));
 
-    const startupDisplay = ref({
+    let startupDisplay = {
       stepId: null,
       label: null,
       status: null,
       showProgress: false,
-    });
-    const startupSteps = ref(createInitialStartupStepSnapshots());
+    };
+    let startupSteps = createInitialStartupStepSnapshots();
     const startupState = {
       startupDisplayShownAt: 0,
       startupDisplayTimer: null as ReturnType<typeof globalThis.setTimeout> | null,
@@ -348,14 +353,24 @@ describe('nostr runtime core logic', () => {
     };
 
     const runtime = createStartupRuntime({
-      startupDisplay,
+      get startupDisplay() {
+        return startupDisplay;
+      },
+      set startupDisplay(value) {
+        startupDisplay = value;
+      },
       startupState,
-      startupSteps,
+      get startupSteps() {
+        return startupSteps;
+      },
+      set startupSteps(value) {
+        startupSteps = value;
+      },
       startupStepMinProgressMs: 100,
     });
 
     runtime.beginStartupStep('my-relays-restore');
-    expect(startupDisplay.value).toMatchObject({
+    expect(startupDisplay).toMatchObject({
       stepId: 'my-relays-restore',
       status: 'in_progress',
       showProgress: true,
@@ -367,9 +382,9 @@ describe('nostr runtime core logic', () => {
     });
 
     runtime.completeStartupStep('my-relays-restore');
-    expect(startupDisplay.value.status).toBe('in_progress');
+    expect(startupDisplay.status).toBe('in_progress');
     await vi.advanceTimersByTimeAsync(100);
-    expect(startupDisplay.value.status).toBe('success');
+    expect(startupDisplay.status).toBe('success');
 
     const batchTracker = runtime.createStartupBatchTracker('private-contact-relays');
     batchTracker.beginItem();
@@ -413,7 +428,7 @@ describe('nostr runtime core logic', () => {
     });
 
     runtime.resetStartupStepTracking();
-    expect(startupDisplay.value).toEqual({
+    expect(startupDisplay).toEqual({
       stepId: null,
       label: null,
       status: null,
@@ -469,18 +484,35 @@ describe('nostr runtime core logic', () => {
       localStorage: localStorage.api,
     };
 
-    expect(readDeveloperDiagnosticsEnabledFromStorage('developer-diagnostics-enabled')).toBe(false);
+    expect(readDeveloperDiagnosticsEnabledFromStorage('developer-diagnostics-enabled')).toBe(
+      false,
+    );
 
-    const developerDiagnosticsEnabled = ref(true);
-    const developerDiagnosticsVersion = ref(0);
-    const developerTraceVersion = ref(0);
+    let developerDiagnosticsEnabled = true;
+    let developerDiagnosticsVersion = 0;
+    let developerTraceVersion = 0;
     const runtime = createDeveloperTraceRuntime({
-      developerDiagnosticsEnabled,
-      developerDiagnosticsVersion,
+      get developerDiagnosticsEnabled() {
+        return developerDiagnosticsEnabled;
+      },
+      set developerDiagnosticsEnabled(value) {
+        developerDiagnosticsEnabled = value;
+      },
+      get developerDiagnosticsVersion() {
+        return developerDiagnosticsVersion;
+      },
+      set developerDiagnosticsVersion(value) {
+        developerDiagnosticsVersion = value;
+      },
       developerTraceState: {
         developerTraceCounter: 0,
       },
-      developerTraceVersion,
+      get developerTraceVersion() {
+        return developerTraceVersion;
+      },
+      set developerTraceVersion(value) {
+        developerTraceVersion = value;
+      },
       developerDiagnosticsStorageKey: 'developer-diagnostics-enabled',
       getLoggedInPublicKeyHex: () => PUBKEY_A,
     });
@@ -524,7 +556,7 @@ describe('nostr runtime core logic', () => {
       'reqStatement=["REQ","private-messages-1","{\\"kinds\\":[4],\\"limit\\":100}"]',
     ]);
     expect(developerTraceDataServiceMock.appendEntry).toHaveBeenCalledTimes(2);
-    expect(developerTraceVersion.value).toBe(2);
+    expect(developerTraceVersion).toBe(2);
     const consoleSnapshot = vi.mocked(console.info).mock.calls.at(-1)!;
     expect(consoleSnapshot).toHaveLength(1);
     expect(typeof consoleSnapshot[0]).toBe('string');
@@ -534,10 +566,13 @@ describe('nostr runtime core logic', () => {
 
     runtime.setDeveloperDiagnosticsEnabled(false);
     await flushPromises();
-    expect(localStorage.api.setItem).toHaveBeenCalledWith('developer-diagnostics-enabled', '0');
+    expect(localStorage.api.setItem).toHaveBeenCalledWith(
+      'developer-diagnostics-enabled',
+      '0',
+    );
     expect(developerTraceDataServiceMock.clearEntries).toHaveBeenCalledTimes(1);
-    expect(developerDiagnosticsVersion.value).toBe(1);
-    expect(developerDiagnosticsEnabled.value).toBe(false);
+    expect(developerDiagnosticsVersion).toBe(1);
+    expect(developerDiagnosticsEnabled).toBe(false);
   });
 
   it('builds relay diagnostics snapshots and forwards relay lifecycle logs', () => {
@@ -603,9 +638,15 @@ describe('nostr runtime core logic', () => {
         },
       }),
     );
-    expect(logDeveloperTrace).toHaveBeenNthCalledWith(2, 'warn', 'message-relays', 'appended', {
-      relayCount: 1,
-    });
+    expect(logDeveloperTrace).toHaveBeenNthCalledWith(
+      2,
+      'warn',
+      'message-relays',
+      'appended',
+      {
+        relayCount: 1,
+      },
+    );
   });
 
   it('builds inbound message presentation details and browser notifications', async () => {
@@ -654,15 +695,22 @@ describe('nostr runtime core logic', () => {
     };
     process.env.VUE_ROUTER_BASE = '/app';
     process.env.VUE_ROUTER_MODE = 'hash';
-    const isAppForeground = ref(true);
+    let isAppForeground = true;
 
     const runtime = createInboundPresentationRuntime({
       formatSubscriptionLogValue: (value) =>
-        value && value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : (value ?? null),
+        value && value.length > 12
+          ? `${value.slice(0, 6)}...${value.slice(-4)}`
+          : (value ?? null),
       getLoggedInPublicKeyHex: () => PUBKEY_A,
       getVisibleChatId: () => PUBKEY_A,
-      isAppForeground,
-      isRestoringStartupState: ref(false),
+      get isAppForeground() {
+        return isAppForeground;
+      },
+      set isAppForeground(value) {
+        isAppForeground = value;
+      },
+      isRestoringStartupState: false,
       logDeveloperTrace: vi.fn(),
       normalizeEventId: (value) =>
         typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null,
@@ -706,9 +754,9 @@ describe('nostr runtime core logic', () => {
         muted: true,
       }),
     ).toBe(false);
-    expect(await runtime.shouldNotifyForAcceptedChatOnly(PUBKEY_A, { accepted_at: 'now' })).toBe(
-      true,
-    );
+    expect(
+      await runtime.shouldNotifyForAcceptedChatOnly(PUBKEY_A, { accepted_at: 'now' }),
+    ).toBe(true);
     chatDataServiceMock.listMessages.mockResolvedValue([
       {
         author_public_key: PUBKEY_B,
@@ -726,7 +774,7 @@ describe('nostr runtime core logic', () => {
     });
     expect(notifications).toHaveLength(0);
 
-    isAppForeground.value = false;
+    isAppForeground = false;
     runtime.showIncomingMessageBrowserNotification({
       chatPubkey: PUBKEY_B,
       title: 'New message',

@@ -1,4 +1,7 @@
-import { type CallMediaReceiver, callCaptureErrorKey } from '#src/services/callMediaService.ts';
+import {
+  type CallMediaReceiver,
+  callCaptureErrorKey,
+} from '#src/services/callMediaService.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import {
   CALL_CONNECT_TIMEOUT_MS,
@@ -13,7 +16,6 @@ import {
   type CallSignal,
 } from '#src/types/call.ts';
 import { CALL_MIME_TYPES, CALL_VIDEO_MIME_TYPE } from '#src/utils/callSignal.ts';
-import { ref, shallowRef } from '#src/lib/state/reactivity.ts';
 
 export interface CallRuntimeDeps {
   onEnded?(session: CallSession): Promise<void>;
@@ -36,7 +38,7 @@ export interface CallRuntimeDeps {
     mime: string,
     send: (data: Uint8Array) => Promise<void>,
     onError: () => void,
-    options?: { videoBitsPerSecond?: number }
+    options?: { videoBitsPerSecond?: number },
   ): () => void;
 }
 interface Context {
@@ -70,24 +72,24 @@ interface Context {
 }
 
 export function createCallRuntime(deps: CallRuntimeDeps) {
-  const session = shallowRef<CallSession | null>(null);
-  const localStream = shallowRef<MediaStream | null>(null);
-  const remoteMediaUrl = ref('');
-  const remoteVideoUrl = ref('');
-  const remoteScreenUrl = ref('');
-  const localScreenStream = shallowRef<MediaStream | null>(null);
-  const error = ref('');
-  const deviceError = ref('');
-  const microphoneDeviceId = ref('');
-  const cameraDeviceId = ref('');
-  const changingMedia = ref(false);
-  const failureDetail = ref('');
+  let session = $state.raw<CallSession | null>(null);
+  let localStream = $state.raw<MediaStream | null>(null);
+  let remoteMediaUrl = $state('');
+  let remoteVideoUrl = $state('');
+  let remoteScreenUrl = $state('');
+  let localScreenStream = $state.raw<MediaStream | null>(null);
+  let error = $state('');
+  let deviceError = $state('');
+  let microphoneDeviceId = $state('');
+  let cameraDeviceId = $state('');
+  let changingMedia = $state(false);
+  let failureDetail = $state('');
   let context: Context | null = null;
   let generation = 0;
   const tombstones = new Map<string, number>();
   const alive = (ctx: Context) => context === ctx;
   const patch = (value: Partial<CallSession>) => {
-    if (session.value) session.value = { ...session.value, ...value };
+    if (session) session = { ...session, ...value };
   };
   const key = (peer: string, id: string) => `${peer}:${id}`;
   const seen = (peer: string, id: string) =>
@@ -102,7 +104,11 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       if (oldest) tombstones.delete(oldest);
     }
   }
-  function signal(ctx: Context, action: CallSignal['action'], reason?: CallEndReason): CallSignal {
+  function signal(
+    ctx: Context,
+    action: CallSignal['action'],
+    reason?: CallEndReason,
+  ): CallSignal {
     if (action !== 'end' && action !== 'ringing' && !ctx.endpoint)
       throw new Error('Call endpoint is not ready');
     return {
@@ -120,7 +126,10 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         : action === 'ringing'
           ? {}
           : {
-              address: { id: ctx.endpoint?.id() ?? '', relayUrl: ctx.endpoint?.relay_url() ?? '' },
+              address: {
+                id: ctx.endpoint?.id() ?? '',
+                relayUrl: ctx.endpoint?.relay_url() ?? '',
+              },
               mimeType: ctx.mime,
             }),
     };
@@ -148,25 +157,25 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     ctx.receiver?.close();
     ctx.videoReceiver?.close();
     ctx.screenReceiver?.close();
-    localScreenStream.value = null;
-    remoteScreenUrl.value = '';
-    localStream.value = null;
-    remoteMediaUrl.value = '';
-    remoteVideoUrl.value = '';
-    changingMedia.value = false;
+    localScreenStream = null;
+    remoteScreenUrl = '';
+    localStream = null;
+    remoteMediaUrl = '';
+    remoteVideoUrl = '';
+    changingMedia = false;
     patch({ phase: 'ended', endReason: reason });
-    if (ctx.inviteSent && session.value?.direction === 'outgoing' && deps.onEnded) {
-      void deps.onEnded({ ...session.value }).catch(() => {
-        if (session.value?.id === ctx.id && !error.value) error.value = 'call.error.history';
+    if (ctx.inviteSent && session?.direction === 'outgoing' && deps.onEnded) {
+      void deps.onEnded({ ...session }).catch(() => {
+        if (session?.id === ctx.id && !error) error = 'call.error.history';
       });
     }
-    if (notify && (ctx.inviteSent || session.value?.direction === 'incoming'))
+    if (notify && (ctx.inviteSent || session?.direction === 'incoming'))
       void deps.sendSignal(ctx.peer, signal(ctx, 'end', reason)).catch(() => {});
   }
   function fail(ctx: Context, cause?: unknown) {
     if (!alive(ctx)) return;
-    error.value = 'call.error.failed';
-    failureDetail.value =
+    error = 'call.error.failed';
+    failureDetail =
       cause instanceof Error ? cause.message : String(cause ?? 'Call media failed');
     finish(ctx, 'failed');
   }
@@ -177,7 +186,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
   function captureFailed(ctx: Context, cause: unknown) {
     if (!alive(ctx)) return;
     fail(ctx, cause);
-    error.value = callCaptureErrorKey(cause);
+    error = callCaptureErrorKey(cause);
   }
   function confirmPeer(ctx: Context, incoming: CallSignal) {
     ctx.peerConfirmed = true;
@@ -199,7 +208,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     name: string,
     mode: CallMode,
     direction: CallSession['direction'],
-    id: string
+    id: string,
   ): Context {
     const ctx: Context = {
       id,
@@ -217,10 +226,10 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       inviteSent: false,
     };
     context = ctx;
-    error.value = '';
-    failureDetail.value = '';
-    deviceError.value = '';
-    session.value = {
+    error = '';
+    failureDetail = '';
+    deviceError = '';
+    session = {
       id,
       peerPubkey: peer,
       peerName: name,
@@ -238,7 +247,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
   async function prepare(ctx: Context, captureMode: CallMode = ctx.mode) {
     let stream: MediaStream;
     try {
-      stream = await deps.getMedia(captureMode, microphoneDeviceId.value);
+      stream = await deps.getMedia(captureMode, microphoneDeviceId);
     } catch (cause) {
       captureFailed(ctx, cause);
       return false;
@@ -250,10 +259,10 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       return false;
     }
     ctx.stream = stream;
-    localStream.value = stream;
-    microphoneDeviceId.value = stream.getAudioTracks()[0]?.getSettings?.().deviceId ?? '';
+    localStream = stream;
+    microphoneDeviceId = stream.getAudioTracks()[0]?.getSettings?.().deviceId ?? '';
     if (stream.getVideoTracks().length)
-      cameraDeviceId.value = stream.getVideoTracks()[0]?.getSettings?.().deviceId ?? '';
+      cameraDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId ?? '';
     for (const track of stream.getTracks())
       track.onended = () =>
         captureFailed(ctx, new DOMException('Capture device disconnected', 'NotFoundError'));
@@ -263,7 +272,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     } catch (cause) {
       fail(ctx, cause);
       if (cause instanceof WebAssembly.CompileError || cause instanceof SyntaxError)
-        error.value = 'call.error.unsupported';
+        error = 'call.error.unsupported';
       return false;
     }
     if (!alive(ctx)) {
@@ -282,7 +291,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       ctx.splitMedia ? new MediaStream(stream.getAudioTracks()) : stream,
       ctx.splitMedia ? CALL_MIME_TYPES[1] : ctx.mime,
       (frame) => connection.send(frame),
-      () => fail(ctx, new Error('Audio encoder failed'))
+      () => fail(ctx, new Error('Audio encoder failed')),
     );
   }
   async function startVideoRecording(ctx: Context) {
@@ -297,11 +306,13 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         frame[0] = 3;
         return connection.send(frame);
       },
-      () => fail(ctx, new Error('Video encoder failed'))
+      () => fail(ctx, new Error('Video encoder failed')),
     );
   }
   function checkMediaChangeRate(ctx: Context) {
-    ctx.receivedMediaChanges = ctx.receivedMediaChanges.filter((at) => Date.now() - at < 10_000);
+    ctx.receivedMediaChanges = ctx.receivedMediaChanges.filter(
+      (at) => Date.now() - at < 10_000,
+    );
     if (ctx.receivedMediaChanges.length >= 12) throw new Error('Too many media changes');
     ctx.receivedMediaChanges.push(Date.now());
   }
@@ -337,9 +348,9 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
           checkMediaChangeRate(ctx);
           ctx.receiver?.close();
           ctx.receiver = deps.createReceiver(CALL_MIME_TYPES[1], () =>
-            fail(ctx, new Error('Audio decoder failed'))
+            fail(ctx, new Error('Audio decoder failed')),
           );
-          remoteMediaUrl.value = ctx.receiver.url;
+          remoteMediaUrl = ctx.receiver.url;
         } else if (
           data[0] === 5 &&
           data.length === 2 &&
@@ -350,20 +361,20 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
           checkMediaChangeRate(ctx);
           ctx.videoReceiver?.close();
           ctx.videoReceiver = undefined;
-          remoteVideoUrl.value = '';
+          remoteVideoUrl = '';
           if (data[1] === 1) {
             if (!deps.supported('video')) throw new Error('Video is unsupported');
             ctx.videoReceiver = deps.createReceiver(CALL_VIDEO_MIME_TYPE, () =>
-              fail(ctx, new Error('Video decoder failed'))
+              fail(ctx, new Error('Video decoder failed')),
             );
-            remoteVideoUrl.value = ctx.videoReceiver.url;
+            remoteVideoUrl = ctx.videoReceiver.url;
           }
         } else if (
           data[0] === 6 &&
           data.length > 1 &&
           ctx.ready &&
           ctx.splitMedia &&
-          session.value?.screenAvailable &&
+          session?.screenAvailable &&
           ctx.screenReceiver
         ) {
           ctx.screenReceiver.append(data.subarray(1));
@@ -373,17 +384,17 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
           (data[1] === 0 || data[1] === 1) &&
           ctx.ready &&
           ctx.splitMedia &&
-          session.value?.screenAvailable
+          session?.screenAvailable
         ) {
           checkMediaChangeRate(ctx);
           ctx.screenReceiver?.close();
           ctx.screenReceiver = undefined;
-          remoteScreenUrl.value = '';
+          remoteScreenUrl = '';
           if (data[1] === 1) {
             ctx.screenReceiver = deps.createReceiver(CALL_VIDEO_MIME_TYPE, () =>
-              fail(ctx, new Error('Screen decoder failed'))
+              fail(ctx, new Error('Screen decoder failed')),
             );
-            remoteScreenUrl.value = ctx.screenReceiver.url;
+            remoteScreenUrl = ctx.screenReceiver.url;
           }
         } else if (
           data[0] === 8 &&
@@ -416,7 +427,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     armTimeout(ctx, CALL_CONNECT_TIMEOUT_MS);
     try {
       const connection =
-        session.value?.direction === 'outgoing'
+        session?.direction === 'outgoing'
           ? await endpoint.connect(invite.address.id, invite.address.relayUrl, ctx.id)
           : await endpoint.accept(invite.address.id, ctx.id);
       if (!alive(ctx)) {
@@ -425,9 +436,9 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       }
       ctx.connection = connection;
       ctx.receiver = deps.createReceiver(ctx.splitMedia ? CALL_MIME_TYPES[1] : ctx.mime, () =>
-        fail(ctx, new Error('Audio decoder failed'))
+        fail(ctx, new Error('Audio decoder failed')),
       );
-      remoteMediaUrl.value = ctx.receiver.url;
+      remoteMediaUrl = ctx.receiver.url;
       ctx.lastReceivedAt = Date.now();
       ctx.heartbeat = setInterval(() => {
         if (!alive(ctx)) return;
@@ -448,7 +459,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     const peer = inputSanitizerService.normalizeHexKey(peerInput);
     if (!peer || peer === deps.getOwnPubkey() || !deps.getOwnPubkey()) return;
     if (!deps.supported(mode)) {
-      error.value = 'call.error.unsupported';
+      error = 'call.error.unsupported';
       return;
     }
     deps.unlockPlayback?.();
@@ -458,7 +469,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       const contact = await deps.resolvePeer(peer);
       if (!alive(ctx)) return;
       if (!contact) {
-        error.value = 'call.error.unavailable';
+        error = 'call.error.unavailable';
         finish(ctx, 'failed', false);
         return;
       }
@@ -475,7 +486,10 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         if (!ctx.peerConfirmed) throw cause;
       }
       if (alive(ctx) && !ctx.peerConfirmed)
-        ctx.supportTimeout = setTimeout(() => finish(ctx, 'unsupported'), CALL_SUPPORT_TIMEOUT_MS);
+        ctx.supportTimeout = setTimeout(
+          () => finish(ctx, 'unsupported'),
+          CALL_SUPPORT_TIMEOUT_MS,
+        );
     } catch (cause) {
       fail(ctx, cause);
     }
@@ -497,7 +511,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         ctx?.peer === peer &&
         ctx.id === incoming.callId &&
         ctx.mode === incoming.mode &&
-        session.value?.phase === 'outgoing'
+        session?.phase === 'outgoing'
       )
         confirmPeer(ctx, incoming);
       return;
@@ -508,7 +522,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         ctx.id === incoming.callId &&
         incoming.mode === ctx.mode &&
         incoming.mimeType === ctx.mime &&
-        session.value?.phase === 'outgoing'
+        session?.phase === 'outgoing'
       ) {
         confirmPeer(ctx, incoming);
         void connect(ctx, incoming);
@@ -543,7 +557,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
   async function accept(mode?: CallMode) {
     const ctx = context;
     const invite = incomingInvite;
-    if (!ctx || !invite || session.value?.phase !== 'incoming') return;
+    if (!ctx || !invite || session?.phase !== 'incoming') return;
     deps.unlockPlayback?.();
     const captureMode = mode === 'audio' ? 'audio' : ctx.mode;
     patch({ phase: 'preparing', cameraMuted: captureMode === 'audio' });
@@ -567,18 +581,18 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     if (ctx)
       finish(
         ctx,
-        session.value?.phase === 'incoming' ? 'declined' : ctx.ready ? 'hangup' : 'cancelled'
+        session?.phase === 'incoming' ? 'declined' : ctx.ready ? 'hangup' : 'cancelled',
       );
   }
   function sendMuteState(ctx: Context) {
     if (ctx.ready && ctx.peerMuteStateSupported)
       void ctx.connection
-        ?.send(new Uint8Array([8, session.value?.microphoneMuted ? 1 : 0]))
+        ?.send(new Uint8Array([8, session?.microphoneMuted ? 1 : 0]))
         .catch((cause) => fail(ctx, cause));
   }
   function toggleMicrophone() {
-    if (!context?.stream || !session.value) return;
-    const muted = !session.value.microphoneMuted;
+    if (!context?.stream || !session) return;
+    const muted = !session.microphoneMuted;
     context.stream.getAudioTracks().forEach((track) => {
       track.enabled = !muted;
     });
@@ -596,11 +610,11 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     )
       return;
     if (!ctx.splitMedia || !deps.getMicrophone) {
-      deviceError.value = 'call.error.peerUpgrade';
+      deviceError = 'call.error.peerUpgrade';
       return;
     }
-    ctx.changingMedia = changingMedia.value = true;
-    deviceError.value = '';
+    ctx.changingMedia = changingMedia = true;
+    deviceError = '';
     let replacement: MediaStream | undefined;
     try {
       replacement = await deps.getMicrophone(deviceId);
@@ -615,13 +629,13 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       const previous = ctx.stream.getAudioTracks();
       ctx.stopRecording?.();
       for (const track of nextTracks) {
-        track.enabled = !session.value?.microphoneMuted;
+        track.enabled = !session?.microphoneMuted;
         track.onended = () =>
           captureFailed(ctx, new DOMException('Microphone disconnected', 'NotFoundError'));
       }
       ctx.stream = new MediaStream([...nextTracks, ...ctx.stream.getVideoTracks()]);
-      localStream.value = ctx.stream;
-      microphoneDeviceId.value = nextTracks[0]?.getSettings().deviceId ?? deviceId;
+      localStream = ctx.stream;
+      microphoneDeviceId = nextTracks[0]?.getSettings().deviceId ?? deviceId;
       previous.forEach((track) => {
         track.onended = null;
         track.stop();
@@ -638,25 +652,27 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       if (alive(ctx)) {
         if (
           replacement &&
-          ctx.stream?.getAudioTracks().some((track) => replacement?.getTracks().includes(track))
+          ctx.stream
+            ?.getAudioTracks()
+            .some((track) => replacement?.getTracks().includes(track))
         )
           fail(ctx, cause);
-        else deviceError.value = callCaptureErrorKey(cause);
+        else deviceError = callCaptureErrorKey(cause);
       }
     } finally {
       ctx.changingMedia = false;
-      if (alive(ctx)) changingMedia.value = false;
+      if (alive(ctx)) changingMedia = false;
     }
   }
   async function selectCamera(deviceId: string) {
-    if (!context?.ready || !session.value || changingMedia.value) return;
-    if (!context.splitMedia || !session.value.videoAvailable) {
-      deviceError.value = 'call.error.peerUpgrade';
+    if (!context?.ready || !session || changingMedia) return;
+    if (!context.splitMedia || !session.videoAvailable) {
+      deviceError = 'call.error.peerUpgrade';
       return;
     }
     // Choosing a source while muted must not turn the camera on.
-    if (session.value.cameraMuted) {
-      cameraDeviceId.value = deviceId;
+    if (session.cameraMuted) {
+      cameraDeviceId = deviceId;
       return;
     }
     await updateCamera(deviceId);
@@ -666,32 +682,32 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
   }
   async function updateCamera(deviceId?: string) {
     const ctx = context;
-    if (!ctx?.stream || !session.value || ctx.changingMedia) return;
+    if (!ctx?.stream || !session || ctx.changingMedia) return;
     if (!ctx.splitMedia) {
       if (!ctx.ready) return;
       if (ctx.mode !== 'video') {
-        deviceError.value = 'call.error.peerUpgrade';
+        deviceError = 'call.error.peerUpgrade';
         return;
       }
-      const muted = !session.value.cameraMuted;
+      const muted = !session.cameraMuted;
       ctx.stream.getVideoTracks().forEach((track) => {
         track.enabled = !muted;
       });
       patch({ cameraMuted: muted });
       return;
     }
-    if (!ctx.ready || !deps.getCamera || !session.value.videoAvailable) return;
-    ctx.changingMedia = changingMedia.value = true;
-    deviceError.value = '';
+    if (!ctx.ready || !deps.getCamera || !session.videoAvailable) return;
+    ctx.changingMedia = changingMedia = true;
+    deviceError = '';
     let camera: MediaStream | undefined;
     let installed = false;
     try {
-      if (!session.value.cameraMuted && deviceId === undefined) {
+      if (!session.cameraMuted && deviceId === undefined) {
         ctx.stopVideoRecording?.();
         ctx.stopVideoRecording = undefined;
         const tracks = ctx.stream.getVideoTracks();
         ctx.stream = new MediaStream(ctx.stream.getAudioTracks());
-        localStream.value = ctx.stream;
+        localStream = ctx.stream;
         patch({ cameraMuted: true });
         tracks.forEach((track) => {
           track.onended = null;
@@ -699,7 +715,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         });
         await ctx.connection?.send(new Uint8Array([5, 0]));
       } else {
-        camera = await deps.getCamera(deviceId ?? cameraDeviceId.value);
+        camera = await deps.getCamera(deviceId ?? cameraDeviceId);
         if (!alive(ctx)) {
           camera.getTracks().forEach((track) => {
             track.stop();
@@ -711,15 +727,18 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         const previous = ctx.stream.getVideoTracks();
         ctx.stopVideoRecording?.();
         ctx.stopVideoRecording = undefined;
-        ctx.stream = new MediaStream([...ctx.stream.getAudioTracks(), ...camera.getVideoTracks()]);
+        ctx.stream = new MediaStream([
+          ...ctx.stream.getAudioTracks(),
+          ...camera.getVideoTracks(),
+        ]);
         installed = true;
-        cameraDeviceId.value =
-          camera.getVideoTracks()[0]?.getSettings?.().deviceId ?? deviceId ?? cameraDeviceId.value;
+        cameraDeviceId =
+          camera.getVideoTracks()[0]?.getSettings?.().deviceId ?? deviceId ?? cameraDeviceId;
         previous.forEach((track) => {
           track.onended = null;
           track.stop();
         });
-        localStream.value = ctx.stream;
+        localStream = ctx.stream;
         camera.getVideoTracks().forEach((track) => {
           track.onended = () =>
             captureFailed(ctx, new DOMException('Camera disconnected', 'NotFoundError'));
@@ -730,14 +749,14 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     } catch (cause) {
       if (alive(ctx)) {
         if (installed) fail(ctx, cause);
-        else deviceError.value = callCaptureErrorKey(cause);
+        else deviceError = callCaptureErrorKey(cause);
       }
       camera?.getTracks().forEach((track) => {
         if (!ctx.stream?.getTracks().includes(track)) track.stop();
       });
     } finally {
       ctx.changingMedia = false;
-      if (alive(ctx)) changingMedia.value = false;
+      if (alive(ctx)) changingMedia = false;
     }
   }
   async function stopScreenSharing() {
@@ -751,10 +770,10 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       track.stop();
     });
     ctx.screenStream = undefined;
-    localScreenStream.value = null;
+    localScreenStream = null;
     patch({ screenSharing: false });
     try {
-      if (ctx.ready && session.value?.screenAvailable)
+      if (ctx.ready && session?.screenAvailable)
         await ctx.connection?.send(new Uint8Array([7, 0]));
     } catch (cause) {
       fail(ctx, cause);
@@ -765,7 +784,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     if (
       !ctx?.ready ||
       !ctx.connection ||
-      !session.value?.screenAvailable ||
+      !session?.screenAvailable ||
       !deps.getScreen ||
       ctx.screenStream ||
       ctx.screenRequest
@@ -773,7 +792,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       return;
     const request = {};
     ctx.screenRequest = request;
-    deviceError.value = '';
+    deviceError = '';
     let screen: MediaStream | undefined;
     try {
       // Capture is invoked before any await so the browser sees the user's gesture.
@@ -786,7 +805,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       }
       if (!screen.getVideoTracks().length) throw new Error('No screen video track');
       ctx.screenStream = screen;
-      localScreenStream.value = screen;
+      localScreenStream = screen;
       patch({ screenSharing: true });
       screen.getTracks().forEach((track) => {
         track.onended = () => {
@@ -803,14 +822,14 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
           return ctx.connection?.send(frame);
         },
         () => {
-          deviceError.value = 'call.error.screen';
+          deviceError = 'call.error.screen';
           void stopScreenSharing();
         },
-        { videoBitsPerSecond: 1_500_000 }
+        { videoBitsPerSecond: 1_500_000 },
       );
     } catch {
       if (alive(ctx) && ctx.screenRequest === request) {
-        deviceError.value = 'call.error.screen';
+        deviceError = 'call.error.screen';
         if (ctx.screenStream) await stopScreenSharing();
       }
       screen?.getTracks().forEach((track) => {
@@ -823,34 +842,94 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
   function reset() {
     generation += 1;
     end();
-    session.value = null;
+    session = null;
     incomingInvite = null;
-    error.value = '';
-    failureDetail.value = '';
-    deviceError.value = '';
+    error = '';
+    failureDetail = '';
+    deviceError = '';
     tombstones.clear();
   }
   function dismiss() {
     if (!context) {
-      session.value = null;
-      error.value = '';
+      session = null;
+      error = '';
     }
   }
   return {
-    session,
-    localStream,
-    remoteMediaUrl,
-    remoteVideoUrl,
-    remoteScreenUrl,
-    localScreenStream,
+    get session() {
+      return session;
+    },
+    set session(value) {
+      session = value;
+    },
+    get localStream() {
+      return localStream;
+    },
+    set localStream(value) {
+      localStream = value;
+    },
+    get remoteMediaUrl() {
+      return remoteMediaUrl;
+    },
+    set remoteMediaUrl(value) {
+      remoteMediaUrl = value;
+    },
+    get remoteVideoUrl() {
+      return remoteVideoUrl;
+    },
+    set remoteVideoUrl(value) {
+      remoteVideoUrl = value;
+    },
+    get remoteScreenUrl() {
+      return remoteScreenUrl;
+    },
+    set remoteScreenUrl(value) {
+      remoteScreenUrl = value;
+    },
+    get localScreenStream() {
+      return localScreenStream;
+    },
+    set localScreenStream(value) {
+      localScreenStream = value;
+    },
     startScreenSharing,
     stopScreenSharing,
-    error,
-    deviceError,
-    microphoneDeviceId,
-    cameraDeviceId,
-    changingMedia,
-    failureDetail,
+    get error() {
+      return error;
+    },
+    set error(value) {
+      error = value;
+    },
+    get deviceError() {
+      return deviceError;
+    },
+    set deviceError(value) {
+      deviceError = value;
+    },
+    get microphoneDeviceId() {
+      return microphoneDeviceId;
+    },
+    set microphoneDeviceId(value) {
+      microphoneDeviceId = value;
+    },
+    get cameraDeviceId() {
+      return cameraDeviceId;
+    },
+    set cameraDeviceId(value) {
+      cameraDeviceId = value;
+    },
+    get changingMedia() {
+      return changingMedia;
+    },
+    set changingMedia(value) {
+      changingMedia = value;
+    },
+    get failureDetail() {
+      return failureDetail;
+    },
+    set failureDetail(value) {
+      failureDetail = value;
+    },
     start,
     receiveSignal,
     accept,

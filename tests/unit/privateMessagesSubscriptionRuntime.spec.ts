@@ -13,7 +13,6 @@ import {
 } from '#src/stores/nostr/startupState.ts';
 import { observeConnectedRelayEose } from '#src/stores/nostr/subscriptionEose.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
 
 const serviceMocks = vi.hoisted(() => ({
   chatDataService: {
@@ -51,7 +50,7 @@ function createRuntime(
     recipients?: () => Promise<string[]>;
   } = {},
 ) {
-  const privateMessagesSubscriptionLiveCoverageAt = ref<number | null>(null);
+  let privateMessagesSubscriptionLiveCoverageAt: number | null = null;
   const subscribeWithReqLogging =
     overrides.subscribeWithReqLogging ??
     vi.fn(
@@ -74,17 +73,22 @@ function createRuntime(
   const ndk = new NostrClient();
   const logSubscription = vi.fn();
   const startupRuntime = createStartupRuntime({
-    startupSteps: ref(createInitialStartupStepSnapshots()),
-    startupDisplay: ref<StartupDisplaySnapshot>({
+    startupSteps: createInitialStartupStepSnapshots(),
+    startupDisplay: {
       stepId: null,
       label: null,
       status: null,
       showProgress: false,
-    }),
-    startupState: { startupDisplayShownAt: 0, startupDisplayTimer: null, startupDisplayToken: 0 },
+    },
+    startupState: {
+      startupDisplayShownAt: 0,
+      startupDisplayTimer: null,
+      startupDisplayToken: 0,
+    },
     startupStepMinProgressMs: 0,
   });
-  const refreshAllStoredContacts = overrides.refreshAllStoredContacts ?? vi.fn(async () => ({}));
+  const refreshAllStoredContacts =
+    overrides.refreshAllStoredContacts ?? vi.fn(async () => ({}));
   const startPrivateMessagesStartupBackfill = vi.fn();
   const queuePrivateMessageIngestion = vi.fn();
   const runtime = createPrivateMessagesSubscriptionRuntime({
@@ -104,13 +108,14 @@ function createRuntime(
     getFilterSince: () => 100,
     getLoggedInPublicKeyHex: () => LOGGED_IN_PUBLIC_KEY,
     getOrCreateSigner: vi.fn(async () => ({})),
-    getPrivateMessagesIngestQueue: overrides.getPrivateMessagesIngestQueue ?? vi.fn(async () => {}),
+    getPrivateMessagesIngestQueue:
+      overrides.getPrivateMessagesIngestQueue ?? vi.fn(async () => {}),
     getPrivateMessagesRestoreThrottleMs: () => 0,
     getPrivateMessagesStartupLiveSince: () => 90,
     getRelaySnapshots: vi.fn(() => []),
     getStartupStepSnapshot: startupRuntime.getStartupStepSnapshot,
     getStoredAuthMethod: () => 'nsec',
-    isRestoringStartupState: ref(false),
+    isRestoringStartupState: false,
     listPrivateMessageRecipientPubkeys:
       overrides.recipients ?? vi.fn(async () => [LOGGED_IN_PUBLIC_KEY]),
     logSubscription,
@@ -118,14 +123,19 @@ function createRuntime(
     normalizeEventId: (value) => (typeof value === 'string' ? value : null),
     normalizeRelayStatusUrls: (relayUrls) => relayUrls,
     normalizeThrottleMs: (value) => (typeof value === 'number' ? value : 0),
-    privateMessagesSubscriptionLastEoseAt: ref(null),
-    privateMessagesSubscriptionLastEventCreatedAt: ref(null),
-    privateMessagesSubscriptionLastEventId: ref(null),
-    privateMessagesSubscriptionLastEventSeenAt: ref(null),
-    privateMessagesSubscriptionLiveCoverageAt,
-    privateMessagesSubscriptionRelayUrls: ref([]),
-    privateMessagesSubscriptionSince: ref(null),
-    privateMessagesSubscriptionStartedAt: ref(null),
+    privateMessagesSubscriptionLastEoseAt: null,
+    privateMessagesSubscriptionLastEventCreatedAt: null,
+    privateMessagesSubscriptionLastEventId: null,
+    privateMessagesSubscriptionLastEventSeenAt: null,
+    get privateMessagesSubscriptionLiveCoverageAt() {
+      return privateMessagesSubscriptionLiveCoverageAt;
+    },
+    set privateMessagesSubscriptionLiveCoverageAt(value) {
+      privateMessagesSubscriptionLiveCoverageAt = value;
+    },
+    privateMessagesSubscriptionRelayUrls: [],
+    privateMessagesSubscriptionSince: null,
+    privateMessagesSubscriptionStartedAt: null,
     queuePrivateMessageIngestion,
     refreshAllStoredContacts,
     relaySignature: (relayUrls) => relayUrls.join(','),
@@ -142,7 +152,12 @@ function createRuntime(
     ndk,
     refreshAllStoredContacts,
     logSubscription,
-    privateMessagesSubscriptionLiveCoverageAt,
+    get privateMessagesSubscriptionLiveCoverageAt() {
+      return privateMessagesSubscriptionLiveCoverageAt;
+    },
+    set privateMessagesSubscriptionLiveCoverageAt(value) {
+      privateMessagesSubscriptionLiveCoverageAt = value;
+    },
     runtime,
     startupRuntime,
     startPrivateMessagesStartupBackfill,
@@ -176,7 +191,9 @@ describe('privateMessagesSubscriptionRuntime', () => {
     expect(startupRuntime.getStartupStepSnapshot('private-messages-subscribe').status).toBe(
       'success',
     );
-    expect(startupRuntime.getStartupStepSnapshot('message-history-restore').status).toBe('pending');
+    expect(startupRuntime.getStartupStepSnapshot('message-history-restore').status).toBe(
+      'pending',
+    );
     expect(startPrivateMessagesStartupBackfill).not.toHaveBeenCalled();
 
     runtime.startPrivateMessagesHistoryRestore();
@@ -196,7 +213,9 @@ describe('privateMessagesSubscriptionRuntime', () => {
     );
 
     runtime.startPrivateMessagesHistoryRestore();
-    await vi.waitFor(() => expect(startPrivateMessagesStartupBackfill).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(startPrivateMessagesStartupBackfill).toHaveBeenCalledTimes(2),
+    );
     expect(subscribeWithReqLogging).toHaveBeenCalledTimes(1);
   });
 
@@ -222,7 +241,9 @@ describe('privateMessagesSubscriptionRuntime', () => {
     );
 
     liveOptions.onEose?.();
-    await vi.waitFor(() => expect(startPrivateMessagesStartupBackfill).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(startPrivateMessagesStartupBackfill).toHaveBeenCalledTimes(1),
+    );
     liveOptions.onEose?.();
     liveOptions.onEvent?.({
       id: 'b'.repeat(64),
@@ -348,8 +369,8 @@ describe('privateMessagesSubscriptionRuntime', () => {
   });
 
   it('creates a missing live subscription without an extra probe', async () => {
-    const { privateMessagesSubscriptionLiveCoverageAt, runtime, subscribeWithReqLogging } =
-      createRuntime();
+    const harness = createRuntime();
+    const { runtime, subscribeWithReqLogging } = harness;
 
     const result = await runtime.refreshPrivateMessagesLiveSubscription({
       sinceOverride: 123,
@@ -368,19 +389,22 @@ describe('privateMessagesSubscriptionRuntime', () => {
       expect.not.objectContaining({ closeOnEose: true }),
       expect.any(Object),
     );
-    expect(privateMessagesSubscriptionLiveCoverageAt.value).toBeGreaterThan(0);
+    expect(harness.privateMessagesSubscriptionLiveCoverageAt).toBeGreaterThan(0);
   });
 
   it('reconnects transport without probing or replacing the healthy subscription', async () => {
     const { runtime, subscribeWithReqLogging } = createRuntime();
     await runtime.subscribePrivateMessagesForLoggedInUser();
-    const result = await runtime.refreshPrivateMessagesLiveSubscription({ sinceOverride: 123 });
+    const result = await runtime.refreshPrivateMessagesLiveSubscription({
+      sinceOverride: 123,
+    });
     expect(result).toEqual({ recreatedLiveSubscription: false });
     expect(subscribeWithReqLogging).toHaveBeenCalledTimes(1);
   });
 
   it('joins concurrent requests and keeps healthy listeners through resume without querying contacts or probing', async () => {
-    const { runtime, ndk, subscribeWithReqLogging, refreshAllStoredContacts } = createRuntime();
+    const { runtime, ndk, subscribeWithReqLogging, refreshAllStoredContacts } =
+      createRuntime();
     vi.spyOn(ndk.pool, 'getRelay').mockReturnValue({ connected: true } as never);
     await Promise.all([
       runtime.subscribePrivateMessagesForLoggedInUser(),

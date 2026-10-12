@@ -2,6 +2,7 @@
 import path from 'node:path';
 import { generateSecretKey } from 'nostr-tools';
 import { expect, type Page, test } from '@playwright/test';
+import { monitorResources } from '../resource-usage';
 import {
   bootstrapUser,
   disposeUsers,
@@ -289,6 +290,28 @@ test('video and audio calls carry real media over Iroh, support mute and survive
     await expect(bob.page.locator('[data-testid="message-bubble"]')).toHaveCount(beforeBob + 2);
     expect(publicAddressRequests).toEqual([]);
     expect(selectedRelaySockets.length).toBeGreaterThan(0);
+    // Audio capture in the assertion is test-owned. Close it before checking
+    // that real call teardown leaves the app idle, including after redial.
+    for (const user of [alice, bob]) {
+      await user.page.evaluate(async () => {
+        const scope = window as unknown as { callAudioTest?: { context: AudioContext } };
+        await scope.callAudioTest?.context.close();
+        delete scope.callAudioTest;
+      });
+    }
+    await alice.page.waitForTimeout(1500);
+    const monitor = await monitorResources(alice.page);
+    try {
+      await alice.page.waitForTimeout(12000);
+      const usage = await monitor.sample('idle after video/audio calls and redial');
+      console.log('Call cleanup resources:', JSON.stringify(usage));
+      expect(usage.mainThreadCpuPercent).toBeLessThan(5);
+      expect(usage.browserCpuPercent).toBeLessThan(10);
+      expect(usage.longestTask).toBeLessThan(500);
+      expect(usage.longestDelay).toBeLessThan(1000);
+    } finally {
+      await monitor.stop();
+    }
     await expectNoUnexpectedBrowserErrors([alice, bob]);
   } finally {
     await disposeUsers(alice, bob);
@@ -696,8 +719,12 @@ test('three users join a shared call link, exchange Iroh media, share screens an
     ).toHaveText('alice@example.com');
     await expect(
       bob.page.getByTestId(`room-peer-${charlie.session.publicKey}`).locator('.room-tile__overlay'),
-    ).toHaveCount(0);
-    await expect(alice.page.locator('.room-tile__overlay')).toHaveText(['alice@example.com']);
+    ).toHaveText('Room Charlie');
+    await expect(alice.page.locator('.room-tile__overlay')).toHaveText([
+      'alice@example.com',
+      'Room Bob',
+      'Room Charlie',
+    ]);
     await alice.page.getByTestId('room-camera').click();
     await expect
       .poll(() =>
@@ -712,7 +739,7 @@ test('three users join a shared call link, exchange Iroh media, share screens an
       .locator('video');
     expect(
       await peerCamera.evaluate((video) => {
-        const tile = video.closest('.room-tile');
+        const tile = video.closest('.room-tile__content');
         const label = tile.querySelector('.room-tile__overlay');
         return (
           getComputedStyle(label).position === 'absolute' &&
@@ -773,10 +800,10 @@ test('three users join a shared call link, exchange Iroh media, share screens an
       ).toBeVisible();
     }
     const bobTile = alice.page.getByTestId(`room-peer-${bob.session.publicKey}`);
-    await expect(bobTile.locator('.room-tile__overlay')).toHaveCount(0);
+    await expect(bobTile.locator('.room-tile__overlay')).toHaveText('Room Bob');
     expect(
       await bobTile.evaluate((tile) => {
-        const rect = tile.getBoundingClientRect();
+        const rect = tile.querySelector('.room-tile__content').getBoundingClientRect();
         const badge = tile.querySelector('[data-testid="room-peer-muted"]').getBoundingClientRect();
         return badge.width < 32 && badge.left - rect.left < 10 && rect.bottom - badge.bottom < 10;
       }),

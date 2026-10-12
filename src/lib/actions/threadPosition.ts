@@ -9,7 +9,7 @@ interface Controller {
 }
 const controllers = new WeakMap<HTMLElement, Controller>();
 
-/** Explicit navigation; hydration alone never requests a trip to the bottom. */
+/** Explicit navigation; hydration preserves the current reading position. */
 export function scrollThreadToLatest(node: HTMLElement | undefined, messageId?: string) {
   if (node) controllers.get(node)?.latest(messageId);
 }
@@ -86,7 +86,10 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
             row.id === `message-${pendingLatest!.messageId}` ||
             row.dataset.eventId === pendingLatest!.messageId,
         ));
-    if (currentRows.length && ((!positioned && !pendingLatest) || canNavigate)) {
+    // At the latest message, preserve the bottom edge when hydration or media
+    // changes row heights. A user scroll takes precedence over that attachment.
+    const keepBottom = atBottom && Math.abs(movement) <= 0.5;
+    if (currentRows.length && ((!positioned && !pendingLatest) || canNavigate || keepBottom)) {
       node.scrollTop = node.scrollHeight;
       positioned = true;
       pendingLatest = undefined;

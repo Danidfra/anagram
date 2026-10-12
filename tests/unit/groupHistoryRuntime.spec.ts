@@ -3,7 +3,7 @@ import {
   createGroupHistoryRuntime,
   type GroupHistoryContext,
   type GroupHistoryQuery,
-} from '#src/stores/nostr/groupHistoryRuntime.ts';
+} from '#src/stores/nostr/groupHistoryRuntime.svelte.ts';
 
 describe('demand-driven group history', () => {
   beforeEach(() => {
@@ -52,13 +52,13 @@ describe('demand-driven group history', () => {
     expect(pages[1].recipients).toEqual(first.recipients);
     expect(pages[1].pager).toBe(first.pager);
     expect(pages[1].pager.until).toBe(cursor - 100);
-    expect(runtime.state.value.hasOlder).toBe(true);
+    expect(runtime.state.hasOlder).toBe(true);
   });
   it('limits even empty archives to six requests per action', async () => {
     const { runtime, query } = setup({ routes: routes(500), discoveryRelays: ['relay'] });
     await runtime.load('group');
     expect(query).toHaveBeenCalledTimes(6);
-    expect(runtime.state.value.hasOlder).toBe(true);
+    expect(runtime.state.hasOlder).toBe(true);
     await runtime.load('group', 1700000000);
     expect(query.mock.calls.length).toBeLessThanOrEqual(12);
     expect(query.mock.calls[6][0].discovery).toBe(true);
@@ -121,7 +121,7 @@ describe('demand-driven group history', () => {
     const { runtime } = setup(context, query);
     await runtime.load('group');
     expect(query.mock.calls.map(([q]) => q.recipients)).toEqual([['account'], ['epoch-1']]);
-    expect(runtime.state.value.hasOlder).toBe(false);
+    expect(runtime.state.hasOlder).toBe(false);
   });
   it('picks up late keys only on the next requested page', async () => {
     const context = { routes: routes(1), discoveryRelays: ['relay'] };
@@ -144,7 +144,7 @@ describe('demand-driven group history', () => {
     await runtime.load('group');
     const pager = query.mock.calls[0][0].pager;
     expect(pager.done).toBe(false);
-    expect(runtime.state.value).toMatchObject({ hasOlder: true, failed: true });
+    expect(runtime.state).toMatchObject({ hasOlder: true, failed: true });
     await runtime.load('group');
     expect(query).toHaveBeenCalledTimes(1);
     failed = false;
@@ -177,7 +177,7 @@ describe('demand-driven group history', () => {
     release();
     await first;
     expect(query.mock.calls[0][0].signal.aborted).toBe(true);
-    expect(runtime.state.value.chat).toBe('');
+    expect(runtime.state.chat).toBe('');
   });
   it('does not issue queries after the account changes during context lookup', async () => {
     const { runtime, query, setOwner } = setup({ routes: routes(1), discoveryRelays: [] });

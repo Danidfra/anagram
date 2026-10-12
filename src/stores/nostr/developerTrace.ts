@@ -2,17 +2,17 @@ import { diagnosticText } from '#src/utils/diagnosticExport.ts';
 import { developerTraceDataService } from '#src/services/developerTraceDataService.ts';
 import { hasStorage } from '#src/stores/nostr/shared.ts';
 import type { DeveloperTraceEntry, DeveloperTraceLevel } from '#src/stores/nostr/types.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
+
 
 interface DeveloperTraceRuntimeState {
   developerTraceCounter: number;
 }
 
 interface DeveloperTraceRuntimeDeps {
-  developerDiagnosticsEnabled: Ref<boolean>;
-  developerDiagnosticsVersion: Ref<number>;
+  developerDiagnosticsEnabled: boolean;
+  developerDiagnosticsVersion: number;
   developerTraceState: DeveloperTraceRuntimeState;
-  developerTraceVersion: Ref<number>;
+  developerTraceVersion: number;
   developerDiagnosticsStorageKey: string;
   getLoggedInPublicKeyHex: () => string | null;
 }
@@ -27,14 +27,8 @@ export function readDeveloperDiagnosticsEnabledFromStorage(
   return window.localStorage.getItem(developerDiagnosticsStorageKey) === '1';
 }
 
-export function createDeveloperTraceRuntime({
-  developerDiagnosticsEnabled,
-  developerDiagnosticsVersion,
-  getLoggedInPublicKeyHex,
-  developerTraceState,
-  developerTraceVersion,
-  developerDiagnosticsStorageKey,
-}: DeveloperTraceRuntimeDeps) {
+export function createDeveloperTraceRuntime(state: DeveloperTraceRuntimeDeps) {
+  const { getLoggedInPublicKeyHex, developerTraceState, developerDiagnosticsStorageKey } = state;
   // Diagnostics are lossy under overload; they must never queue behind history forever.
   let pendingWrites = 0;
   let droppedEntries = 0;
@@ -45,11 +39,11 @@ export function createDeveloperTraceRuntime({
   }
 
   function bumpDeveloperDiagnosticsVersion(): void {
-    developerDiagnosticsVersion.value += 1;
+    state.developerDiagnosticsVersion += 1;
   }
 
   function bumpDeveloperTraceVersion(): void {
-    developerTraceVersion.value += 1;
+    state.developerTraceVersion += 1;
   }
 
   function toOptionalIsoTimestampFromUnix(value: number | null | undefined): string | null {
@@ -178,7 +172,7 @@ export function createDeveloperTraceRuntime({
     phase: string,
     details: Record<string, unknown> = {},
   ): void {
-    if (!developerDiagnosticsEnabled.value || !getLoggedInPublicKeyHex()) return;
+    if (!state.developerDiagnosticsEnabled || !getLoggedInPublicKeyHex()) return;
     if (pendingWrites >= 200) {
       droppedEntries++;
       return;
@@ -192,7 +186,7 @@ export function createDeveloperTraceRuntime({
       echoDeveloperTraceToConsole(level, scope, phase, normalizedDetails);
     }
 
-    if (!developerDiagnosticsEnabled.value || !getLoggedInPublicKeyHex()) {
+    if (!state.developerDiagnosticsEnabled || !getLoggedInPublicKeyHex()) {
       return;
     }
 
@@ -233,7 +227,7 @@ export function createDeveloperTraceRuntime({
   }
 
   function setDeveloperDiagnosticsEnabled(enabled: boolean): void {
-    developerDiagnosticsEnabled.value = enabled;
+    state.developerDiagnosticsEnabled = enabled;
 
     if (hasStorage()) {
       window.localStorage.setItem(developerDiagnosticsStorageKey, enabled ? '1' : '0');
@@ -245,7 +239,7 @@ export function createDeveloperTraceRuntime({
       });
     }
 
-    developerDiagnosticsVersion.value += 1;
+    state.developerDiagnosticsVersion += 1;
   }
 
   return {

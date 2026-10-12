@@ -34,7 +34,7 @@ for (const kind of ['dm', 'private', 'public'] as const) {
       const append = async (texts: string[]) => {
         if (kind === 'public') {
           await page.evaluate(async (texts) => {
-            const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+            const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
             for (const text of texts) await useNostrStore().publicGroups.send(text);
           }, texts);
         } else await sendMessagesViaBridge(page, chatId, texts);

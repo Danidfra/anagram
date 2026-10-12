@@ -7,7 +7,7 @@
     contactListTitle,
     contactListCaption,
   } from '#src/utils/contactList.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import Avatar from './Avatar.svelte';
   import ProfileName from './ProfileName.svelte';
   import Icon from './Icon.svelte';

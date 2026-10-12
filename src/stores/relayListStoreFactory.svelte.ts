@@ -1,5 +1,4 @@
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
-import { computed, ref } from '#src/lib/state/reactivity.ts';
 
 export interface RelayListEntry {
   url: string;
@@ -69,14 +68,14 @@ export function createRelayListStoreSetup({
   }
 
   return function relayListStoreSetup() {
-    const relayEntries = ref<RelayListEntry[]>([]);
-    const relays = computed(() => relayEntries.value.map((entry) => entry.url));
-    const isInitialized = ref(false);
+    let relayEntries = $state<RelayListEntry[]>([]);
+    let relays = $derived.by(() => relayEntries.map((entry) => entry.url));
+    let isInitialized = $state(false);
 
     function clear(): void {
-      relayEntries.value = [];
+      relayEntries = [];
       // Logout clears account state; the next session must load its relays afresh.
-      isInitialized.value = false;
+      isInitialized = false;
 
       if (!hasStorage()) {
         return;
@@ -85,25 +84,28 @@ export function createRelayListStoreSetup({
       try {
         window.localStorage.removeItem(storageKey);
       } catch (error) {
-        console.warn(`Failed to clear relay list from localStorage key "${storageKey}"`, error);
+        console.warn(
+          `Failed to clear relay list from localStorage key "${storageKey}"`,
+          error,
+        );
       }
     }
 
     function ensureInitialized(): void {
-      if (!isInitialized.value) {
+      if (!isInitialized) {
         init();
       }
     }
 
     function init(): void {
-      if (isInitialized.value) {
+      if (isInitialized) {
         return;
       }
 
       const storedRelays = readStoredRelays(storageKey);
-      relayEntries.value = storedRelays ? [...storedRelays] : defaultRelayEntries();
-      writeStoredRelays(storageKey, relayEntries.value);
-      isInitialized.value = true;
+      relayEntries = storedRelays ? [...storedRelays] : defaultRelayEntries();
+      writeStoredRelays(storageKey, relayEntries);
+      isInitialized = true;
     }
 
     function addRelay(relay: string): void {
@@ -113,32 +115,32 @@ export function createRelayListStoreSetup({
       }
 
       ensureInitialized();
-      relayEntries.value = [
-        ...relayEntries.value,
+      relayEntries = [
+        ...relayEntries,
         {
           url: value,
           read: true,
           write: true,
         },
       ];
-      writeStoredRelays(storageKey, relayEntries.value);
+      writeStoredRelays(storageKey, relayEntries);
     }
 
     function removeRelay(index: number): void {
       ensureInitialized();
-      relayEntries.value = relayEntries.value.filter((_, relayIndex) => relayIndex !== index);
-      writeStoredRelays(storageKey, relayEntries.value);
+      relayEntries = relayEntries.filter((_, relayIndex) => relayIndex !== index);
+      writeStoredRelays(storageKey, relayEntries);
     }
 
     function restoreDefaults(): void {
       ensureInitialized();
-      relayEntries.value = defaultRelayEntries();
-      writeStoredRelays(storageKey, relayEntries.value);
+      relayEntries = defaultRelayEntries();
+      writeStoredRelays(storageKey, relayEntries);
     }
 
     function getRelayFlags(index: number): Pick<RelayListEntry, 'read' | 'write'> {
       ensureInitialized();
-      const entry = relayEntries.value[index];
+      const entry = relayEntries[index];
       return {
         read: entry?.read ?? true,
         write: entry?.write ?? true,
@@ -147,16 +149,16 @@ export function createRelayListStoreSetup({
 
     function setRelayFlags(
       index: number,
-      flags: Partial<Pick<RelayListEntry, 'read' | 'write'>>
+      flags: Partial<Pick<RelayListEntry, 'read' | 'write'>>,
     ): void {
       ensureInitialized();
 
-      const current = relayEntries.value[index];
+      const current = relayEntries[index];
       if (!current) {
         return;
       }
 
-      relayEntries.value = relayEntries.value.map((entry, relayIndex) => {
+      relayEntries = relayEntries.map((entry, relayIndex) => {
         if (relayIndex !== index) {
           return entry;
         }
@@ -168,24 +170,31 @@ export function createRelayListStoreSetup({
         };
       });
 
-      writeStoredRelays(storageKey, relayEntries.value);
+      writeStoredRelays(storageKey, relayEntries);
     }
 
     function replaceRelayEntries(entries: unknown[]): void {
       ensureInitialized();
-      relayEntries.value = inputSanitizerService.normalizeRelayListMetadataEntries(
+      relayEntries = inputSanitizerService.normalizeRelayListMetadataEntries(
         entries as Array<{
           url: string;
           read?: boolean;
           write?: boolean;
-        }>
+        }>,
       );
-      writeStoredRelays(storageKey, relayEntries.value);
+      writeStoredRelays(storageKey, relayEntries);
     }
 
     return {
-      relayEntries,
-      relays,
+      get relayEntries() {
+        return relayEntries;
+      },
+      set relayEntries(value) {
+        relayEntries = value;
+      },
+      get relays() {
+        return relays;
+      },
       init,
       addRelay,
       clear,

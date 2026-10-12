@@ -11,13 +11,13 @@
     DEFAULT_BLOSSOM_SERVER_URL,
     normalizeBlossomServerUrl,
   } from '#src/utils/blossomServer.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
+  import { toStore } from 'svelte/store';
   import Icon from '../Icon.svelte';
   import { THEME_ACCENTS, readThemeAccent, saveThemeAccent } from '#src/utils/themeAccent.ts';
   export let section: string;
   const nostr = useNostrStore();
-  const startup = observe(() => nostr.isRestoringStartupState);
+  const startup = toStore(() => nostr.isRestoringStartupState);
   let dark = readDarkModePreference() ?? document.body.classList.contains('body--dark');
   let layout = readDesktopMessageLayoutPreference();
   let accent = readThemeAccent();

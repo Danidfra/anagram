@@ -279,7 +279,7 @@ test('new groups use verified recovery relays when another account relay is unav
       about: 'Creation with an unavailable candidate relay',
     });
     const selected = await alice.page.evaluate(async (group) => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       return (await useNostrStore().groupRecovery.current(group)).recovery_state!.relays;
     }, group);
     expect(selected).toEqual([new URL(E2E_RELAY_URL).href]);

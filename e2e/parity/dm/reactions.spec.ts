@@ -48,7 +48,8 @@ test('reactions surface in the chat list and deleted messages stay deleted after
     });
 
     await threadMessage(bob.page, targetMessage).locator('.message-content').click();
-    await expect(bob.page.getByText('Reply', { exact: true })).toHaveCount(0);
+    await expect(bob.page.getByText('Reply', { exact: true })).toBeVisible();
+    await bob.page.keyboard.press('Escape');
 
     await navigateToChat(alice.page, charlie.session.publicKey);
     await reactToMessage(bob.page, targetMessage);

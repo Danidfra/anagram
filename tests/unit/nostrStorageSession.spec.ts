@@ -10,7 +10,6 @@ import {
 } from '#src/stores/nostr/constants.ts';
 import { createStorageSessionRuntime } from '#src/stores/nostr/storageSession.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
 
 const PUBKEY_A = 'a'.repeat(64);
 const EVENT_ID_A = 'b'.repeat(64);
@@ -52,21 +51,31 @@ function createRuntimeHarness() {
   });
 
   const refs = {
-    eventSince: ref(0),
-    isRestoringStartupState: ref(false),
+    eventSince: 0,
+    isRestoringStartupState: false,
   };
   const pendingEventSinceState = {
     pendingEventSinceUpdate: 0,
   };
 
   const runtime = createStorageSessionRuntime({
-    eventSince: refs.eventSince,
+    get eventSince() {
+      return refs.eventSince;
+    },
+    set eventSince(value) {
+      refs.eventSince = value;
+    },
     getDefaultEventSince: () => 5000,
     getLoggedInSignerUser: async () =>
       ({
         pubkey: PUBKEY_A,
       }) as never,
-    isRestoringStartupState: refs.isRestoringStartupState,
+    get isRestoringStartupState() {
+      return refs.isRestoringStartupState;
+    },
+    set isRestoringStartupState(value) {
+      refs.isRestoringStartupState = value;
+    },
     ndk,
     normalizeEventId: (value) =>
       typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null,
@@ -109,7 +118,7 @@ describe('storageSession runtime', () => {
 
     expect(runtime.setStoredEventSince(-10)).toBe(5000);
     expect(localStorage.store.get(EVENT_SINCE_STORAGE_KEY)).toBe('5000');
-    refs.eventSince.value = 0;
+    refs.eventSince = 0;
     localStorage.store.set(EVENT_SINCE_STORAGE_KEY, '7000');
     expect(runtime.ensureStoredEventSince()).toBe(7000);
     expect(runtime.getFilterSince()).toBe(Math.max(0, 7000 - EVENT_FILTER_LOOKBACK_SECONDS));
@@ -175,26 +184,28 @@ describe('storageSession runtime', () => {
 
     const { pendingEventSinceState, refs, runtime } = createRuntimeHarness();
 
-    refs.isRestoringStartupState.value = true;
+    refs.isRestoringStartupState = true;
     runtime.updateStoredEventSinceFromCreatedAt(120);
     expect(pendingEventSinceState.pendingEventSinceUpdate).toBe(120);
     expect(localStorage.store.get(EVENT_SINCE_STORAGE_KEY)).toBe('100');
 
-    refs.isRestoringStartupState.value = false;
+    refs.isRestoringStartupState = false;
     runtime.flushPendingEventSinceUpdate();
     expect(localStorage.store.get(EVENT_SINCE_STORAGE_KEY)).toBe('120');
     expect(pendingEventSinceState.pendingEventSinceUpdate).toBe(0);
 
-    refs.eventSince.value = 999;
+    refs.eventSince = 999;
     pendingEventSinceState.pendingEventSinceUpdate = 22;
     runtime.resetEventSinceForFreshLogin();
-    expect(refs.eventSince.value).toBe(5000);
+    expect(refs.eventSince).toBe(5000);
     expect(pendingEventSinceState.pendingEventSinceUpdate).toBe(0);
     expect(localStorage.store.get(EVENT_SINCE_STORAGE_KEY)).toBeUndefined();
     expect(
       localStorage.store.get(PRIVATE_MESSAGES_LAST_RECEIVED_EVENT_STORAGE_KEY),
     ).toBeUndefined();
-    expect(localStorage.store.get(PRIVATE_MESSAGES_BACKFILL_STATE_STORAGE_KEY)).toBeUndefined();
+    expect(
+      localStorage.store.get(PRIVATE_MESSAGES_BACKFILL_STATE_STORAGE_KEY),
+    ).toBeUndefined();
   });
 
   it('normalizes, stores, hashes, encrypts, and decrypts private nostr content', async () => {
@@ -304,7 +315,9 @@ describe('storageSession runtime', () => {
       ` ${groupPrivateKey} `,
     );
     expect(encryptedPrivateString).toBe(`enc:${groupPrivateKey}`);
-    expect(await runtime.decryptPrivateStringContent(encryptedPrivateString)).toBe(groupPrivateKey);
+    expect(await runtime.decryptPrivateStringContent(encryptedPrivateString)).toBe(
+      groupPrivateKey,
+    );
     expect(await runtime.decryptPrivateStringContent('')).toBeNull();
     expect(await runtime.sha256Hex('sample')).toBe(
       'af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf',

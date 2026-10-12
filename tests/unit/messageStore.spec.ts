@@ -1,6 +1,6 @@
 import type { Message } from '#src/types/chat.ts';
 import { nip19 } from '#src/lib/nostr/client.ts';
-import { __messageStoreTestUtils, MissingContactRelaysError } from '#src/stores/messageStore.ts';
+import { __messageStoreTestUtils, MissingContactRelaysError } from '#src/stores/messageStore.svelte.ts';
 import { describe, expect, it } from 'vitest';
 
 const {

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
   import QRCode from 'qrcode';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { translate } from '#src/i18n.ts';
   import {
     readTopLevelBunkerLoginQueryParam,

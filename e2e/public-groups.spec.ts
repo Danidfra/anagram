@@ -186,7 +186,7 @@ test('public renderer remains responsive', async ({ page }) => {
   page.on('pageerror', (e) => console.log(e.message));
   await page.goto('/');
   await page.evaluate(async () => {
-    const { mount } = await import('/node_modules/.vite/deps/svelte.js');
+    const { mount } = await import('/src/lib/dev/mountFixture.ts');
     const { default: Component } = await import('/src/lib/components/public/PublicMessage.svelte');
     const target = document.createElement('div');
     document.body.append(target);
@@ -393,7 +393,7 @@ test('a stalled replica does not block opening, posting or cached re-entry', asy
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Back to chats', exact: true }).click();
   await page.evaluate(async () => {
-    const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+    const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
     const runtime = useNostrStore().publicGroups;
     runtime.stopView();
   });
@@ -709,7 +709,7 @@ test('app relays carry public group creation, moderation and posts when preferre
   await expect(settings).toBeHidden({ timeout: 3000 });
   const composer = page.getByPlaceholder('Write a public message');
   await composer.fill('App relay delivery');
-  await composer.press('Enter');
+  await page.getByTestId('message-send-button').click();
   await expect(composer).toHaveValue('', { timeout: 3000 });
   await page.reload();
   await expect(
@@ -1370,10 +1370,11 @@ for (const width of [1280, 390]) {
     await expect(suggestions).not.toContainText(blocked.slice(0, 12));
     await input.fill('Are you here @dadj');
     await expect(suggestions.getByRole('option')).toHaveCount(1);
-    await input.press('Enter');
+    if (width < 768) await suggestions.getByRole('option').click();
+    else await input.press('Enter');
     await expect(input).toHaveValue('Are you here @DadJokes ');
     await expect(suggestions).toHaveCount(0);
-    await input.press('Enter');
+    await page.getByTestId('message-send-button').click();
     await expect(input).toHaveValue('');
     await expect(
       page
@@ -1744,7 +1745,7 @@ test('public status changes keep the thread and composer in place', async ({ pag
   await expect
     .poll(() =>
       page.evaluate(async () => {
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         return new Promise<boolean>((resolve) => {
           const unsubscribe = useNostrStore().publicGroups.state.subscribe((state) =>
             resolve(state.refreshing),
@@ -1778,7 +1779,7 @@ test('public status changes keep the thread and composer in place', async ({ pag
       { refreshing: false, stale: false, error: '' },
     ]) {
       await page.evaluate(async (status) => {
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         useNostrStore().publicGroups.state.update((state) => ({ ...state, ...status }));
       }, status);
       await expect(page.getByText('Syncing public group…', { exact: true })).toHaveCount(0);

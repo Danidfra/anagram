@@ -1,28 +1,31 @@
+import { flushSync } from 'svelte';
 import { watchRelaySettingsSubscriptions } from '#src/stores/nostr/relaySettingsSubscriptions.ts';
 import { describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
 
 describe('relay settings orchestration', () => {
   it('ignores hydration and startup changes and uses one path for real settings changes', () => {
-    const signature = ref('');
+    let signature = $state('');
     let restoring = false;
     const refresh = vi.fn();
     const stop = watchRelaySettingsSubscriptions({
       hydrate: () => {
-        signature.value = 'hydrated';
+        signature = 'hydrated';
       },
-      signature: () => signature.value,
+      signature: () => signature,
       isRestoring: () => restoring,
       hasSessionSubscriptions: () => true,
       refresh,
     });
     expect(refresh).not.toHaveBeenCalled();
     restoring = true;
-    signature.value = 'restored';
+    signature = 'restored';
+    flushSync();
     restoring = false;
-    signature.value = 'restored';
+    signature = 'restored';
+    flushSync();
     expect(refresh).not.toHaveBeenCalled();
-    signature.value = 'local mutation';
+    signature = 'local mutation';
+    flushSync();
     expect(refresh).toHaveBeenCalledTimes(1);
     stop();
   });

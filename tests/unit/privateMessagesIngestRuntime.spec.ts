@@ -52,7 +52,7 @@ vi.mock('#src/lib/nostr/client.ts', async () => {
   };
 });
 
-vi.mock('#src/stores/messageStore.ts', () => ({
+vi.mock('#src/stores/messageStore.svelte.ts', () => ({
   useMessageStore: () => ({
     stageIncomingMessage: vi.fn(),
     upsertPersistedMessage: vi.fn().mockResolvedValue(undefined),

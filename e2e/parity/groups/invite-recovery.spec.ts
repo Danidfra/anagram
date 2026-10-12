@@ -37,7 +37,7 @@ test('existing owner invites from an older local recovery snapshot without losin
         await contactsService.updateContact(contact.id, {
           meta: { ...contact.meta, group_private_key_encrypted: oldBackup },
         });
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         const saved = await useNostrStore().groupRecovery.secretFor(group);
         if (saved.recovery_state!.members.length !== 1)
           throw new Error('Stale backup fixture was not restored');
@@ -47,7 +47,7 @@ test('existing owner invites from an older local recovery snapshot without losin
     await openGroupContact(owner.page, group);
     await addGroupMembersAndPublish(owner.page, [newcomer]);
     const state = await owner.page.evaluate(async (group) => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       return (await useNostrStore().groupRecovery.current(group)).recovery_state!;
     }, group);
     expect(state.members.sort()).toEqual([owner.session.publicKey, existing, newcomer].sort());
@@ -58,7 +58,7 @@ test('existing owner invites from an older local recovery snapshot without losin
     const dialog = await selectGroupInviteMembers(owner.page, [later]);
     await owner.page.evaluate(
       async ({ group, members }) => {
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         await useNostrStore().publishGroupMemberChanges(group, members);
       },
       { group, members: [owner.session.publicKey, newcomer] },
@@ -70,7 +70,7 @@ test('existing owner invites from an older local recovery snapshot without losin
     await expect(owner.page.locator(`.member[data-public-key="${existing}"]`)).toHaveCount(0);
     await addGroupMembersAndPublish(owner.page, [later]);
     const finalState = await owner.page.evaluate(async (group) => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       return (await useNostrStore().groupRecovery.current(group)).recovery_state!;
     }, group);
     expect(finalState.members.sort()).toEqual([owner.session.publicKey, newcomer, later].sort());

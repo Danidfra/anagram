@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { groupCallNames } from '#src/lib/state/groupCallNames.ts';
-import { defineStore } from '#src/lib/state/store.ts';
+import { createStore } from '#src/lib/state/store.svelte.ts';
 import {
   callMediaSupported,
   createCallMediaReceiver,
@@ -14,10 +14,10 @@ import { primeCallAudio } from '#src/services/callPlaybackService.ts';
 import { contactsService } from '#src/services/contactsService.ts';
 import { createIrohCallEndpoint } from '#src/services/irohCallTransport.ts';
 import { useCallStore } from './callStore';
-import { createCallRoomRuntime } from './nostr/callRoomRuntime';
-import { useNostrStore } from './nostrStore';
+import { createCallRoomRuntime } from './nostr/callRoomRuntime.svelte.ts';
+import { useNostrStore } from './nostrStore.svelte.ts';
 
-export const useCallRoomStore = defineStore('callRooms', () =>
+export const useCallRoomStore = createStore('callRooms', () =>
   createCallRoomRuntime({
     getOwnPubkey: () => useNostrStore().getLoggedInPublicKeyHex(),
     async getIdentity() {

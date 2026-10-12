@@ -2,7 +2,7 @@ import {
   androidNotificationPlugin,
   isAndroidNative,
 } from '#src/lib/platform/androidNotifications.ts';
-import { useNostrStore } from '#src/stores/nostrStore.ts';
+import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
 import { useCallStore } from '#src/stores/callStore.ts';
 import { rememberCallControl } from '#src/services/callReplayCache.ts';
 import { CALL_PROTOCOL, type CallSession } from '#src/types/call.ts';

@@ -1,6 +1,6 @@
-import { shallowReactive } from '@vue/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
 import type { Readable } from 'svelte/store';
-import { observe } from '#src/lib/state/store.ts';
+import { toStore } from 'svelte/store';
 
 // Display-only whitelist. Contact metadata can contain encrypted group keys and
 // must never be copied wholesale into the frontend profile cache.
@@ -12,7 +12,7 @@ export interface PublicProfile {
 }
 const PROFILE_CACHE_LIMIT = 5000;
 const observers = new Map<string, number>();
-const profiles = shallowReactive(new Map<string, PublicProfile>());
+const profiles = new SvelteMap<string, PublicProfile>();
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 export const getPublicProfile = (publicKey: string) => profiles.get(publicKey);
 function trimProfiles(): void {
@@ -26,7 +26,7 @@ export function observePublicProfile(publicKey: string): Readable<PublicProfile 
   return {
     subscribe(run) {
       observers.set(publicKey, (observers.get(publicKey) ?? 0) + 1);
-      const stop = observe(() => profiles.get(publicKey)).subscribe(run);
+      const stop = toStore(() => profiles.get(publicKey)).subscribe(run);
       return () => {
         stop();
         const remaining = (observers.get(publicKey) ?? 1) - 1;

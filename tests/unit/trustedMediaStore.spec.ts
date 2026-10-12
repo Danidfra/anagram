@@ -2,7 +2,7 @@ import {
   isTrustedImageSenderValue,
   normalizeTrustedImageSenderPublicKey,
   normalizeTrustedImageSenderPublicKeys,
-} from '#src/stores/trustedMediaStore.ts';
+} from '#src/stores/trustedMediaStore.svelte.ts';
 import { describe, expect, it } from 'vitest';
 
 describe('trustedMediaStore helpers', () => {

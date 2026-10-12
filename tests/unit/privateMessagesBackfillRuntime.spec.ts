@@ -288,7 +288,7 @@ describe('privateMessagesBackfillRuntime', () => {
     expect(stop).not.toHaveBeenCalled();
     eose();
     await vi.advanceTimersByTimeAsync(0);
-    expect(runtime.groupHistoryState.value).toMatchObject({ loading: false, failed: false });
+    expect(runtime.groupHistoryState).toMatchObject({ loading: false, failed: false });
     expect(stop).toHaveBeenCalled();
     runtime.resetPrivateMessagesBackfillRuntimeState();
   });
@@ -587,7 +587,7 @@ describe('privateMessagesBackfillRuntime', () => {
         expect.anything(),
       );
       await vi.advanceTimersByTimeAsync(10000);
-      expect(runtime.groupHistoryState.value).toMatchObject({
+      expect(runtime.groupHistoryState).toMatchObject({
         loading: false,
         hasOlder: true,
         failed: true,
@@ -706,7 +706,7 @@ describe('privateMessagesBackfillRuntime', () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(await repair).toBe(true);
     expect(subscribe).toHaveBeenCalledTimes(2);
-    expect(runtime.groupHistoryState.value.chat).toBe('');
+    expect(runtime.groupHistoryState.chat).toBe('');
     expect(queue).toHaveBeenCalledWith(
       expect.anything(),
       LOGGED_IN_PUBLIC_KEY,

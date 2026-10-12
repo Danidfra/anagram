@@ -1,7 +1,6 @@
 import NostrClient, { NostrPrivateKeySigner } from '#src/lib/nostr/client.ts';
 import type { ContactRecord } from '#src/types/contact.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
 
 const chatDataServiceMock = vi.hoisted(() => ({
   init: vi.fn(async () => {}),
@@ -58,9 +57,15 @@ vi.mock('#src/services/chatDataService.ts', () => ({
   chatDataService: chatDataServiceMock,
 }));
 
-vi.mock('#src/services/androidSecurePrivateKeyStorage.ts', () => androidSecurePrivateKeyStorageMock);
+vi.mock(
+  '#src/services/androidSecurePrivateKeyStorage.ts',
+  () => androidSecurePrivateKeyStorageMock,
+);
 
-vi.mock('#src/services/electronSecurePrivateKeyStorage.ts', () => electronSecurePrivateKeyStorageMock);
+vi.mock(
+  '#src/services/electronSecurePrivateKeyStorage.ts',
+  () => electronSecurePrivateKeyStorageMock,
+);
 
 vi.mock('#src/services/contactsService.ts', () => ({
   contactsService: contactsServiceMock,
@@ -70,7 +75,7 @@ vi.mock('#src/services/nostrEventDataService.ts', () => ({
   nostrEventDataService: nostrEventDataServiceMock,
 }));
 
-vi.mock('#src/stores/messageStore.ts', () => ({
+vi.mock('#src/stores/messageStore.svelte.ts', () => ({
   useMessageStore: () => messageStoreMock,
 }));
 
@@ -127,8 +132,8 @@ function normalizeRelayStatusUrls(relayUrls: string[]): string[] {
       relayUrls
         .map((value) => value.trim())
         .filter(Boolean)
-        .map((value) => (value.endsWith('/') ? value : `${value}/`))
-    )
+        .map((value) => (value.endsWith('/') ? value : `${value}/`)),
+    ),
   );
 }
 
@@ -137,7 +142,7 @@ function normalizeThrottleMs(value: number | undefined): number {
 }
 
 function buildContactRecord(
-  overrides: Partial<ContactRecord> & Pick<ContactRecord, 'public_key'>
+  overrides: Partial<ContactRecord> & Pick<ContactRecord, 'public_key'>,
 ): ContactRecord {
   return {
     id: overrides.id ?? 1,
@@ -165,18 +170,18 @@ function createAuthSessionHarness() {
   >();
   pendingContactCursorPublishTimers.set(
     'chat',
-    globalThis.setTimeout(() => {}, 1000)
+    globalThis.setTimeout(() => {}, 1000),
   );
   let refreshTimerId: ReturnType<typeof globalThis.setTimeout> | null = globalThis.setTimeout(
     () => {},
-    1000
+    1000,
   );
 
   const refs = {
-    contactListVersion: ref(4),
-    eventSince: ref(88),
-    isRestoringStartupState: ref(true),
-    relayStatusVersion: ref(2),
+    contactListVersion: 4,
+    eventSince: 88,
+    isRestoringStartupState: true,
+    relayStatusVersion: 2,
   };
   const restoreRuntimeState = {
     restoreContactCursorStatePromise: Promise.resolve(),
@@ -196,12 +201,27 @@ function createAuthSessionHarness() {
     clearRelayStoreState: vi.fn(),
     clearStoredPrivateMessagesLastReceivedCreatedAt: vi.fn(),
     configuredRelayUrls: { clear: vi.fn() },
-    contactListVersion: refs.contactListVersion,
-    eventSince: refs.eventSince,
+    get contactListVersion() {
+      return refs.contactListVersion;
+    },
+    set contactListVersion(value) {
+      refs.contactListVersion = value;
+    },
+    get eventSince() {
+      return refs.eventSince;
+    },
+    set eventSince(value) {
+      refs.eventSince = value;
+    },
     getPrivateMessagesEpochSubscriptionRefreshTimerId: () => refreshTimerId,
     groupContactRefreshPromises: { clear: vi.fn() },
     hasNip07Extension: () => false,
-    isRestoringStartupState: refs.isRestoringStartupState,
+    get isRestoringStartupState() {
+      return refs.isRestoringStartupState;
+    },
+    set isRestoringStartupState(value) {
+      refs.isRestoringStartupState = value;
+    },
     loggedInvalidGroupEpochConflictKeys: { clear: vi.fn() },
     ndk,
     pendingContactCursorPublishStates: { clear: vi.fn() },
@@ -213,7 +233,12 @@ function createAuthSessionHarness() {
     pendingIncomingReactions: { clear: vi.fn() },
     relayConnectRetryStateByUrl: { clear: vi.fn() },
     relayConnectPromises: { clear: vi.fn() },
-    relayStatusVersion: refs.relayStatusVersion,
+    get relayStatusVersion() {
+      return refs.relayStatusVersion;
+    },
+    set relayStatusVersion(value) {
+      refs.relayStatusVersion = value;
+    },
     resetContactSubscriptionsRuntimeState: vi.fn(),
     resetCalls: vi.fn(),
     resetEventSinceForFreshLogin: vi.fn(),
@@ -270,7 +295,7 @@ describe('nostr runtime messaging logic', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     androidSecurePrivateKeyStorageMock.clearAndroidPrivateKeyMemoryOnlySession.mockClear();
     androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
-      false
+      false,
     );
     androidSecurePrivateKeyStorageMock.markAndroidPrivateKeyMemoryOnlySession.mockClear();
     androidSecurePrivateKeyStorageMock.readAndroidSecurePrivateKeyHex.mockResolvedValue(null);
@@ -278,10 +303,12 @@ describe('nostr runtime messaging logic', () => {
     androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockResolvedValue();
     electronSecurePrivateKeyStorageMock.clearElectronPrivateKeyMemoryOnlySession.mockClear();
     electronSecurePrivateKeyStorageMock.isElectronSecurePrivateKeyStorageAvailable.mockReturnValue(
-      false
+      false,
     );
     electronSecurePrivateKeyStorageMock.markElectronPrivateKeyMemoryOnlySession.mockClear();
-    electronSecurePrivateKeyStorageMock.readElectronSecurePrivateKeyHex.mockResolvedValue(null);
+    electronSecurePrivateKeyStorageMock.readElectronSecurePrivateKeyHex.mockResolvedValue(
+      null,
+    );
     electronSecurePrivateKeyStorageMock.removeElectronSecurePrivateKeyHex.mockResolvedValue();
     electronSecurePrivateKeyStorageMock.writeElectronSecurePrivateKeyHex.mockResolvedValue();
   });
@@ -361,7 +388,7 @@ describe('nostr runtime messaging logic', () => {
       {
         event: undefined,
         direction: 'out',
-      }
+      },
     );
     expect(queuePrivateMessagesUiRefresh).toHaveBeenCalledWith({
       throttleMs: 25,
@@ -369,7 +396,7 @@ describe('nostr runtime messaging logic', () => {
     });
     expect(messageStoreMock.refreshPersistedMessage).toHaveBeenCalledWith(4);
     expect(
-      runtime.buildInboundRelayStatuses(['wss://relay.example', 'wss://relay.example/'])
+      runtime.buildInboundRelayStatuses(['wss://relay.example', 'wss://relay.example/']),
     ).toEqual([
       expect.objectContaining({
         relay_url: 'wss://relay.example/',
@@ -381,7 +408,7 @@ describe('nostr runtime messaging logic', () => {
       'skip',
       expect.objectContaining({
         reason: 'invalid-message-id',
-      })
+      }),
     );
 
     runtime.queuePendingIncomingReaction(EVENT_ID_A, {
@@ -425,7 +452,7 @@ describe('nostr runtime messaging logic', () => {
     runtime.removePendingIncomingReaction(
       EVENT_ID_A,
       EVENT_ID_B.toUpperCase(),
-      PUBKEY_A.toUpperCase()
+      PUBKEY_A.toUpperCase(),
     );
     expect(runtime.consumePendingIncomingReactions(EVENT_ID_A)).toEqual([]);
     expect(bumpDeveloperDiagnosticsVersion).toHaveBeenCalled();
@@ -438,18 +465,21 @@ describe('nostr runtime messaging logic', () => {
       syncContactProfile: vi.fn(async () => {}),
     };
     const ensureContactStoredAsGroup = vi.fn<
-      (groupPublicKey: string, options?: { fallbackName?: string }) => Promise<ContactRecord | null>
+      (
+        groupPublicKey: string,
+        options?: { fallbackName?: string },
+      ) => Promise<ContactRecord | null>
     >(async () =>
       buildContactRecord({
         public_key: GROUP_KEY,
         type: 'group',
         name: 'Accepted Group',
-      })
+      }),
     );
     const ensureContactListedInPrivateContactList = vi.fn<
       (
         targetPubkeyHex: string,
-        options?: { fallbackName?: string; type?: 'user' | 'group' }
+        options?: { fallbackName?: string; type?: 'user' | 'group' },
       ) => Promise<{ contact: ContactRecord; didChange: boolean }>
     >(async () => ({
       contact: buildContactRecord({
@@ -514,7 +544,9 @@ describe('nostr runtime messaging logic', () => {
       },
     } as never);
 
-    subscribePrivateMessagesForLoggedInUser.mockRejectedValueOnce(new Error('subscription failed'));
+    subscribePrivateMessagesForLoggedInUser.mockRejectedValueOnce(
+      new Error('subscription failed'),
+    );
     refreshGroupContactByPublicKey.mockRejectedValueOnce(new Error('profile failed'));
     publishPrivateContactList.mockRejectedValueOnce(new Error('publish failed'));
     await runtime.ensureGroupInvitePubkeyIsContact(GROUP_KEY, 'Accepted Group');
@@ -524,19 +556,19 @@ describe('nostr runtime messaging logic', () => {
         public_key: GROUP_KEY,
         type: 'group',
         name: 'Preview Display',
-      })
+      }),
     );
     expect(chatDataServiceMock.updateChat).toHaveBeenCalledWith(
       GROUP_KEY,
       expect.objectContaining({
         type: 'group',
-      })
+      }),
     );
     expect(chatDataServiceMock.updateChatPreview).toHaveBeenCalledWith(
       GROUP_KEY,
       'This is an invitation to a group.',
       '2026-01-06T00:00:00.000Z',
-      expect.any(Number)
+      expect.any(Number),
     );
     expect(ensureContactStoredAsGroup).toHaveBeenCalledWith(GROUP_KEY, {
       fallbackName: 'Accepted Group',
@@ -548,7 +580,7 @@ describe('nostr runtime messaging logic', () => {
     expect(chatStore.syncContactProfile).toHaveBeenCalledWith(GROUP_KEY);
     expect(subscribeGroupMembershipRosterUpdates).toHaveBeenCalledWith(
       ['wss://relay.example/'],
-      true
+      true,
     );
     expect(publishPrivateContactList).toHaveBeenCalledWith(['wss://relay.example/']);
     expect(chatStore.reload).toHaveBeenCalled();
@@ -579,7 +611,7 @@ describe('nostr runtime messaging logic', () => {
           public_key: GROUP_KEY,
           type: 'group',
           name: 'Accepted Group',
-        })
+        }),
       ),
       getAppRelayUrls: () => ['wss://relay.example/'],
       getLoggedInPublicKeyHex: () => PUBKEY_A,
@@ -618,7 +650,7 @@ describe('nostr runtime messaging logic', () => {
     });
     expect(subscribeGroupMembershipRosterUpdates).toHaveBeenCalledWith(
       ['wss://relay.example/'],
-      true
+      true,
     );
     expect(subscribePrivateMessagesForLoggedInUser).not.toHaveBeenCalled();
   });
@@ -668,21 +700,21 @@ describe('nostr runtime messaging logic', () => {
     expect(
       await runtime.ensureContactListedInPrivateContactList(PUBKEY_A, {
         fallbackName: 'Alice',
-      })
+      }),
     ).toMatchObject({
       didChange: true,
     });
     expect(
       await runtime.ensureContactListedInPrivateContactList(PUBKEY_A, {
         type: 'group',
-      })
+      }),
     ).toMatchObject({
       didChange: true,
     });
     expect(
       await runtime.ensureContactListedInPrivateContactList(PUBKEY_A, {
         type: 'group',
-      })
+      }),
     ).toMatchObject({
       didChange: false,
     });
@@ -750,10 +782,10 @@ describe('nostr runtime messaging logic', () => {
     expect(deps.resetReconnectHealingRuntimeState).toHaveBeenCalled();
 
     await runtime.logout();
-    expect(refs.eventSince.value).toBe(0);
-    expect(refs.isRestoringStartupState.value).toBe(false);
-    expect(refs.contactListVersion.value).toBe(0);
-    expect(refs.relayStatusVersion.value).toBe(3);
+    expect(refs.eventSince).toBe(0);
+    expect(refs.isRestoringStartupState).toBe(false);
+    expect(refs.contactListVersion).toBe(0);
+    expect(refs.relayStatusVersion).toBe(3);
     expect(deps.setRestoreStartupStatePromise).toHaveBeenCalledWith(null);
     expect(deps.setSyncLoggedInContactProfilePromise).toHaveBeenCalledWith(null);
     expect(deps.setSyncRecentChatContactsPromise).toHaveBeenCalledWith(null);
@@ -767,7 +799,7 @@ describe('nostr runtime messaging logic', () => {
 
   it('uses Android secure storage instead of localStorage for direct key logins', async () => {
     androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
-      true
+      true,
     );
     const localStorage = createMockStorage();
     (globalThis as Record<string, unknown>).window = {
@@ -780,9 +812,9 @@ describe('nostr runtime messaging logic', () => {
 
     await expect(runtime.savePrivateKeyHex(privateKey)).resolves.toBe(true);
 
-    expect(androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex).toHaveBeenCalledWith(
-      privateKey
-    );
+    expect(
+      androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex,
+    ).toHaveBeenCalledWith(privateKey);
     expect(localStorage.store.get(AUTH_METHOD_STORAGE_KEY)).toBe('nsec');
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
     expect(localStorage.store.get(PUBLIC_KEY_STORAGE_KEY)).toBe(expectedPubkey);
@@ -793,10 +825,10 @@ describe('nostr runtime messaging logic', () => {
 
   it('falls back to a memory-only Android private-key session when secure storage fails', async () => {
     androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
-      true
+      true,
     );
     androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockRejectedValue(
-      new Error('secure storage unavailable')
+      new Error('secure storage unavailable'),
     );
     const localStorage = createMockStorage();
     (globalThis as Record<string, unknown>).window = {
@@ -812,14 +844,18 @@ describe('nostr runtime messaging logic', () => {
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
     expect(runtime.getPrivateKeyHex()).toBe(privateKey);
     expect(
-      androidSecurePrivateKeyStorageMock.markAndroidPrivateKeyMemoryOnlySession
+      androidSecurePrivateKeyStorageMock.markAndroidPrivateKeyMemoryOnlySession,
     ).toHaveBeenCalledWith(expectedPubkey);
   });
 
   it('never logs keychain failure payloads containing the private key', async () => {
-    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(true);
+    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
+      true,
+    );
     const secret = NostrPrivateKeySigner.generate().privateKey;
-    androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockRejectedValue(new Error('IPC arguments ' + secret));
+    androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockRejectedValue(
+      new Error('IPC arguments ' + secret),
+    );
     const storage = createMockStorage();
     (globalThis as Record<string, unknown>).window = { localStorage: storage.api };
     const { runtime } = createAuthSessionHarness();
@@ -829,11 +865,20 @@ describe('nostr runtime messaging logic', () => {
   });
 
   it('does not resurrect a logged-out key when a pending keychain read finishes', async () => {
-    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(true);
+    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
+      true,
+    );
     let complete!: (key: string) => void;
-    androidSecurePrivateKeyStorageMock.readAndroidSecurePrivateKeyHex.mockReturnValue(new Promise<string>((resolve) => { complete = resolve; }));
+    androidSecurePrivateKeyStorageMock.readAndroidSecurePrivateKeyHex.mockReturnValue(
+      new Promise<string>((resolve) => {
+        complete = resolve;
+      }),
+    );
     const signer = NostrPrivateKeySigner.generate();
-    const storage = createMockStorage({ [PUBLIC_KEY_STORAGE_KEY]: signer.pubkey, [AUTH_METHOD_STORAGE_KEY]: 'nsec' });
+    const storage = createMockStorage({
+      [PUBLIC_KEY_STORAGE_KEY]: signer.pubkey,
+      [AUTH_METHOD_STORAGE_KEY]: 'nsec',
+    });
     (globalThis as Record<string, unknown>).window = { localStorage: storage.api };
     const { runtime } = createAuthSessionHarness();
     const pending = runtime.loadPrivateKeyHex();
@@ -846,18 +891,33 @@ describe('nostr runtime messaging logic', () => {
   });
 
   it('orders a pending keychain write before logout removal and never revives its session', async () => {
-    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(true);
+    androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
+      true,
+    );
     let finish!: () => void;
-    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
     let stored: string | null = null;
-    androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockImplementation(async (key: string) => { await gate; stored = key; });
-    androidSecurePrivateKeyStorageMock.removeAndroidSecurePrivateKeyHex.mockImplementation(async () => { stored = null; });
+    androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockImplementation(
+      async (key: string) => {
+        await gate;
+        stored = key;
+      },
+    );
+    androidSecurePrivateKeyStorageMock.removeAndroidSecurePrivateKeyHex.mockImplementation(
+      async () => {
+        stored = null;
+      },
+    );
     const storage = createMockStorage();
     (globalThis as Record<string, unknown>).window = { localStorage: storage.api };
     const { runtime } = createAuthSessionHarness();
     const saving = runtime.savePrivateKeyHex(NostrPrivateKeySigner.generate().privateKey);
     await flushPromises();
-    expect(androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex).toHaveBeenCalled();
+    expect(
+      androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex,
+    ).toHaveBeenCalled();
     runtime.clearPrivateKey();
     finish();
     await expect(saving).resolves.toBe(false);
@@ -869,7 +929,7 @@ describe('nostr runtime messaging logic', () => {
 
   it('migrates legacy Android localStorage private keys into secure storage', async () => {
     androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
-      true
+      true,
     );
     const privateKey = NostrPrivateKeySigner.generate().privateKey;
     const expectedPubkey = new NostrPrivateKeySigner(privateKey).pubkey;
@@ -885,9 +945,9 @@ describe('nostr runtime messaging logic', () => {
 
     await expect(runtime.loadPrivateKeyHex()).resolves.toBe(privateKey);
 
-    expect(androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex).toHaveBeenCalledWith(
-      privateKey
-    );
+    expect(
+      androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex,
+    ).toHaveBeenCalledWith(privateKey);
     expect(localStorage.store.get(AUTH_METHOD_STORAGE_KEY)).toBe('nsec');
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
     expect(localStorage.store.get(PUBLIC_KEY_STORAGE_KEY)).toBe(expectedPubkey);
@@ -895,7 +955,7 @@ describe('nostr runtime messaging logic', () => {
 
   it('uses Electron secure storage instead of localStorage for direct key logins', async () => {
     electronSecurePrivateKeyStorageMock.isElectronSecurePrivateKeyStorageAvailable.mockReturnValue(
-      true
+      true,
     );
     const localStorage = createMockStorage();
     (globalThis as Record<string, unknown>).window = {
@@ -909,7 +969,7 @@ describe('nostr runtime messaging logic', () => {
     await expect(runtime.savePrivateKeyHex(privateKey)).resolves.toBe(true);
 
     expect(
-      electronSecurePrivateKeyStorageMock.writeElectronSecurePrivateKeyHex
+      electronSecurePrivateKeyStorageMock.writeElectronSecurePrivateKeyHex,
     ).toHaveBeenCalledWith(privateKey);
     expect(localStorage.store.get(AUTH_METHOD_STORAGE_KEY)).toBe('nsec');
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
@@ -921,10 +981,10 @@ describe('nostr runtime messaging logic', () => {
 
   it('falls back to a memory-only Electron private-key session when secure storage fails', async () => {
     electronSecurePrivateKeyStorageMock.isElectronSecurePrivateKeyStorageAvailable.mockReturnValue(
-      true
+      true,
     );
     electronSecurePrivateKeyStorageMock.writeElectronSecurePrivateKeyHex.mockRejectedValue(
-      new Error('secure storage unavailable')
+      new Error('secure storage unavailable'),
     );
     const localStorage = createMockStorage();
     (globalThis as Record<string, unknown>).window = {
@@ -940,13 +1000,13 @@ describe('nostr runtime messaging logic', () => {
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
     expect(runtime.getPrivateKeyHex()).toBe(privateKey);
     expect(
-      electronSecurePrivateKeyStorageMock.markElectronPrivateKeyMemoryOnlySession
+      electronSecurePrivateKeyStorageMock.markElectronPrivateKeyMemoryOnlySession,
     ).toHaveBeenCalledWith(expectedPubkey);
   });
 
   it('migrates legacy Electron localStorage private keys into secure storage', async () => {
     electronSecurePrivateKeyStorageMock.isElectronSecurePrivateKeyStorageAvailable.mockReturnValue(
-      true
+      true,
     );
     const privateKey = NostrPrivateKeySigner.generate().privateKey;
     const expectedPubkey = new NostrPrivateKeySigner(privateKey).pubkey;
@@ -963,7 +1023,7 @@ describe('nostr runtime messaging logic', () => {
     await expect(runtime.loadPrivateKeyHex()).resolves.toBe(privateKey);
 
     expect(
-      electronSecurePrivateKeyStorageMock.writeElectronSecurePrivateKeyHex
+      electronSecurePrivateKeyStorageMock.writeElectronSecurePrivateKeyHex,
     ).toHaveBeenCalledWith(privateKey);
     expect(localStorage.store.get(AUTH_METHOD_STORAGE_KEY)).toBe('nsec');
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();

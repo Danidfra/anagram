@@ -3,7 +3,7 @@ import { emitForegroundMessageActivity } from '#src/services/foregroundMessageAc
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import type { ContactRecord } from '#src/types/contact.ts';
 import { areBrowserNotificationsEnabled } from '#src/utils/browserNotificationPreference.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
+
 
 interface InboundTraceOptions {
   wrappedEvent?: {
@@ -24,8 +24,8 @@ interface InboundPresentationRuntimeDeps {
   formatSubscriptionLogValue: (value: string | null | undefined) => string | null;
   getLoggedInPublicKeyHex: () => string | null;
   getVisibleChatId: () => string | null;
-  isAppForeground: Ref<boolean>;
-  isRestoringStartupState: Ref<boolean>;
+  isAppForeground: boolean;
+  isRestoringStartupState: boolean;
   logDeveloperTrace: (
     level: 'info' | 'warn' | 'error',
     area: string,
@@ -35,15 +35,8 @@ interface InboundPresentationRuntimeDeps {
   normalizeEventId: (value: unknown) => string | null;
 }
 
-export function createInboundPresentationRuntime({
-  formatSubscriptionLogValue,
-  getLoggedInPublicKeyHex,
-  getVisibleChatId,
-  isAppForeground,
-  isRestoringStartupState,
-  logDeveloperTrace,
-  normalizeEventId,
-}: InboundPresentationRuntimeDeps) {
+export function createInboundPresentationRuntime(state: InboundPresentationRuntimeDeps) {
+  const { formatSubscriptionLogValue, getLoggedInPublicKeyHex, getVisibleChatId, logDeveloperTrace, normalizeEventId } = state;
   function buildInboundTraceDetails(options: InboundTraceOptions = {}): Record<string, unknown> {
     const relayUrls = Array.isArray(options.relayUrls)
       ? options.relayUrls.filter(
@@ -149,11 +142,11 @@ export function createInboundPresentationRuntime({
   }
 
   function shouldSuppressIncomingMessageBrowserNotification(chatPubkey: string): boolean {
-    if (isRestoringStartupState.value || !areBrowserNotificationsEnabled()) {
+    if (state.isRestoringStartupState || !areBrowserNotificationsEnabled()) {
       return true;
     }
 
-    return isAppForeground.value || getVisibleChatId() === chatPubkey;
+    return state.isAppForeground || getVisibleChatId() === chatPubkey;
   }
 
   function emitForegroundIncomingMessageActivity(options: {
@@ -162,7 +155,7 @@ export function createInboundPresentationRuntime({
     messageText: string;
     title: string;
   }): boolean {
-    if (isRestoringStartupState.value || !isAppForeground.value) {
+    if (state.isRestoringStartupState || !state.isAppForeground) {
       return false;
     }
 

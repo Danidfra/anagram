@@ -36,7 +36,7 @@ test('relay rejection stays on the message status bar without a popup; other sen
   await navigateToChat(page, getPublicKey(key));
   await page.evaluate(async (own) => {
     const { chatDataService } = await import('/src/services/chatDataService.ts');
-    const { useMessageStore } = await import('/src/stores/messageStore.ts');
+    const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
     for (let index = 0; index < 30; index++)
       await chatDataService.createMessage({
         chat_public_key: own,
@@ -79,7 +79,7 @@ test('relay rejection stays on the message status bar without a popup; other sen
   await page.keyboard.press('Escape');
 
   await page.evaluate(async () => {
-    const { useMessageStore } = await import('/src/stores/messageStore.ts');
+    const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
     useMessageStore().sendMessage = async () => {
       throw new Error('Failed to persist outbound message.');
     };

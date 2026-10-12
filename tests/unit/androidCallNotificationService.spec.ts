@@ -24,7 +24,7 @@ vi.mock('#src/lib/platform/androidNotifications.ts', () => ({
     claimCallAnswer: mock.claim,
   }),
 }));
-vi.mock('#src/stores/nostrStore.ts', () => ({
+vi.mock('#src/stores/nostrStore.svelte.ts', () => ({
   useNostrStore: () => ({
     getLoggedInPublicKeyHex: () => mock.owner,
     ingestAndroidRelayNotificationEvent: mock.ingest,

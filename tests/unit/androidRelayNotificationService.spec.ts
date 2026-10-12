@@ -106,7 +106,7 @@ vi.mock('#src/services/contactsService.ts', () => ({
   },
 }));
 
-vi.mock('#src/stores/nostrStore.ts', () => ({
+vi.mock('#src/stores/nostrStore.svelte.ts', () => ({
   useNostrStore: () => ({
     getLoggedInPublicKeyHex: () => new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey,
     getPrivateKeyHex: () => moduleMocks.privateKey,

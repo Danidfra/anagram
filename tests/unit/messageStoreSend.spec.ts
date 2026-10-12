@@ -1,6 +1,6 @@
 import { UNKNOWN_REPLY_MESSAGE_TEXT } from '#src/stores/nostr/constants.ts';
-import { createPinia, setActivePinia } from '#src/lib/state/store.ts';
-import { MissingContactRelaysError, useMessageStore } from '#src/stores/messageStore.ts';
+import { resetStores } from '#src/lib/state/store.svelte.ts';
+import { MissingContactRelaysError, useMessageStore } from '#src/stores/messageStore.svelte.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const CHAT_ID = 'c'.repeat(64);
@@ -56,11 +56,11 @@ vi.mock('#src/services/nostrEventDataService.ts', () => ({
   nostrEventDataService: serviceMocks.nostrEventDataService,
 }));
 
-vi.mock('#src/stores/chatStore.ts', () => ({
+vi.mock('#src/stores/chatStore.svelte.ts', () => ({
   useChatStore: () => serviceMocks.chatStore,
 }));
 
-vi.mock('#src/stores/nostrStore.ts', () => ({
+vi.mock('#src/stores/nostrStore.svelte.ts', () => ({
   useNostrStore: () => serviceMocks.nostrStore,
 }));
 
@@ -116,7 +116,7 @@ function makeMessageRow(overrides: Record<string, unknown> = {}) {
 
 describe('messageStore send', () => {
   beforeEach(() => {
-    setActivePinia(createPinia());
+    resetStores();
     vi.clearAllMocks();
     serviceMocks.relayStore.relays = ['wss://app.example'];
     serviceMocks.nostrStore.refreshContactByPublicKey.mockResolvedValue(undefined);

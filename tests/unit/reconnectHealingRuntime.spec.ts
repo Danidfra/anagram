@@ -3,7 +3,6 @@ import {
   type ReconnectHealingChatTarget,
 } from '#src/stores/nostr/reconnectHealingRuntime.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
 
 const GROUP_PUBLIC_KEY = 'a'.repeat(64);
 const GROUP_EPOCH_PUBLIC_KEY = 'b'.repeat(64);
@@ -41,11 +40,11 @@ describe('reconnectHealingRuntime', () => {
       isNativeAndroid?: boolean;
       refreshRecreatedLiveSubscription?: boolean;
       refreshDirectMessages?: () => Promise<{ recreatedLiveSubscription: boolean }>;
-    } = {}
+    } = {},
   ) {
     let privateMessagesLiveEoseAt: string | null = null;
-    const healingState = ref(false);
-    const statusLabel = ref<string | null>(null);
+    let healingState = false;
+    let statusLabel: string | null = null;
     const statusLabelUpdates: StatusLabelUpdate[] = [];
     const queueOutboundMessageReplay = vi.fn();
     const queuePrivateMessagesWatchdog = vi.fn();
@@ -57,11 +56,11 @@ describe('reconnectHealingRuntime', () => {
       options.refreshDirectMessages ??
         (async () => ({
           recreatedLiveSubscription: options.refreshRecreatedLiveSubscription ?? false,
-        }))
+        })),
     );
     const restartSessionSubscriptions = vi.fn(async (_relayUrls: string[]) => {});
     const waitForPrivateMessagesIngestQueue = vi.fn(async () => {});
-    const isRestoringStartupState = ref(options.isRestoringStartupState ?? false);
+    let isRestoringStartupState = options.isRestoringStartupState ?? false;
 
     const runtime = createReconnectHealingRuntime({
       logReconnectHealing,
@@ -69,17 +68,22 @@ describe('reconnectHealingRuntime', () => {
       getPrivateMessagesLiveEoseAt: () => privateMessagesLiveEoseAt,
       getVisibleChatTarget: () => options.visibleChat ?? null,
       isNativeAndroid: () => options.isNativeAndroid ?? false,
-      isRestoringStartupState,
+      get isRestoringStartupState() {
+        return isRestoringStartupState;
+      },
+      set isRestoringStartupState(value) {
+        isRestoringStartupState = value;
+      },
       queueOutboundMessageReplay,
       queuePrivateMessagesWatchdog,
       refreshDeveloperPendingQueues,
       refreshDirectMessages,
       restartSessionSubscriptions,
       setIsReconnectHealing: (value) => {
-        healingState.value = value;
+        healingState = value;
       },
       setReconnectHealingStatusLabel: (value) => {
-        statusLabel.value = value;
+        statusLabel = value;
         statusLabelUpdates.push({
           at: Date.now(),
           value,
@@ -89,14 +93,24 @@ describe('reconnectHealingRuntime', () => {
     });
 
     return {
-      healingState,
-      statusLabel,
+      get healingState() {
+        return healingState;
+      },
+      set healingState(value) {
+        healingState = value;
+      },
+      get statusLabel() {
+        return statusLabel;
+      },
+      set statusLabel(value) {
+        statusLabel = value;
+      },
       statusLabelUpdates,
       setPrivateMessagesLiveEoseAt: (value: string | null) => {
         privateMessagesLiveEoseAt = value;
       },
       setIsRestoringStartupState: (value: boolean) => {
-        isRestoringStartupState.value = value;
+        isRestoringStartupState = value;
       },
       queueOutboundMessageReplay,
       queuePrivateMessagesWatchdog,
@@ -117,13 +131,13 @@ describe('reconnectHealingRuntime', () => {
 
   function expectStatusLabels(
     statusLabelUpdates: StatusLabelUpdate[],
-    labels: Array<string | null>
+    labels: Array<string | null>,
   ) {
     expect(statusLabelUpdates.map((entry) => entry.value)).toEqual(labels);
   }
 
   function expectStatusLabelsWereVisibleForMinimumDuration(
-    statusLabelUpdates: StatusLabelUpdate[]
+    statusLabelUpdates: StatusLabelUpdate[],
   ): void {
     for (let index = 0; index < statusLabelUpdates.length - 1; index += 1) {
       const current = statusLabelUpdates[index];
@@ -159,7 +173,7 @@ describe('reconnectHealingRuntime', () => {
     await runQueuedTimersForStatusSteps(10);
     await runPromise;
 
-    expect(healingState.value).toBe(false);
+    expect(healingState).toBe(false);
     expectStatusLabels(statusLabelUpdates, [
       'sync.preparing',
       'sync.checkingSessionNetwork',
@@ -184,14 +198,14 @@ describe('reconnectHealingRuntime', () => {
         reason: 'relay-connected',
         visibleChatId: GROUP_PUBLIC_KEY,
         directMessageRecipientPubkey: LOGGED_IN_PUBLIC_KEY,
-      })
+      }),
     );
     expect(logReconnectHealing).toHaveBeenCalledWith(
       'complete',
       expect.objectContaining({
         reason: 'relay-connected',
         refreshedDirectMessages: true,
-      })
+      }),
     );
   });
 
@@ -302,16 +316,19 @@ describe('reconnectHealingRuntime', () => {
 
     expect(refreshDirectMessages).not.toHaveBeenCalled();
     expect(refreshDeveloperPendingQueues).not.toHaveBeenCalled();
-    expectStatusLabels(statusLabelUpdates, ['sync.started:sync.reason.relayListChanged', null]);
+    expectStatusLabels(statusLabelUpdates, [
+      'sync.started:sync.reason.relayListChanged',
+      null,
+    ]);
     expect(statusLabelUpdates.map((entry) => entry.value)).not.toContain(
-      'Checking session and network'
+      'Checking session and network',
     );
     expect(logReconnectHealing).toHaveBeenCalledWith(
       'deferred',
       expect.objectContaining({
         reason: 'relay-list-changed',
         deferReason: 'startup-restore-in-progress',
-      })
+      }),
     );
 
     setIsRestoringStartupState(false);
@@ -376,13 +393,17 @@ describe('reconnectHealingRuntime', () => {
     expect(refreshDirectMessages).toHaveBeenCalledTimes(2);
     expect(refreshDeveloperPendingQueues).toHaveBeenCalledTimes(2);
     expect(statusLabelUpdates.map((entry) => entry.value)).not.toContain(
-      'Sync started: relay connected'
+      'Sync started: relay connected',
     );
   });
 
   it('delays a cooldown trigger until ten seconds after the previous run finishes', async () => {
-    const { refreshDeveloperPendingQueues, refreshDirectMessages, runtime, statusLabelUpdates } =
-      createRuntime();
+    const {
+      refreshDeveloperPendingQueues,
+      refreshDirectMessages,
+      runtime,
+      statusLabelUpdates,
+    } = createRuntime();
 
     const firstRunPromise = runtime.runReconnectHealing('visibility-regain');
     await runQueuedTimersForStatusSteps(8);
@@ -400,7 +421,7 @@ describe('reconnectHealingRuntime', () => {
     expect(refreshDirectMessages).toHaveBeenCalledTimes(2);
     expect(refreshDeveloperPendingQueues).toHaveBeenCalledTimes(2);
     expect(statusLabelUpdates.map((entry) => entry.value).filter(Boolean)).not.toContain(
-      'Sync started: relay connected'
+      'Sync started: relay connected',
     );
 
     await vi.advanceTimersByTimeAsync(10_000);
@@ -425,7 +446,7 @@ describe('reconnectHealingRuntime', () => {
       'start',
       expect.objectContaining({
         reason: 'manual-refresh',
-      })
+      }),
     );
   });
 

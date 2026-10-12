@@ -1,4 +1,6 @@
-import { type WatchStopHandle, watch } from '#src/lib/state/reactivity.ts';
+import { toStore } from 'svelte/store';
+import { untrack } from 'svelte';
+
 
 export function watchRelaySettingsSubscriptions(options: {
   hydrate: () => void;
@@ -6,14 +8,15 @@ export function watchRelaySettingsSubscriptions(options: {
   isRestoring: () => boolean;
   hasSessionSubscriptions: () => boolean;
   refresh: () => void;
-}): WatchStopHandle {
+}): (() => void) {
   // Hydration is local input to the startup owner, never a second refresh path.
   options.hydrate();
-  return watch(
-    options.signature,
-    () => {
+  let previous = options.signature();
+  return toStore(options.signature).subscribe((signature) => {
+    if (signature === previous) return;
+    previous = signature;
+    untrack(() => {
       if (!options.isRestoring() && options.hasSessionSubscriptions()) options.refresh();
-    },
-    {}
-  );
+    });
+  });
 }

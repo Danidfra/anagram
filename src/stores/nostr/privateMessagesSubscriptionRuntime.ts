@@ -23,7 +23,6 @@ import type {
   RefreshPrivateMessagesLiveSubscriptionResult,
   SubscribePrivateMessagesOptions,
 } from '#src/stores/nostr/types.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
 
 type MessageStartupTrackId = 'private-message-events' | 'message-history-restore';
 
@@ -64,7 +63,7 @@ interface PrivateMessagesSubscriptionRuntimeDeps {
   getRelaySnapshots: (relayUrls: string[]) => unknown[];
   getStartupStepSnapshot: (stepId: MessageStartupTrackId) => { status: string };
   getStoredAuthMethod: () => string | null;
-  isRestoringStartupState: Ref<boolean>;
+  isRestoringStartupState: boolean;
   listPrivateMessageRecipientPubkeys: () => Promise<string[]>;
   logSubscription: (
     label: 'private-messages',
@@ -75,14 +74,14 @@ interface PrivateMessagesSubscriptionRuntimeDeps {
   normalizeEventId: (value: unknown) => string | null;
   normalizeRelayStatusUrls: (relayUrls: string[]) => string[];
   normalizeThrottleMs: (value: number | undefined) => number;
-  privateMessagesSubscriptionLastEoseAt: Ref<string | null>;
-  privateMessagesSubscriptionLastEventCreatedAt: Ref<number | null>;
-  privateMessagesSubscriptionLastEventId: Ref<string | null>;
-  privateMessagesSubscriptionLastEventSeenAt: Ref<string | null>;
-  privateMessagesSubscriptionLiveCoverageAt: Ref<number | null>;
-  privateMessagesSubscriptionRelayUrls: Ref<string[]>;
-  privateMessagesSubscriptionSince: Ref<number | null>;
-  privateMessagesSubscriptionStartedAt: Ref<string | null>;
+  privateMessagesSubscriptionLastEoseAt: string | null;
+  privateMessagesSubscriptionLastEventCreatedAt: number | null;
+  privateMessagesSubscriptionLastEventId: string | null;
+  privateMessagesSubscriptionLastEventSeenAt: string | null;
+  privateMessagesSubscriptionLiveCoverageAt: number | null;
+  privateMessagesSubscriptionRelayUrls: string[];
+  privateMessagesSubscriptionSince: number | null;
+  privateMessagesSubscriptionStartedAt: string | null;
   queuePrivateMessageIngestion: (
     wrappedEvent: ClientEvent,
     loggedInPubkeyHex: string,
@@ -114,45 +113,39 @@ interface PrivateMessagesSubscriptionRuntimeDeps {
   updateStoredPrivateMessagesLastReceivedFromCreatedAt: (value: unknown) => void;
 }
 
-export function createPrivateMessagesSubscriptionRuntime({
-  beginStartupStep,
-  buildFilterSinceDetails,
-  buildSubscriptionRelayDetails,
-  bumpDeveloperDiagnosticsVersion,
-  clearPrivateMessagesUiRefreshState,
-  completeStartupStep,
-  ensureRelayConnections,
-  failStartupStep,
-  flushPrivateMessagesUiRefreshNow,
-  getLoggedInPublicKeyHex,
-  getOrCreateSigner,
-  getPrivateMessagesStartupLiveSince,
-  getStartupStepSnapshot,
-  getStoredAuthMethod,
-  isRestoringStartupState,
-  listPrivateMessageRecipientPubkeys,
-  logSubscription,
-  ndk,
-  normalizeEventId,
-  normalizeRelayStatusUrls,
-  normalizeThrottleMs,
-  privateMessagesSubscriptionLastEoseAt,
-  privateMessagesSubscriptionLastEventCreatedAt,
-  privateMessagesSubscriptionLastEventId,
-  privateMessagesSubscriptionLastEventSeenAt,
-  privateMessagesSubscriptionLiveCoverageAt,
-  privateMessagesSubscriptionRelayUrls,
-  privateMessagesSubscriptionSince,
-  privateMessagesSubscriptionStartedAt,
-  queuePrivateMessageIngestion,
-  resolvePrivateMessageReadRelayUrls,
-  schedulePostPrivateMessagesEoseChecks,
-  setPrivateMessagesRestoreThrottleMs,
-  startPrivateMessagesStartupBackfill,
-  subscribeWithReqLogging,
-  updateStoredEventSinceFromCreatedAt,
-  updateStoredPrivateMessagesLastReceivedFromCreatedAt,
-}: PrivateMessagesSubscriptionRuntimeDeps) {
+export function createPrivateMessagesSubscriptionRuntime(
+  runtimeState: PrivateMessagesSubscriptionRuntimeDeps,
+) {
+  const {
+    beginStartupStep,
+    buildFilterSinceDetails,
+    buildSubscriptionRelayDetails,
+    bumpDeveloperDiagnosticsVersion,
+    clearPrivateMessagesUiRefreshState,
+    completeStartupStep,
+    ensureRelayConnections,
+    failStartupStep,
+    flushPrivateMessagesUiRefreshNow,
+    getLoggedInPublicKeyHex,
+    getOrCreateSigner,
+    getPrivateMessagesStartupLiveSince,
+    getStartupStepSnapshot,
+    getStoredAuthMethod,
+    listPrivateMessageRecipientPubkeys,
+    logSubscription,
+    ndk,
+    normalizeEventId,
+    normalizeRelayStatusUrls,
+    normalizeThrottleMs,
+    queuePrivateMessageIngestion,
+    resolvePrivateMessageReadRelayUrls,
+    schedulePostPrivateMessagesEoseChecks,
+    setPrivateMessagesRestoreThrottleMs,
+    startPrivateMessagesStartupBackfill,
+    subscribeWithReqLogging,
+    updateStoredEventSinceFromCreatedAt,
+    updateStoredPrivateMessagesLastReceivedFromCreatedAt,
+  } = runtimeState;
   let privateMessagesSubscription: ReturnType<NostrClient['subscribe']> | null = null;
   let privateMessagesSubscriptionSignature = '';
   const subscriptions = createDesiredSubscriptions();
@@ -240,7 +233,9 @@ export function createPrivateMessagesSubscriptionRuntime({
     queuePrivateMessagesWatchdog(0);
   }
 
-  function queuePrivateMessagesWatchdog(delayMs = PRIVATE_MESSAGES_WATCHDOG_INTERVAL_MS): void {
+  function queuePrivateMessagesWatchdog(
+    delayMs = PRIVATE_MESSAGES_WATCHDOG_INTERVAL_MS,
+  ): void {
     if (typeof window === 'undefined') {
       return;
     }
@@ -279,7 +274,7 @@ export function createPrivateMessagesSubscriptionRuntime({
   }
 
   function isPrivateMessagesSubscriptionRelayTracked(relayUrl: string): boolean {
-    return privateMessagesSubscriptionRelayUrls.value.includes(relayUrl);
+    return runtimeState.privateMessagesSubscriptionRelayUrls.includes(relayUrl);
   }
 
   function isBrowserOfflineForPrivateMessagesWatchdog(): boolean {
@@ -289,17 +284,19 @@ export function createPrivateMessagesSubscriptionRuntime({
   function markPrivateMessagesLiveCoverageNow(): void {
     const now = Math.floor(Date.now() / 1000);
     if (
-      privateMessagesSubscriptionLiveCoverageAt.value !== null &&
-      privateMessagesSubscriptionLiveCoverageAt.value >= now
+      runtimeState.privateMessagesSubscriptionLiveCoverageAt !== null &&
+      runtimeState.privateMessagesSubscriptionLiveCoverageAt >= now
     ) {
       return;
     }
 
-    privateMessagesSubscriptionLiveCoverageAt.value = now;
+    runtimeState.privateMessagesSubscriptionLiveCoverageAt = now;
     bumpDeveloperDiagnosticsVersion();
   }
 
-  function getPrivateMessagesSubscriptionSinceOverride(value: number | undefined): number | null {
+  function getPrivateMessagesSubscriptionSinceOverride(
+    value: number | undefined,
+  ): number | null {
     return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : null;
   }
 
@@ -316,7 +313,7 @@ export function createPrivateMessagesSubscriptionRuntime({
     const recreateLiveSubscription = async (
       reason: string,
     ): Promise<RefreshPrivateMessagesLiveSubscriptionResult> => {
-      const previousStartedAt = privateMessagesSubscriptionStartedAt.value;
+      const previousStartedAt = runtimeState.privateMessagesSubscriptionStartedAt;
       logSubscription('private-messages', 'live-refresh-recreate', {
         reason,
         ...buildFilterSinceDetails(subscribeOptions.sinceOverride),
@@ -329,7 +326,7 @@ export function createPrivateMessagesSubscriptionRuntime({
         return {
           recreatedLiveSubscription:
             privateMessagesSubscription !== null &&
-            privateMessagesSubscriptionStartedAt.value !== previousStartedAt,
+            runtimeState.privateMessagesSubscriptionStartedAt !== previousStartedAt,
         };
       } catch (error) {
         console.warn('Failed to refresh private messages live subscription', error);
@@ -349,7 +346,7 @@ export function createPrivateMessagesSubscriptionRuntime({
     if (
       privateMessagesSubscription &&
       scopes.size > 0 &&
-      privateMessagesSubscriptionRelayUrls.value.every(
+      runtimeState.privateMessagesSubscriptionRelayUrls.every(
         (url) => ndk.pool.getRelay(normalizeRelayUrl(url), false)?.connected,
       )
     ) {
@@ -360,7 +357,7 @@ export function createPrivateMessagesSubscriptionRuntime({
 
     // NostrClient reissues the existing filters when transport reconnects. A second probe
     // downloads the same window and is not evidence that a healthy listener needs replacing.
-    await ensureRelayConnections(privateMessagesSubscriptionRelayUrls.value);
+    await ensureRelayConnections(runtimeState.privateMessagesSubscriptionRelayUrls);
     await subscribePrivateMessagesForLoggedInUser(false, subscribeOptions);
     return { recreatedLiveSubscription: false };
   }
@@ -404,7 +401,7 @@ export function createPrivateMessagesSubscriptionRuntime({
           return;
         }
 
-        if (isRestoringStartupState.value) {
+        if (runtimeState.isRestoringStartupState) {
           return;
         }
 
@@ -417,7 +414,9 @@ export function createPrivateMessagesSubscriptionRuntime({
         }
 
         const browserOffline = isBrowserOfflineForPrivateMessagesWatchdog();
-        const relayUrls = normalizeRelayStatusUrls(privateMessagesSubscriptionRelayUrls.value);
+        const relayUrls = normalizeRelayStatusUrls(
+          runtimeState.privateMessagesSubscriptionRelayUrls,
+        );
         if (
           scopes.size !== desiredScopeCount ||
           !privateMessagesSubscription ||
@@ -469,7 +468,8 @@ export function createPrivateMessagesSubscriptionRuntime({
           const after = relayStatesAfter.get(relayUrl) ?? false;
           const previous = privateMessagesWatchdogRelayConnectionStates.get(relayUrl);
           return (
-            after && ((!before && disconnectedRelayUrls.includes(relayUrl)) || previous === false)
+            after &&
+            ((!before && disconnectedRelayUrls.includes(relayUrl)) || previous === false)
           );
         });
 
@@ -513,8 +513,8 @@ export function createPrivateMessagesSubscriptionRuntime({
     privateMessagesWatchdogRelayConnectionStates.clear();
     privateMessagesSubscriptionSignature = '';
     setPrivateMessagesRestoreThrottleMs(0);
-    privateMessagesSubscriptionRelayUrls.value = [];
-    privateMessagesSubscriptionSince.value = null;
+    runtimeState.privateMessagesSubscriptionRelayUrls = [];
+    runtimeState.privateMessagesSubscriptionSince = null;
     bumpDeveloperDiagnosticsVersion();
   }
 
@@ -531,12 +531,12 @@ export function createPrivateMessagesSubscriptionRuntime({
       return;
     }
 
-    privateMessagesSubscriptionStartedAt.value = null;
-    privateMessagesSubscriptionLastEventSeenAt.value = null;
-    privateMessagesSubscriptionLastEventId.value = null;
-    privateMessagesSubscriptionLastEventCreatedAt.value = null;
-    privateMessagesSubscriptionLastEoseAt.value = null;
-    privateMessagesSubscriptionLiveCoverageAt.value = null;
+    runtimeState.privateMessagesSubscriptionStartedAt = null;
+    runtimeState.privateMessagesSubscriptionLastEventSeenAt = null;
+    runtimeState.privateMessagesSubscriptionLastEventId = null;
+    runtimeState.privateMessagesSubscriptionLastEventCreatedAt = null;
+    runtimeState.privateMessagesSubscriptionLastEoseAt = null;
+    runtimeState.privateMessagesSubscriptionLiveCoverageAt = null;
   }
 
   function subscribePrivateMessagesForLoggedInUser(
@@ -580,7 +580,8 @@ export function createPrivateMessagesSubscriptionRuntime({
       recipients,
       await resolvePrivateMessageReadRelayUrls(options.seedRelayUrls),
     );
-    if (runGeneration !== generation || loggedInPubkeyHex !== getLoggedInPublicKeyHex()) return;
+    if (runGeneration !== generation || loggedInPubkeyHex !== getLoggedInPublicKeyHex())
+      return;
     const requestedSince = options.sinceOverride ?? getPrivateMessagesStartupLiveSince();
     const activeKeys = new Set(
       routes.filter((route) => route.relayUrls.length).map((route) => route.publicKey),
@@ -638,10 +639,12 @@ export function createPrivateMessagesSubscriptionRuntime({
                   const wrapped =
                     event instanceof ClientEvent ? event : new ClientEvent(ndk, event);
                   markPrivateMessagesLiveCoverageNow();
-                  privateMessagesSubscriptionLastEventSeenAt.value = new Date().toISOString();
-                  privateMessagesSubscriptionLastEventId.value =
+                  runtimeState.privateMessagesSubscriptionLastEventSeenAt =
+                    new Date().toISOString();
+                  runtimeState.privateMessagesSubscriptionLastEventId =
                     normalizeEventId(wrapped.id) ?? wrapped.id ?? null;
-                  privateMessagesSubscriptionLastEventCreatedAt.value = wrapped.created_at ?? null;
+                  runtimeState.privateMessagesSubscriptionLastEventCreatedAt =
+                    wrapped.created_at ?? null;
                   updateStoredPrivateMessagesLastReceivedFromCreatedAt(wrapped.created_at);
                   updateStoredEventSinceFromCreatedAt(wrapped.created_at);
                   queuePrivateMessageIngestion(wrapped, loggedInPubkeyHex, {
@@ -677,14 +680,14 @@ export function createPrivateMessagesSubscriptionRuntime({
     const relayUrls = normalizeRelayStatusUrls(routes.flatMap((route) => route.relayUrls));
     privateMessagesSubscription = [...scopes.values()][0]?.subscription ?? null;
     privateMessagesSubscriptionSignature = desired.map((item) => item.signature).join('|');
-    privateMessagesSubscriptionRelayUrls.value = relayUrls;
-    privateMessagesSubscriptionSince.value = Math.min(
+    runtimeState.privateMessagesSubscriptionRelayUrls = relayUrls;
+    runtimeState.privateMessagesSubscriptionSince = Math.min(
       ...[...scopes.values()].map((state) => state.since),
     );
     syncPrivateMessagesWatchdogRelayConnectionStates(relayUrls);
     if (changed) {
-      privateMessagesSubscriptionStartedAt.value = new Date().toISOString();
-      privateMessagesSubscriptionLastEoseAt.value = null;
+      runtimeState.privateMessagesSubscriptionStartedAt = new Date().toISOString();
+      runtimeState.privateMessagesSubscriptionLastEoseAt = null;
       setPrivateMessagesRestoreThrottleMs(normalizeThrottleMs(options.restoreThrottleMs));
     }
     // Keep the original global backfill context while epoch recipients change.
@@ -715,7 +718,7 @@ export function createPrivateMessagesSubscriptionRuntime({
         return;
       messageHistoryRestoreContext.ready = true;
       markPrivateMessagesLiveCoverageNow();
-      privateMessagesSubscriptionLastEoseAt.value ??= new Date().toISOString();
+      runtimeState.privateMessagesSubscriptionLastEoseAt ??= new Date().toISOString();
       setPrivateMessagesRestoreThrottleMs(0);
       if (shouldTrackStartupStep) completeStartupStep('private-message-events');
       if (changed) {

@@ -195,7 +195,7 @@ test('a co-owner cannot reintroduce removed members by rotating a stale membersh
     const group = await createGroup(owner.page, { name: 'Co-owner conflict check', about: '' });
     const phrase = await owner.page.evaluate(
       async ({ group, member }) => {
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         const recovery = useNostrStore().groupRecovery;
         await recovery.update(group, [useNostrStore().getLoggedInPublicKeyHex()!, member]);
         return (await recovery.backup(group)).phrase;
@@ -204,13 +204,13 @@ test('a co-owner cannot reintroduce removed members by rotating a stale membersh
     );
     await coowner.page.evaluate(
       async ({ phrase, relay }) => {
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         await useNostrStore().groupRecovery.restore(phrase, [relay]);
       },
       { phrase, relay: E2E_RELAY_URL },
     );
     await owner.page.evaluate(async (group) => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       await useNostrStore().groupRecovery.refresh(group);
     }, group);
     await openGroupContact(owner.page, group);
@@ -223,7 +223,7 @@ test('a co-owner cannot reintroduce removed members by rotating a stale membersh
     await expect(owner.page.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
     await coowner.page.evaluate(
       async ({ group, originalOwner }) => {
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         await useNostrStore().publishGroupMemberChanges(group, [originalOwner]);
       },
       { group, originalOwner: owner.session.publicKey },
@@ -231,7 +231,7 @@ test('a co-owner cannot reintroduce removed members by rotating a stale membersh
     await owner.page.getByRole('button', { name: 'Rotate group keys', exact: true }).click();
     await expect(owner.page.getByRole('alert')).toContainText(/changed|Refresh recovery/);
     const current = await coowner.page.evaluate(async (group) => {
-      const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       return (await useNostrStore().groupRecovery.current(group)).recovery_state!.members;
     }, group);
     expect(current).not.toContain(removedMember);

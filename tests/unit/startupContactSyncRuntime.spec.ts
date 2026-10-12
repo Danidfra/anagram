@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ref } from '#src/lib/state/reactivity.ts';
+
 
 const chatDataServiceMock = vi.hoisted(() => ({
   init: vi.fn(async () => {}),
@@ -85,7 +85,7 @@ function createSessionInitializationRuntime(
     getRestoreStartupStatePromise: () => restoreStartupStatePromise,
     getSyncLoggedInContactProfilePromise: () => syncLoggedInContactProfilePromise,
     getSyncRecentChatContactsPromise: () => syncRecentChatContactsPromise,
-    isRestoringStartupState: ref(false),
+    isRestoringStartupState: false,
     readPrivatePreferencesFromStorage: vi.fn(() => null),
     reloadChats: vi.fn(async () => {}),
     refreshContactByPublicKey: task(),
@@ -180,7 +180,7 @@ describe('startup contact sync runtime', () => {
       getRestoreStartupStatePromise: () => restoreStartupStatePromise,
       getSyncLoggedInContactProfilePromise: () => syncLoggedInContactProfilePromise,
       getSyncRecentChatContactsPromise: () => syncRecentChatContactsPromise,
-      isRestoringStartupState: ref(false),
+      isRestoringStartupState: false,
       readPrivatePreferencesFromStorage: vi.fn(() => null),
       reloadChats: vi.fn(async () => {}),
       refreshContactByPublicKey,
@@ -274,7 +274,7 @@ describe('startup contact sync runtime', () => {
       getRestoreStartupStatePromise: () => restoreStartupStatePromise,
       getSyncLoggedInContactProfilePromise: () => syncLoggedInContactProfilePromise,
       getSyncRecentChatContactsPromise: () => syncRecentChatContactsPromise,
-      isRestoringStartupState: ref(false),
+      isRestoringStartupState: false,
       readPrivatePreferencesFromStorage: vi.fn(() => null),
       reloadChats: vi.fn(async () => {}),
       refreshContactByPublicKey: vi.fn(async () => {}),

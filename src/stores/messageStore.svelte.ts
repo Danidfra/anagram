@@ -1,5 +1,5 @@
 import { UNKNOWN_REPLY_MESSAGE_TEXT } from '#src/stores/nostr/constants.ts';
-import { defineStore } from '#src/lib/state/store.ts';
+import { createStore } from '#src/lib/state/store.svelte.ts';
 import { notifyLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 import { getEmojiEntryByValue } from '#src/data/topEmojis.ts';
 import {
@@ -11,7 +11,7 @@ import {
 import { contactsService } from '#src/services/contactsService.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import { nostrEventDataService } from '#src/services/nostrEventDataService.ts';
-import { useChatStore } from '#src/stores/chatStore.ts';
+import { useChatStore } from '#src/stores/chatStore.svelte.ts';
 import { resolveLatestReadBoundaryAtValue } from '#src/stores/nostr/valueUtils.ts';
 import type {
   DeletedMessageMetadata,
@@ -47,7 +47,6 @@ import {
 } from '#src/utils/messageReactions.ts';
 import { resolveMessageWindowMerge } from '#src/utils/messageWindowRange.ts';
 import { buildMentionMetadata } from '#src/utils/nostrMentions.ts';
-import { ref } from '#src/lib/state/reactivity.ts';
 
 type MessageRow = Awaited<ReturnType<typeof chatDataService.listMessages>>[number];
 const MESSAGE_PAGE_SIZE = 50;
@@ -85,7 +84,7 @@ interface ForwardedMessagePayload {
   additionalTags: string[][];
 }
 
-type NostrStoreModule = typeof import('#src/stores/nostrStore.ts');
+type NostrStoreModule = typeof import('#src/stores/nostrStore.svelte.ts');
 type NostrStore = ReturnType<NostrStoreModule['useNostrStore']>;
 type RelayStoreModule = typeof import('#src/stores/relayStore.ts');
 type RelayStore = ReturnType<RelayStoreModule['useRelayStore']>;
@@ -103,7 +102,9 @@ export class MissingContactRelaysError extends Error {
   }
 }
 
-export function isMissingContactRelaysError(error: unknown): error is MissingContactRelaysError {
+export function isMissingContactRelaysError(
+  error: unknown,
+): error is MissingContactRelaysError {
   return (
     error instanceof MissingContactRelaysError ||
     (typeof error === 'object' &&
@@ -176,7 +177,9 @@ function buildDeletedMessageMeta(
     deletedAt,
     deletedByPublicKey,
     deletedEventKind,
-    ...(normalizeEventId(deleteEventId) ? { deleteEventId: normalizeEventId(deleteEventId) } : {}),
+    ...(normalizeEventId(deleteEventId)
+      ? { deleteEventId: normalizeEventId(deleteEventId) }
+      : {}),
   };
 }
 
@@ -186,7 +189,8 @@ function mapMessageRowToMessage(
   nostrEvent: NostrEventEntry | null = null,
 ): Message {
   const authorKey = row.author_public_key.trim();
-  const isMine = authorKey.toLowerCase() === window.localStorage.getItem('npub')?.toLowerCase();
+  const isMine =
+    authorKey.toLowerCase() === window.localStorage.getItem('npub')?.toLowerCase();
 
   return {
     id: String(row.id),
@@ -297,7 +301,8 @@ function compareMessageCursors(
   first: Pick<PersistedMessageCursor, 'id' | 'created_at'>,
   second: Pick<PersistedMessageCursor, 'id' | 'created_at'>,
 ): number {
-  const byTime = toComparableTimestamp(first.created_at) - toComparableTimestamp(second.created_at);
+  const byTime =
+    toComparableTimestamp(first.created_at) - toComparableTimestamp(second.created_at);
   if (byTime !== 0) {
     return byTime;
   }
@@ -438,7 +443,10 @@ function areReactionListsEqualValue(
   );
 }
 
-function mergeMessagesById(currentMessages: Message[], incomingMessages: Message[]): Message[] {
+function mergeMessagesById(
+  currentMessages: Message[],
+  incomingMessages: Message[],
+): Message[] {
   if (incomingMessages.length === 0) {
     return currentMessages;
   }
@@ -586,7 +594,9 @@ function shouldPublishSelfCopyForChatRow(chat: Pick<ChatRow, 'public_key' | 'typ
   return normalizeChatIdentifier(chat.public_key) !== loggedInPublicKey;
 }
 
-function resolveChatDeliveryTargetValue<T extends Pick<ChatRow, 'public_key' | 'type' | 'meta'>>(
+function resolveChatDeliveryTargetValue<
+  T extends Pick<ChatRow, 'public_key' | 'type' | 'meta'>,
+>(
   chat: T | null | undefined,
   options: {
     relayUrls?: string[];
@@ -769,10 +779,10 @@ export const __messageStoreTestUtils = {
   takeTrailingRowsWithAuthor,
 };
 
-export const useMessageStore = defineStore('messageStore', () => {
+export const useMessageStore = createStore('messageStore', () => {
   const chatStore = useChatStore();
-  const messagesByChat = ref<Record<string, Message[]>>({});
-  const paginationStateByChat = ref<Record<string, ChatMessagePaginationState>>({});
+  let messagesByChat = $state<Record<string, Message[]>>({});
+  let paginationStateByChat = $state<Record<string, ChatMessagePaginationState>>({});
   const loadedChatIds = new Set<string>();
   // Only explicit paging/search pins a window. Initial hydration must still be
   // able to fill in older arrivals when the thread was opened before sync.
@@ -796,7 +806,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       void loadMessages(normalizedChatId);
     }
 
-    return messagesByChat.value[normalizedChatId] ?? [];
+    return messagesByChat[normalizedChatId] ?? [];
   }
 
   function getPaginationState(chatId: string | null): ChatMessagePaginationState {
@@ -805,9 +815,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       return buildDefaultChatMessagePaginationState();
     }
 
-    return (
-      paginationStateByChat.value[normalizedChatId] ?? buildDefaultChatMessagePaginationState()
-    );
+    return paginationStateByChat[normalizedChatId] ?? buildDefaultChatMessagePaginationState();
   }
 
   function setPaginationState(
@@ -819,23 +827,24 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
-    const window = messagesByChat.value[normalizedChatId];
+    const window = messagesByChat[normalizedChatId];
     if (window?.length > 300) {
       const loadingOlder = Boolean(nextState.oldestCursor && !nextState.newestCursor);
       const retained = loadingOlder ? window.slice(0, 300) : window.slice(-300);
-      messagesByChat.value[normalizedChatId] = retained;
+      messagesByChat[normalizedChatId] = retained;
       nextState = {
         ...nextState,
         oldestCursor:
-          retained.map(buildMessageCursorFromMessage).find((cursor) => cursor !== null) ?? null,
+          retained.map(buildMessageCursorFromMessage).find((cursor) => cursor !== null) ??
+          null,
         newestCursor:
-          retained.map(buildMessageCursorFromMessage).findLast((cursor) => cursor !== null) ?? null,
+          retained.map(buildMessageCursorFromMessage).findLast((cursor) => cursor !== null) ??
+          null,
         ...(loadingOlder ? { hasNewer: true } : { hasOlder: true }),
       };
     }
-    paginationStateByChat.value[normalizedChatId] = {
-      ...(paginationStateByChat.value[normalizedChatId] ??
-        buildDefaultChatMessagePaginationState()),
+    paginationStateByChat[normalizedChatId] = {
+      ...(paginationStateByChat[normalizedChatId] ?? buildDefaultChatMessagePaginationState()),
       ...nextState,
     };
   }
@@ -846,8 +855,8 @@ export const useMessageStore = defineStore('messageStore', () => {
 
   async function getNostrStore(): Promise<NostrStore> {
     if (!nostrStorePromise) {
-      nostrStorePromise = import('#src/stores/nostrStore.ts').then(({ useNostrStore }) =>
-        useNostrStore(),
+      nostrStorePromise = import('#src/stores/nostrStore.svelte.ts').then(
+        ({ useNostrStore }) => useNostrStore(),
       );
     }
 
@@ -892,7 +901,10 @@ export const useMessageStore = defineStore('messageStore', () => {
           };
         if (!parent.meta.deleted) return row;
         const { imageUrl: _image, ...preview } = reply;
-        return { ...row, meta: { ...row.meta, reply: { ...preview, text: 'Message deleted' } } };
+        return {
+          ...row,
+          meta: { ...row.meta, reply: { ...preview, text: 'Message deleted' } },
+        };
       }),
     );
   }
@@ -902,7 +914,8 @@ export const useMessageStore = defineStore('messageStore', () => {
     const eventIds = rows
       .map((row) => row.event_id)
       .filter(
-        (eventId): eventId is string => typeof eventId === 'string' && eventId.trim().length > 0,
+        (eventId): eventId is string =>
+          typeof eventId === 'string' && eventId.trim().length > 0,
       );
     const eventsById = await nostrEventDataService.getEventsByIds(eventIds);
     // A reload can interrupt dependency repair after the reply was persisted.
@@ -952,7 +965,9 @@ export const useMessageStore = defineStore('messageStore', () => {
       throw new Error('Failed to resolve message chat public key.');
     }
 
-    const nostrEvent = row.event_id ? await nostrEventDataService.getEventById(row.event_id) : null;
+    const nostrEvent = row.event_id
+      ? await nostrEventDataService.getEventById(row.event_id)
+      : null;
     const [safeRow] = await safeReplyRows([row], resolvedChatId);
     return mapMessageRowToMessage(safeRow, resolvedChatId, nostrEvent);
   }
@@ -963,13 +978,13 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
-    const existingMessages = messagesByChat.value[normalizedChatId] ?? [];
+    const existingMessages = messagesByChat[normalizedChatId] ?? [];
     const existingIndex = existingMessages.findIndex((entry) => entry.id === message.id);
     if (existingIndex === -1) {
       return;
     }
 
-    messagesByChat.value[normalizedChatId] = replaceMessageInWindow(existingMessages, message);
+    messagesByChat[normalizedChatId] = replaceMessageInWindow(existingMessages, message);
   }
 
   function getMessageFromState(chatId: string, messageId: string): Message | null {
@@ -979,7 +994,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
 
     return (
-      messagesByChat.value[normalizedChatId]?.find((message) => message.id === messageId) ?? null
+      messagesByChat[normalizedChatId]?.find((message) => message.id === messageId) ?? null
     );
   }
 
@@ -1036,7 +1051,8 @@ export const useMessageStore = defineStore('messageStore', () => {
       return 0;
     }
 
-    const existingSync = unseenReactionSyncPromises.get(normalizedChatId) ?? Promise.resolve(0);
+    const existingSync =
+      unseenReactionSyncPromises.get(normalizedChatId) ?? Promise.resolve(0);
     const nextSync = existingSync
       .catch(() => 0)
       .then(() => performSyncChatUnseenReactionCount(normalizedChatId));
@@ -1130,7 +1146,9 @@ export const useMessageStore = defineStore('messageStore', () => {
     await verifyOwnerGroupState(chat);
     return resolveChatDeliveryTargetValue(chat, {
       relayUrls,
-      recipientRelayUrls: relayUrls ? relayUrls : await resolveRecipientRelayUrls(chat.public_key),
+      recipientRelayUrls: relayUrls
+        ? relayUrls
+        : await resolveRecipientRelayUrls(chat.public_key),
     });
   }
 
@@ -1162,10 +1180,10 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
-    const existingMessages = messagesByChat.value[normalizedChatId] ?? [];
+    const existingMessages = messagesByChat[normalizedChatId] ?? [];
     const computedUpsert = applyMessageUpsert(
       existingMessages,
-      paginationStateByChat.value[normalizedChatId],
+      paginationStateByChat[normalizedChatId],
       message,
       options,
     );
@@ -1174,7 +1192,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
-    messagesByChat.value[normalizedChatId] = computedUpsert.messages;
+    messagesByChat[normalizedChatId] = computedUpsert.messages;
     setPaginationState(normalizedChatId, computedUpsert.paginationState);
   }
 
@@ -1188,8 +1206,10 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
-    const existingMessages = messagesByChat.value[normalizedChatId] ?? [];
-    const existingIndex = existingMessages.findIndex((entry) => entry.id === previousMessageId);
+    const existingMessages = messagesByChat[normalizedChatId] ?? [];
+    const existingIndex = existingMessages.findIndex(
+      (entry) => entry.id === previousMessageId,
+    );
     if (existingIndex === -1) {
       upsertMessageInState(normalizedChatId, nextMessage, {
         allowOutsideLoadedWindow: true,
@@ -1197,7 +1217,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
-    messagesByChat.value[normalizedChatId] = replaceMessageInWindow(
+    messagesByChat[normalizedChatId] = replaceMessageInWindow(
       existingMessages,
       nextMessage,
       previousMessageId,
@@ -1295,9 +1315,14 @@ export const useMessageStore = defineStore('messageStore', () => {
       if (input.shouldSyncLiveMessage) {
         insertOptimisticOutboundMessage(normalizedChatId, liveMessage);
         await yieldToNextPaint();
-        void chatStore.updateChatPreview(normalizedChatId, liveMessage.text, liveMessage.sentAt, {
-          messageMeta: liveMessage.meta,
-        });
+        void chatStore.updateChatPreview(
+          normalizedChatId,
+          liveMessage.text,
+          liveMessage.sentAt,
+          {
+            messageMeta: liveMessage.meta,
+          },
+        );
       }
 
       await chatDataService.init();
@@ -1352,7 +1377,10 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     let recipientRelayUrls: string[];
     try {
-      recipientRelayUrls = await resolveSendRelayUrls(chat.public_key, input.options.relayUrls);
+      recipientRelayUrls = await resolveSendRelayUrls(
+        chat.public_key,
+        input.options.relayUrls,
+      );
     } catch (error) {
       if (isMissingContactRelaysError(error)) {
         throw new MissingContactRelaysError(error.chatPublicKey, persistedId);
@@ -1366,15 +1394,20 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     try {
       const nostrStore = await getNostrStore();
-      await nostrStore.sendDirectMessage(recipientPublicKey, liveMessage.text, recipientRelayUrls, {
-        ...(persistedId ? { localMessageId: persistedId } : {}),
-        createdAt: liveMessage.sentAt,
-        replyToEventId: replyTargetEventId,
-        publishSelfCopy: shouldPublishSelfCopyForChatRow(chat),
-        ...(input.additionalTags && input.additionalTags.length > 0
-          ? { additionalTags: input.additionalTags }
-          : {}),
-      });
+      await nostrStore.sendDirectMessage(
+        recipientPublicKey,
+        liveMessage.text,
+        recipientRelayUrls,
+        {
+          ...(persistedId ? { localMessageId: persistedId } : {}),
+          createdAt: liveMessage.sentAt,
+          replyToEventId: replyTargetEventId,
+          publishSelfCopy: shouldPublishSelfCopyForChatRow(chat),
+          ...(input.additionalTags && input.additionalTags.length > 0
+            ? { additionalTags: input.additionalTags }
+            : {}),
+        },
+      );
     } catch (error) {
       sendError = error;
     }
@@ -1413,7 +1446,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     if (
       !chatId ||
       (!loadedChatIds.has(chatId) &&
-        !messagesByChat.value[chatId] &&
+        !messagesByChat[chatId] &&
         chatStore.selectedChatId !== chatId)
     )
       return;
@@ -1424,7 +1457,7 @@ export const useMessageStore = defineStore('messageStore', () => {
 
   function upsertPersistedMessage(row: MessageRow): Promise<void> {
     const chatId = normalizeChatIdentifier(row.chat_public_key);
-    if (!chatId || (!loadedChatIds.has(chatId) && !messagesByChat.value[chatId])) {
+    if (!chatId || (!loadedChatIds.has(chatId) && !messagesByChat[chatId])) {
       return Promise.resolve();
     }
 
@@ -1671,16 +1704,19 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
-    const paginationAtLoadStart = paginationStateByChat.value[normalizedChatId];
+    const paginationAtLoadStart = paginationStateByChat[normalizedChatId];
     const windowRevision = messageWindowRevisions.get(normalizedChatId);
     const preserveWindow =
       force && windowRevision !== undefined && paginationAtLoadStart?.oldestCursor;
     // Background EOSE checks must not compete with an explicit history page.
-    if (force && (paginationAtLoadStart?.isLoadingOlder || paginationAtLoadStart?.isLoadingNewer))
+    if (
+      force &&
+      (paginationAtLoadStart?.isLoadingOlder || paginationAtLoadStart?.isLoadingNewer)
+    )
       return;
 
     const messagesAtLoadStart = new Map(
-      (messagesByChat.value[normalizedChatId] ?? []).map((message) => [message.id, message]),
+      (messagesByChat[normalizedChatId] ?? []).map((message) => [message.id, message]),
     );
     const loadPromise = (async () => {
       try {
@@ -1692,8 +1728,8 @@ export const useMessageStore = defineStore('messageStore', () => {
         // Live arrivals are retained by the merge below, without discarding
         // historical rows recovered in this refresh.
         if (messageWindowRevisions.get(normalizedChatId) !== windowRevision) return;
-        const existingMessages = messagesByChat.value[normalizedChatId] ?? [];
-        messagesByChat.value[normalizedChatId] = mergeLoadedMessagesWithLocalOutbound(
+        const existingMessages = messagesByChat[normalizedChatId] ?? [];
+        messagesByChat[normalizedChatId] = mergeLoadedMessagesWithLocalOutbound(
           loadedMessages,
           existingMessages,
           messagesAtLoadStart,
@@ -1731,7 +1767,10 @@ export const useMessageStore = defineStore('messageStore', () => {
     await Promise.all(chatIds.map((chatId) => loadMessages(chatId, true)));
   }
 
-  async function searchMessages(chatId: string, query: string): Promise<ChatThreadSearchMatch[]> {
+  async function searchMessages(
+    chatId: string,
+    query: string,
+  ): Promise<ChatThreadSearchMatch[]> {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const normalizedQuery = query.trim();
     if (!normalizedChatId || !normalizedQuery) {
@@ -1748,10 +1787,17 @@ export const useMessageStore = defineStore('messageStore', () => {
     }));
   }
 
-  async function ensureMessageLoaded(chatId: string, messageId: string): Promise<Message | null> {
+  async function ensureMessageLoaded(
+    chatId: string,
+    messageId: string,
+  ): Promise<Message | null> {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const normalizedMessageId = Number.parseInt(messageId, 10);
-    if (!normalizedChatId || !Number.isInteger(normalizedMessageId) || normalizedMessageId <= 0) {
+    if (
+      !normalizedChatId ||
+      !Number.isInteger(normalizedMessageId) ||
+      normalizedMessageId <= 0
+    ) {
       return null;
     }
 
@@ -1774,7 +1820,10 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     await chatDataService.init();
     const targetRow = await chatDataService.getMessageById(normalizedMessageId);
-    if (!targetRow || normalizeChatIdentifier(targetRow.chat_public_key) !== normalizedChatId) {
+    if (
+      !targetRow ||
+      normalizeChatIdentifier(targetRow.chat_public_key) !== normalizedChatId
+    ) {
       return null;
     }
 
@@ -1790,7 +1839,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       chatDataService.listMessagesAfter(normalizedChatId, targetCursor, MESSAGE_PAGE_SIZE),
     ]);
     const rows = [...before.rows, targetRow, ...after.rows];
-    messagesByChat.value[normalizedChatId] = await hydrateMessageRows(rows, normalizedChatId);
+    messagesByChat[normalizedChatId] = await hydrateMessageRows(rows, normalizedChatId);
     setPaginationState(normalizedChatId, {
       oldestCursor: buildMessageCursorFromRow(rows[0]),
       newestCursor: buildMessageCursorFromRow(rows[rows.length - 1]),
@@ -1811,7 +1860,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
 
     const existingMessage =
-      messagesByChat.value[normalizedChatId]?.find((message) => {
+      messagesByChat[normalizedChatId]?.find((message) => {
         return normalizeEventId(message.eventId) === normalizedEventId;
       }) ?? null;
     if (existingMessage) {
@@ -1823,7 +1872,7 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
 
     const loadedMessage =
-      messagesByChat.value[normalizedChatId]?.find((message) => {
+      messagesByChat[normalizedChatId]?.find((message) => {
         return normalizeEventId(message.eventId) === normalizedEventId;
       }) ?? null;
     if (loadedMessage) {
@@ -1831,8 +1880,12 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
 
     await chatDataService.init();
-    const targetRow = await chatDataService.getMessageByEventIdOrEditReference(normalizedEventId);
-    if (!targetRow || normalizeChatIdentifier(targetRow.chat_public_key) !== normalizedChatId) {
+    const targetRow =
+      await chatDataService.getMessageByEventIdOrEditReference(normalizedEventId);
+    if (
+      !targetRow ||
+      normalizeChatIdentifier(targetRow.chat_public_key) !== normalizedChatId
+    ) {
       return null;
     }
 
@@ -1849,7 +1902,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       await loadMessages(normalizedChatId);
     }
 
-    const paginationState = paginationStateByChat.value[normalizedChatId];
+    const paginationState = paginationStateByChat[normalizedChatId];
     if (!paginationState?.hasOlder || !paginationState.oldestCursor) {
       return;
     }
@@ -1881,8 +1934,8 @@ export const useMessageStore = defineStore('messageStore', () => {
         }
 
         const hydratedMessages = await hydrateMessageRows(batch.rows, normalizedChatId);
-        messagesByChat.value[normalizedChatId] = mergeMessagesById(
-          messagesByChat.value[normalizedChatId] ?? [],
+        messagesByChat[normalizedChatId] = mergeMessagesById(
+          messagesByChat[normalizedChatId] ?? [],
           hydratedMessages,
         );
         setPaginationState(normalizedChatId, {
@@ -1912,7 +1965,7 @@ export const useMessageStore = defineStore('messageStore', () => {
       await loadMessages(normalizedChatId);
     }
 
-    const paginationState = paginationStateByChat.value[normalizedChatId];
+    const paginationState = paginationStateByChat[normalizedChatId];
     if (!paginationState?.hasNewer || !paginationState.newestCursor) {
       return;
     }
@@ -1944,8 +1997,8 @@ export const useMessageStore = defineStore('messageStore', () => {
         }
 
         const hydratedMessages = await hydrateMessageRows(batch.rows, normalizedChatId);
-        messagesByChat.value[normalizedChatId] = mergeMessagesById(
-          messagesByChat.value[normalizedChatId] ?? [],
+        messagesByChat[normalizedChatId] = mergeMessagesById(
+          messagesByChat[normalizedChatId] ?? [],
           hydratedMessages,
         );
         setPaginationState(normalizedChatId, {
@@ -1965,7 +2018,10 @@ export const useMessageStore = defineStore('messageStore', () => {
     }
   }
 
-  async function sendCallHistory(chatId: string, history: CallHistory): Promise<Message | null> {
+  async function sendCallHistory(
+    chatId: string,
+    history: CallHistory,
+  ): Promise<Message | null> {
     const normalized = normalizeChatIdentifier(chatId);
     const valid = readCallHistory(history);
     const chat = normalized ? await chatDataService.getChatByPublicKey(normalized) : null;
@@ -2009,7 +2065,9 @@ export const useMessageStore = defineStore('messageStore', () => {
       text: cleanText,
       meta,
       replyTo,
-      additionalTags: options.attachments?.map(buildNip92ImetaTag).filter((tag) => tag.length > 0),
+      additionalTags: options.attachments
+        ?.map(buildNip92ImetaTag)
+        .filter((tag) => tag.length > 0),
       options,
       shouldSyncLiveMessage: true,
     });
@@ -2042,14 +2100,17 @@ export const useMessageStore = defineStore('messageStore', () => {
       normalizeChatIdentifier(existingRow.chat_public_key) !== normalizedChatId ||
       normalizeChatIdentifier(existingRow.author_public_key) !== loggedInPublicKey ||
       existingRow.meta.deleted ||
-      (Array.isArray(existingRow.meta.attachments) && existingRow.meta.attachments.length > 0) ||
+      (Array.isArray(existingRow.meta.attachments) &&
+        existingRow.meta.attachments.length > 0) ||
       !existingRow.event_id ||
       cleanText === existingRow.message.trim()
     ) {
       return existingRow ? hydrateMessageRow(existingRow, normalizedChatId) : null;
     }
 
-    const targetKind = Number.isInteger(existingRow.meta.kind) ? Number(existingRow.meta.kind) : 14;
+    const targetKind = Number.isInteger(existingRow.meta.kind)
+      ? Number(existingRow.meta.kind)
+      : 14;
     if (targetKind !== 14) {
       return hydrateMessageRow(existingRow, normalizedChatId);
     }
@@ -2234,7 +2295,11 @@ export const useMessageStore = defineStore('messageStore', () => {
     const normalizedMessageId = Number.parseInt(messageId, 10);
     const loggedInPublicKey = getLoggedInPublicKey();
 
-    if (!normalizedChatId || !Number.isInteger(normalizedMessageId) || normalizedMessageId <= 0) {
+    if (
+      !normalizedChatId ||
+      !Number.isInteger(normalizedMessageId) ||
+      normalizedMessageId <= 0
+    ) {
       return null;
     }
 
@@ -2282,7 +2347,11 @@ export const useMessageStore = defineStore('messageStore', () => {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const normalizedMessageId = Number.parseInt(messageId, 10);
     const loggedInPublicKey = getLoggedInPublicKey();
-    if (!normalizedChatId || !Number.isInteger(normalizedMessageId) || normalizedMessageId <= 0) {
+    if (
+      !normalizedChatId ||
+      !Number.isInteger(normalizedMessageId) ||
+      normalizedMessageId <= 0
+    ) {
       return null;
     }
 
@@ -2410,7 +2479,11 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const normalizedMessageId = Number.parseInt(messageId, 10);
-    if (!normalizedChatId || !Number.isInteger(normalizedMessageId) || normalizedMessageId <= 0) {
+    if (
+      !normalizedChatId ||
+      !Number.isInteger(normalizedMessageId) ||
+      normalizedMessageId <= 0
+    ) {
       return null;
     }
 
@@ -2478,7 +2551,11 @@ export const useMessageStore = defineStore('messageStore', () => {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const normalizedMessageId = Number.parseInt(messageId, 10);
     const loggedInPublicKey = getLoggedInPublicKey();
-    if (!normalizedChatId || !Number.isInteger(normalizedMessageId) || normalizedMessageId <= 0) {
+    if (
+      !normalizedChatId ||
+      !Number.isInteger(normalizedMessageId) ||
+      normalizedMessageId <= 0
+    ) {
       return null;
     }
 
@@ -2500,11 +2577,16 @@ export const useMessageStore = defineStore('messageStore', () => {
       return getMessageFromState(normalizedChatId, String(normalizedMessageId));
     }
 
-    const targetKind = Number.isInteger(existingRow.meta.kind) ? Number(existingRow.meta.kind) : 14;
+    const targetKind = Number.isInteger(existingRow.meta.kind)
+      ? Number(existingRow.meta.kind)
+      : 14;
     let deletionRecipientPublicKey: string | null = null;
     let deletionRelayUrls: string[] = [];
     let shouldPublishDeletionSelfCopy = true;
-    const deliveryTarget = await resolveChatDeliveryTarget(existingRow.chat_public_key, undefined);
+    const deliveryTarget = await resolveChatDeliveryTarget(
+      existingRow.chat_public_key,
+      undefined,
+    );
     if (deliveryTarget) {
       deletionRecipientPublicKey = deliveryTarget.recipientPublicKey;
       deletionRelayUrls = deliveryTarget.relayUrls;
@@ -2513,7 +2595,11 @@ export const useMessageStore = defineStore('messageStore', () => {
 
     const updatedRow = await chatDataService.updateMessageMeta(normalizedMessageId, {
       ...existingRow.meta,
-      deleted: buildDeletedMessageMeta(loggedInPublicKey, targetKind, new Date().toISOString()),
+      deleted: buildDeletedMessageMeta(
+        loggedInPublicKey,
+        targetKind,
+        new Date().toISOString(),
+      ),
     });
     if (!updatedRow) {
       return null;
@@ -2562,7 +2648,10 @@ export const useMessageStore = defineStore('messageStore', () => {
     return finalMessage;
   }
 
-  async function markMessagesReactionsViewed(chatId: string, messageIds: string[]): Promise<void> {
+  async function markMessagesReactionsViewed(
+    chatId: string,
+    messageIds: string[],
+  ): Promise<void> {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     const loggedInPublicKey = getLoggedInPublicKey();
     const normalizedMessageIds = Array.from(
@@ -2737,7 +2826,11 @@ export const useMessageStore = defineStore('messageStore', () => {
       }
 
       let nextUnreadCount = 0;
-      for await (const batch of chatDataService.messageBatches(normalizedChatId, 250, boundaryAt))
+      for await (const batch of chatDataService.messageBatches(
+        normalizedChatId,
+        250,
+        boundaryAt,
+      ))
         nextUnreadCount += countUnreadMessageRowsAfterBoundary(
           batch,
           loggedInPublicKey,
@@ -2814,8 +2907,8 @@ export const useMessageStore = defineStore('messageStore', () => {
       return;
     }
 
-    delete messagesByChat.value[normalizedChatId];
-    delete paginationStateByChat.value[normalizedChatId];
+    delete messagesByChat[normalizedChatId];
+    delete paginationStateByChat[normalizedChatId];
     loadedChatIds.delete(normalizedChatId);
     messageWindowRevisions.delete(normalizedChatId);
     loadingChatPromises.delete(normalizedChatId);
@@ -2829,8 +2922,18 @@ export const useMessageStore = defineStore('messageStore', () => {
 
   return {
     pinMessageWindow,
-    messagesByChat,
-    paginationStateByChat,
+    get messagesByChat() {
+      return messagesByChat;
+    },
+    set messagesByChat(value) {
+      messagesByChat = value;
+    },
+    get paginationStateByChat() {
+      return paginationStateByChat;
+    },
+    set paginationStateByChat(value) {
+      paginationStateByChat = value;
+    },
     init,
     loadMessages,
     loadOlderMessages,

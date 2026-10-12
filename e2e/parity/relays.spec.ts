@@ -88,7 +88,7 @@ test('pending outbound message survives reload and auto-replays after relay reco
     const failedRelayState = () =>
       alice.page.evaluate(
         async ({ chatId, text, relay }) => {
-          const { useMessageStore } = await import('/src/stores/messageStore.ts');
+          const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
           const message = useMessageStore()
             .getMessages(chatId)
             .find((message) => message.text === text);

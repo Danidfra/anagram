@@ -10,7 +10,6 @@ import {
   RECONNECT_HEALING_VISIBILITY_DELAY_MS,
 } from '#src/stores/nostr/constants.ts';
 import type { ChatType } from '#src/types/chat.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
 
 export type ReconnectHealingReason =
   | 'manual-refresh'
@@ -48,12 +47,12 @@ interface ReconnectHealingRuntimeDeps {
   getPrivateMessagesLiveEoseAt: () => string | null;
   getVisibleChatTarget: () => ReconnectHealingChatTarget | null;
   isNativeAndroid: () => boolean;
-  isRestoringStartupState: Ref<boolean>;
+  isRestoringStartupState: boolean;
   queueOutboundMessageReplay: (reason: 'reconnect-healing', delayMs?: number) => void;
   queuePrivateMessagesWatchdog: (delayMs?: number) => void;
   refreshDeveloperPendingQueues: () => Promise<unknown>;
   refreshDirectMessages: (
-    options?: RefreshDirectMessagesOptions
+    options?: RefreshDirectMessagesOptions,
   ) => Promise<RefreshDirectMessagesResult>;
   restartSessionSubscriptions: (relayUrls: string[]) => Promise<void>;
   setIsReconnectHealing: (value: boolean) => void;
@@ -93,7 +92,7 @@ function isBrowserOffline(): boolean {
 }
 
 function normalizeChatTarget(
-  target: ReconnectHealingChatTarget | null | undefined
+  target: ReconnectHealingChatTarget | null | undefined,
 ): ReconnectHealingChatTarget | null {
   if (!target) {
     return null;
@@ -146,20 +145,20 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-export function createReconnectHealingRuntime({
-  logReconnectHealing = () => {},
-  getLoggedInPublicKeyHex,
-  getPrivateMessagesLiveEoseAt,
-  getVisibleChatTarget,
-  isRestoringStartupState,
-  queuePrivateMessagesWatchdog,
-  refreshDeveloperPendingQueues,
-  refreshDirectMessages,
-  restartSessionSubscriptions,
-  setIsReconnectHealing,
-  setReconnectHealingStatusLabel,
-  waitForPrivateMessagesIngestQueue,
-}: ReconnectHealingRuntimeDeps) {
+export function createReconnectHealingRuntime(state: ReconnectHealingRuntimeDeps) {
+  const {
+    logReconnectHealing = () => {},
+    getLoggedInPublicKeyHex,
+    getPrivateMessagesLiveEoseAt,
+    getVisibleChatTarget,
+    queuePrivateMessagesWatchdog,
+    refreshDeveloperPendingQueues,
+    refreshDirectMessages,
+    restartSessionSubscriptions,
+    setIsReconnectHealing,
+    setReconnectHealingStatusLabel,
+    waitForPrivateMessagesIngestQueue,
+  } = state;
   let reconnectHealingTimeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
   let reconnectHealingScheduledAt = 0;
   let reconnectHealingRunPromise: Promise<void> | null = null;
@@ -175,7 +174,7 @@ export function createReconnectHealingRuntime({
     return {
       hasWindow: hasWindow(),
       hasLoggedInPubkey: Boolean(getLoggedInPublicKeyHex()),
-      isRestoringStartupState: isRestoringStartupState.value,
+      isRestoringStartupState: state.isRestoringStartupState,
       browserOnline: typeof navigator === 'undefined' ? null : navigator.onLine !== false,
     };
   }
@@ -194,7 +193,8 @@ export function createReconnectHealingRuntime({
 
     return Math.max(
       0,
-      RECONNECT_HEALING_STATUS_MIN_VISIBLE_MS - (Date.now() - reconnectHealingStatusLabelSetAt)
+      RECONNECT_HEALING_STATUS_MIN_VISIBLE_MS -
+        (Date.now() - reconnectHealingStatusLabelSetAt),
     );
   }
 
@@ -224,7 +224,7 @@ export function createReconnectHealingRuntime({
   }
 
   async function waitForPrivateMessagesLiveEoseAfter(
-    previousEoseAt: string | null
+    previousEoseAt: string | null,
   ): Promise<boolean> {
     const deadlineAt = Date.now() + RECONNECT_HEALING_PRIVATE_MESSAGES_EOSE_TIMEOUT_MS;
 
@@ -237,8 +237,8 @@ export function createReconnectHealingRuntime({
       await delay(
         Math.min(
           RECONNECT_HEALING_PRIVATE_MESSAGES_EOSE_POLL_MS,
-          Math.max(1, deadlineAt - Date.now())
-        )
+          Math.max(1, deadlineAt - Date.now()),
+        ),
       );
     }
 
@@ -256,7 +256,7 @@ export function createReconnectHealingRuntime({
         : 'private-messages-live-eose-wait-timeout',
       {
         timeoutMs: RECONNECT_HEALING_PRIVATE_MESSAGES_EOSE_TIMEOUT_MS,
-      }
+      },
     );
 
     if (didReachEose) {
@@ -280,7 +280,7 @@ export function createReconnectHealingRuntime({
 
     return Math.max(
       0,
-      reconnectHealingLastFinishedAt + RECONNECT_HEALING_MIN_INTERVAL_MS - Date.now()
+      reconnectHealingLastFinishedAt + RECONNECT_HEALING_MIN_INTERVAL_MS - Date.now(),
     );
   }
 
@@ -309,7 +309,7 @@ export function createReconnectHealingRuntime({
   }
 
   function deferReconnectHealingWhileStartupRestores(reason: ReconnectHealingReason): boolean {
-    if (!isRestoringStartupState.value || reason === 'session-resume') {
+    if (!state.isRestoringStartupState || reason === 'session-resume') {
       return false;
     }
 
@@ -325,7 +325,7 @@ export function createReconnectHealingRuntime({
       RECONNECT_HEALING_ONLINE_DELAY_MS,
       {
         showQueuedLabel: false,
-      }
+      },
     );
     return true;
   }
@@ -344,7 +344,8 @@ export function createReconnectHealingRuntime({
 
   function shouldRunAfterBackground(lastBackgroundAt: number): boolean {
     return (
-      lastBackgroundAt > 0 && Date.now() - lastBackgroundAt >= RECONNECT_HEALING_MIN_BACKGROUND_MS
+      lastBackgroundAt > 0 &&
+      Date.now() - lastBackgroundAt >= RECONNECT_HEALING_MIN_BACKGROUND_MS
     );
   }
 
@@ -353,7 +354,10 @@ export function createReconnectHealingRuntime({
       return;
     }
 
-    const lastBackgroundAt = Math.max(reconnectHealingLastBlurAt, reconnectHealingLastHiddenAt);
+    const lastBackgroundAt = Math.max(
+      reconnectHealingLastBlurAt,
+      reconnectHealingLastHiddenAt,
+    );
     if (!shouldRunAfterBackground(lastBackgroundAt)) {
       return;
     }
@@ -379,7 +383,7 @@ export function createReconnectHealingRuntime({
 
   function queueReconnectHealing(
     reason: ReconnectHealingReason,
-    delayMs = getReconnectHealingDelayMs(reason)
+    delayMs = getReconnectHealingDelayMs(reason),
   ): void {
     if (!hasWindow() || !getLoggedInPublicKeyHex()) {
       return;
@@ -400,7 +404,7 @@ export function createReconnectHealingRuntime({
       scheduleReconnectHealing(
         reconnectHealingPendingReason ?? reason,
         Math.max(0, Math.floor(delayMs), cooldownRemainingMs),
-        { showQueuedLabel: false }
+        { showQueuedLabel: false },
       );
       return;
     }
@@ -413,7 +417,7 @@ export function createReconnectHealingRuntime({
   function scheduleReconnectHealing(
     reason: ReconnectHealingReason,
     delayMs: number,
-    options: { showQueuedLabel: boolean }
+    options: { showQueuedLabel: boolean },
   ): void {
     if (!hasWindow() || !getLoggedInPublicKeyHex()) {
       return;
@@ -422,7 +426,7 @@ export function createReconnectHealingRuntime({
     const normalizedDelayMs = Math.max(
       0,
       Math.floor(delayMs),
-      getReconnectHealingCooldownRemainingMs()
+      getReconnectHealingCooldownRemainingMs(),
     );
     const nextScheduledAt = Date.now() + normalizedDelayMs;
     if (
@@ -452,7 +456,7 @@ export function createReconnectHealingRuntime({
 
   async function runReconnectHealing(
     reason: ReconnectHealingReason,
-    options: ReconnectHealingRunOptions = {}
+    options: ReconnectHealingRunOptions = {},
   ): Promise<void> {
     if (reconnectHealingRunPromise) {
       rememberPendingReconnectHealing(reason);
@@ -485,7 +489,7 @@ export function createReconnectHealingRuntime({
       await showReconnectHealingStatusLabel(
         reason === 'session-resume'
           ? RECONNECT_HEALING_STATUS_LABELS.resumingSession
-          : RECONNECT_HEALING_STATUS_LABELS.preparingSync
+          : RECONNECT_HEALING_STATUS_LABELS.preparingSync,
       );
       setIsReconnectHealing(true);
 
@@ -500,13 +504,13 @@ export function createReconnectHealingRuntime({
       }
 
       await showReconnectHealingStatusLabel(
-        RECONNECT_HEALING_STATUS_LABELS.checkingSessionAndNetwork
+        RECONNECT_HEALING_STATUS_LABELS.checkingSessionAndNetwork,
       );
       logReconnectHealing('session-network-check', {
         reason,
         ...getReconnectHealingSessionNetworkSnapshot(),
       });
-      if (isRestoringStartupState.value && reason !== 'session-resume') {
+      if (state.isRestoringStartupState && reason !== 'session-resume') {
         logReconnectHealing('skip', {
           reason,
           skipReason: 'startup-restore-in-progress',
@@ -537,12 +541,12 @@ export function createReconnectHealingRuntime({
 
       if (reason === 'session-resume' || reason === 'relay-list-changed') {
         await restartSessionSubscriptions(
-          inputSanitizerService.normalizeStringArray(options.sessionRelayUrls ?? [])
+          inputSanitizerService.normalizeStringArray(options.sessionRelayUrls ?? []),
         );
       }
 
       await showReconnectHealingStatusLabel(
-        RECONNECT_HEALING_STATUS_LABELS.refreshingDirectMessages
+        RECONNECT_HEALING_STATUS_LABELS.refreshingDirectMessages,
       );
       const previousPrivateMessagesLiveEoseAt = getPrivateMessagesLiveEoseAt();
       const directMessagesRefreshResult = await refreshDirectMessages({
@@ -554,13 +558,17 @@ export function createReconnectHealingRuntime({
       }
       refreshedDirectMessages = true;
 
-      await showReconnectHealingStatusLabel(RECONNECT_HEALING_STATUS_LABELS.checkingMessageRelays);
+      await showReconnectHealingStatusLabel(
+        RECONNECT_HEALING_STATUS_LABELS.checkingMessageRelays,
+      );
       queuePrivateMessagesWatchdog(0);
-      await showReconnectHealingStatusLabel(RECONNECT_HEALING_STATUS_LABELS.retryingUnsentMessages);
+      await showReconnectHealingStatusLabel(
+        RECONNECT_HEALING_STATUS_LABELS.retryingUnsentMessages,
+      );
       // Relay connections and the replay watchdog own eligible retries.
 
       await showReconnectHealingStatusLabel(
-        RECONNECT_HEALING_STATUS_LABELS.applyingPendingMessageUpdates
+        RECONNECT_HEALING_STATUS_LABELS.applyingPendingMessageUpdates,
       );
       const pendingQueueSummary = await refreshDeveloperPendingQueues();
       await showReconnectHealingStatusLabel(RECONNECT_HEALING_STATUS_LABELS.finishingSync);

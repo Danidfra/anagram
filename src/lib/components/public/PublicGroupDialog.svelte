@@ -5,7 +5,7 @@
   import RelayEditor from '../RelayEditor.svelte';
   import ModalFrame from '../ModalFrame.svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import {
     publicGroupShareLink,
     decodeRoomLink,

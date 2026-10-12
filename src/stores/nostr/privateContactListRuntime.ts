@@ -7,16 +7,25 @@ import NostrClient, {
   type NostrSubscriptionOptions,
   type NostrUser,
 } from '#src/lib/nostr/client.ts';
-import { type ChatRow, chatDataService, type MessageRow } from '#src/services/chatDataService.ts';
+import {
+  type ChatRow,
+  chatDataService,
+  type MessageRow,
+} from '#src/services/chatDataService.ts';
 import { contactsService } from '#src/services/contactsService.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
-import { PRIVATE_CONTACT_LIST_D_TAG, PRIVATE_CONTACT_LIST_TITLE } from '#src/stores/nostr/constants.ts';
+import {
+  PRIVATE_CONTACT_LIST_D_TAG,
+  PRIVATE_CONTACT_LIST_TITLE,
+} from '#src/stores/nostr/constants.ts';
 import {
   createDesiredSubscriptions,
   subscriptionSignature,
 } from '#src/stores/nostr/desiredSubscriptions.ts';
-import { createReadyRelaySet, fetchEventWithRelayTimeout } from '#src/stores/nostr/relayQueryUtils.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
+import {
+  createReadyRelaySet,
+  fetchEventWithRelayTimeout,
+} from '#src/stores/nostr/relayQueryUtils.ts';
 
 interface PrivateContactListTarget {
   publicKey: string;
@@ -29,12 +38,14 @@ interface PrivateContactListRuntimeDeps {
   bumpContactListVersion: () => void;
   buildPrivateContactListTags: (pubkeys: string[]) => string[][];
   buildSubscriptionEventDetails: (
-    event: Pick<ClientEvent, 'id' | 'kind' | 'created_at' | 'pubkey'>
+    event: Pick<ClientEvent, 'id' | 'kind' | 'created_at' | 'pubkey'>,
   ) => Record<string, unknown>;
   buildSubscriptionRelayDetails: (relayUrls: string[]) => Record<string, unknown>;
   chatStore: { init: () => Promise<void> };
   completeStartupStep: (stepId: 'private-contact-list') => void;
-  createStartupBatchTracker: (stepId: 'private-contact-profiles' | 'private-contact-relays') => {
+  createStartupBatchTracker: (
+    stepId: 'private-contact-profiles' | 'private-contact-relays',
+  ) => {
     beginItem: () => void;
     finishItem: (error?: unknown) => void;
     seal: () => void;
@@ -46,7 +57,7 @@ interface PrivateContactListRuntimeDeps {
     options?: {
       fallbackName?: string;
       type?: 'user' | 'group';
-    }
+    },
   ) => Promise<{
     contact: { name?: string | null } | null;
     didChange: boolean;
@@ -58,7 +69,7 @@ interface PrivateContactListRuntimeDeps {
   getLoggedInPublicKeyHex: () => string | null;
   getLoggedInSignerUser: () => Promise<NostrUser>;
   getStartupStepSnapshot: (stepId: 'private-contact-list') => { status: string };
-  isRestoringStartupState: Ref<boolean>;
+  isRestoringStartupState: boolean;
   logSubscription: (label: string, stage: string, details?: Record<string, unknown>) => void;
   markPrivateContactListEventApplied: (event: Pick<ClientEvent, 'created_at' | 'id'>) => void;
   ndk: NostrClient;
@@ -67,7 +78,7 @@ interface PrivateContactListRuntimeDeps {
   refreshContactByPublicKey: (
     pubkeyHex: string,
     fallbackName?: string,
-    lifecycle?: Record<string, unknown>
+    lifecycle?: Record<string, unknown>,
   ) => Promise<unknown>;
   relaySignature: (relays: string[]) => string;
   resolvePrivateContactListPublishRelayUrls: (seedRelayUrls?: string[]) => Promise<string[]>;
@@ -82,44 +93,44 @@ interface PrivateContactListRuntimeDeps {
       onEose?: () => void;
       onClose?: () => void;
     },
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
   ) => ReturnType<NostrClient['subscribe']>;
   updateStoredEventSinceFromCreatedAt: (value: unknown) => void;
   updateStartupStep: (
     stepId: 'private-contact-list-restore',
-    updates: { eventCount?: number | null; label?: string }
+    updates: { eventCount?: number | null; label?: string },
   ) => void;
 }
 
-export function createPrivateContactListRuntime({
-  beginStartupStep,
-  bumpContactListVersion,
-  buildPrivateContactListTags,
-  buildSubscriptionRelayDetails,
-  chatStore,
-  completeStartupStep,
-  createStartupBatchTracker,
-  decryptPrivateContactListContent,
-  encryptPrivateContactListTags,
-  ensureContactListedInPrivateContactList,
-  ensureRelayConnections,
-  failStartupStep,
-  getLoggedInPublicKeyHex,
-  getLoggedInSignerUser,
-  getStartupStepSnapshot,
-  isRestoringStartupState,
-  logSubscription,
-  markPrivateContactListEventApplied,
-  ndk,
-  queueTrackedContactSubscriptionsRefresh,
-  reconcileAcceptedChatFromPrivateContactList,
-  resolvePrivateContactListPublishRelayUrls,
-  resolvePrivateContactListReadRelayUrls,
-  shouldApplyPrivateContactListEvent,
-  subscribeWithReqLogging,
-  updateStoredEventSinceFromCreatedAt,
-  updateStartupStep,
-}: PrivateContactListRuntimeDeps) {
+export function createPrivateContactListRuntime(state: PrivateContactListRuntimeDeps) {
+  const {
+    beginStartupStep,
+    bumpContactListVersion,
+    buildPrivateContactListTags,
+    buildSubscriptionRelayDetails,
+    chatStore,
+    completeStartupStep,
+    createStartupBatchTracker,
+    decryptPrivateContactListContent,
+    encryptPrivateContactListTags,
+    ensureContactListedInPrivateContactList,
+    ensureRelayConnections,
+    failStartupStep,
+    getLoggedInPublicKeyHex,
+    getLoggedInSignerUser,
+    getStartupStepSnapshot,
+    logSubscription,
+    markPrivateContactListEventApplied,
+    ndk,
+    queueTrackedContactSubscriptionsRefresh,
+    reconcileAcceptedChatFromPrivateContactList,
+    resolvePrivateContactListPublishRelayUrls,
+    resolvePrivateContactListReadRelayUrls,
+    shouldApplyPrivateContactListEvent,
+    subscribeWithReqLogging,
+    updateStoredEventSinceFromCreatedAt,
+    updateStartupStep,
+  } = state;
   let restorePrivateContactListPromise: Promise<void> | null = null;
   let privateContactListSubscription: ReturnType<NostrClient['subscribe']> | null = null;
   let privateContactListSubscriptionSignature = '';
@@ -128,7 +139,7 @@ export function createPrivateContactListRuntime({
   let privateContactListApplyQueue = Promise.resolve();
 
   function normalizePrivateContactListTargets(
-    targets: PrivateContactListTarget[]
+    targets: PrivateContactListTarget[],
   ): PrivateContactListTarget[] {
     const loggedInPubkeyHex = getLoggedInPublicKeyHex();
     const targetsByPubkey = new Map<string, PrivateContactListTarget>();
@@ -153,12 +164,12 @@ export function createPrivateContactListRuntime({
   }
 
   function buildPrivateContactListTargetsFromPubkeys(
-    pubkeys: string[]
+    pubkeys: string[],
   ): PrivateContactListTarget[] {
     return normalizePrivateContactListTargets(
       pubkeys.map((pubkey) => ({
         publicKey: pubkey,
-      }))
+      })),
     );
   }
 
@@ -187,7 +198,7 @@ export function createPrivateContactListRuntime({
 
   function listOutgoingMessageContactTargetsFromRows(
     chats: ChatRow[],
-    messages: MessageRow[]
+    messages: MessageRow[],
   ): PrivateContactListTarget[] {
     const loggedInPubkeyHex = getLoggedInPublicKeyHex();
     if (!loggedInPubkeyHex) {
@@ -211,13 +222,15 @@ export function createPrivateContactListRuntime({
     const targetsByPubkey = new Map<string, PrivateContactListTarget>();
     for (const message of messages) {
       const normalizedAuthorPubkey = inputSanitizerService.normalizeHexKey(
-        message.author_public_key
+        message.author_public_key,
       );
       if (normalizedAuthorPubkey !== loggedInPubkeyHex) {
         continue;
       }
 
-      const normalizedChatPubkey = inputSanitizerService.normalizeHexKey(message.chat_public_key);
+      const normalizedChatPubkey = inputSanitizerService.normalizeHexKey(
+        message.chat_public_key,
+      );
       if (!normalizedChatPubkey || targetsByPubkey.has(normalizedChatPubkey)) {
         continue;
       }
@@ -250,22 +263,22 @@ export function createPrivateContactListRuntime({
 
   function listNewPrivateContactListTargets(
     targets: PrivateContactListTarget[],
-    existingPubkeys: Set<string>
+    existingPubkeys: Set<string>,
   ): PrivateContactListTarget[] {
     return normalizePrivateContactListTargets(targets).filter(
-      (target) => !existingPubkeys.has(target.publicKey)
+      (target) => !existingPubkeys.has(target.publicKey),
     );
   }
 
   async function applyPrivateContactListTargets(
     targets: PrivateContactListTarget[],
-    options: { deleteMissingContacts?: boolean } = {}
+    options: { deleteMissingContacts?: boolean } = {},
   ): Promise<void> {
     const loggedInPubkeyHex = getLoggedInPublicKeyHex();
     const normalizedTargets = normalizePrivateContactListTargets(targets);
     await Promise.all([contactsService.init(), chatDataService.init(), chatStore.init()]);
     const shouldTrackStartupSteps =
-      isRestoringStartupState.value ||
+      state.isRestoringStartupState ||
       getStartupStepSnapshot('private-contact-list').status === 'in_progress';
     const profileTracker = shouldTrackStartupSteps
       ? createStartupBatchTracker('private-contact-profiles')
@@ -296,13 +309,16 @@ export function createPrivateContactListRuntime({
 
     for (const target of normalizedTargets) {
       const existingContact = await contactsService.getContactByPublicKey(target.publicKey);
-      const ensuredContactResult = await ensureContactListedInPrivateContactList(target.publicKey, {
-        fallbackName:
-          target.fallbackName?.trim() ||
-          existingContact?.name?.trim() ||
-          target.publicKey.slice(0, 16),
-        ...(target.type ? { type: target.type } : {}),
-      });
+      const ensuredContactResult = await ensureContactListedInPrivateContactList(
+        target.publicKey,
+        {
+          fallbackName:
+            target.fallbackName?.trim() ||
+            existingContact?.name?.trim() ||
+            target.publicKey.slice(0, 16),
+          ...(target.type ? { type: target.type } : {}),
+        },
+      );
       didChange ||= ensuredContactResult.didChange;
 
       await reconcileAcceptedChatFromPrivateContactList(target.publicKey);
@@ -312,7 +328,7 @@ export function createPrivateContactListRuntime({
     relayTracker?.seal();
 
     if (didChange) bumpContactListVersion();
-    if (didChange && !isRestoringStartupState.value) {
+    if (didChange && !state.isRestoringStartupState) {
       queueTrackedContactSubscriptionsRefresh();
     }
   }
@@ -323,7 +339,7 @@ export function createPrivateContactListRuntime({
 
   async function applyOutgoingMessageContactAdditions(
     outgoingTargets: PrivateContactListTarget[],
-    seedRelayUrls: string[] = []
+    seedRelayUrls: string[] = [],
   ): Promise<void> {
     if (outgoingTargets.length === 0) {
       return;
@@ -334,7 +350,7 @@ export function createPrivateContactListRuntime({
     const existingPubkeys = new Set(
       existingContacts
         .map((contact) => inputSanitizerService.normalizeHexKey(contact.public_key))
-        .filter((pubkey): pubkey is string => Boolean(pubkey))
+        .filter((pubkey): pubkey is string => Boolean(pubkey)),
     );
     const newTargets = listNewPrivateContactListTargets(outgoingTargets, existingPubkeys);
     if (newTargets.length === 0) {
@@ -350,7 +366,7 @@ export function createPrivateContactListRuntime({
   async function applyPrivateContactListEventWithOutgoingTargets(
     event: ClientEvent,
     outgoingTargets: PrivateContactListTarget[],
-    seedRelayUrls: string[] = []
+    seedRelayUrls: string[] = [],
   ): Promise<void> {
     if (!shouldApplyPrivateContactListEvent(event)) {
       await applyOutgoingMessageContactAdditions(outgoingTargets, seedRelayUrls);
@@ -360,7 +376,10 @@ export function createPrivateContactListRuntime({
     const pubkeys = await decryptPrivateContactListContent(event.content);
     const restoredTargets = buildPrivateContactListTargetsFromPubkeys(pubkeys);
     const restoredPubkeys = new Set(restoredTargets.map((target) => target.publicKey));
-    const outgoingAdditions = listNewPrivateContactListTargets(outgoingTargets, restoredPubkeys);
+    const outgoingAdditions = listNewPrivateContactListTargets(
+      outgoingTargets,
+      restoredPubkeys,
+    );
     const mergedTargets = normalizePrivateContactListTargets([
       ...restoredTargets,
       ...outgoingTargets,
@@ -438,7 +457,7 @@ export function createPrivateContactListRuntime({
   }
 
   async function refreshPrivateContactListWithOutgoingMessages(
-    seedRelayUrls: string[] = []
+    seedRelayUrls: string[] = [],
   ): Promise<void> {
     const loggedInPubkeyHex = getLoggedInPublicKeyHex();
     if (!loggedInPubkeyHex) {
@@ -464,7 +483,7 @@ export function createPrivateContactListRuntime({
         {
           cacheUsage: NostrSubscriptionCacheUsage.ONLY_RELAY,
         },
-        relaySet
+        relaySet,
       );
       listEvent =
         fetchedEvent instanceof ClientEvent
@@ -483,7 +502,7 @@ export function createPrivateContactListRuntime({
     await applyPrivateContactListEventWithOutgoingTargets(
       listEvent,
       outgoingTargets,
-      seedRelayUrls
+      seedRelayUrls,
     );
   }
 
@@ -526,7 +545,7 @@ export function createPrivateContactListRuntime({
 
   async function subscribePrivateContactListUpdates(
     seedRelayUrls: string[] = [],
-    _force = false
+    _force = false,
   ): Promise<void> {
     const runGeneration = generation;
     const pubkey = getLoggedInPublicKeyHex();
@@ -565,15 +584,17 @@ export function createPrivateContactListRuntime({
               relaySet: NostrRelaySet.fromRelayUrls(relayUrls, ndk, false),
               cacheUsage: NostrSubscriptionCacheUsage.ONLY_RELAY,
               onEvent: (event) => {
-                if (runGeneration !== generation || pubkey !== getLoggedInPublicKeyHex()) return;
-                const wrappedEvent = event instanceof ClientEvent ? event : new ClientEvent(ndk, event);
+                if (runGeneration !== generation || pubkey !== getLoggedInPublicKeyHex())
+                  return;
+                const wrappedEvent =
+                  event instanceof ClientEvent ? event : new ClientEvent(ndk, event);
                 updateStoredEventSinceFromCreatedAt(wrappedEvent.created_at);
                 queuePrivateContactListEventApplication(wrappedEvent);
               },
               onEose,
               onClose,
             },
-            { signature, ...buildSubscriptionRelayDetails(relayUrls) }
+            { signature, ...buildSubscriptionRelayDetails(relayUrls) },
           );
           return privateContactListSubscription;
         },

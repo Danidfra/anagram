@@ -84,6 +84,9 @@ for (const width of [1280, 390]) {
       await page.getByRole('button', { name: 'Public group settings' }).click();
       await page.getByRole('button', { name: 'Leave public group', exact: true }).click();
       await page.getByRole('button', { name: 'Leave group', exact: true }).click();
+      // The mobile sidebar is absent while the room is open, so a zero row
+      // count alone does not mean the asynchronous leave has completed.
+      await expect(page).toHaveURL(/\/chats$/);
       await expect(group).toHaveCount(0);
       await page.reload();
       await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();

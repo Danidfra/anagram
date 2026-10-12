@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { parseGroupRecoveryBackup } from '#src/stores/nostr/groupRecovery.ts';
   export let onback: () => void;
   export let onrestored: (group: string) => void | Promise<void>;

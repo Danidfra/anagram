@@ -5,12 +5,12 @@
   import { onMount, onDestroy } from 'svelte';
   import { useCallStore } from '#src/stores/callStore.ts';
   import { useCallRoomStore } from '#src/stores/callRoomStore.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { canShareCallScreen, callMediaSupported } from '#src/services/callMediaService.ts';
   import { createCallRingtone } from '#src/services/callRingtone.ts';
   import { observeCallActivity } from '#src/services/callActivityService.ts';
   import { createActiveSpeakerSelector } from '#src/utils/callActiveSpeaker.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { toStore } from 'svelte/store';
   import { translate } from '#src/i18n.ts';
   import { Notify } from '#src/lib/platform/ui.ts';
   import CallRelayPrompt from './CallRelayPrompt.svelte';
@@ -31,7 +31,7 @@
   import CallDeviceMenu from './CallDeviceMenu.svelte';
   const calls = useCallStore(),
     rooms = useCallRoomStore();
-  const state = observe(() => ({
+  const state = toStore(() => ({
     session: calls.session,
     room: rooms.session,
     busy: rooms.busy,

@@ -4,8 +4,8 @@
   import { onMount } from 'svelte';
   import { translate } from '#src/i18n.ts';
   import { contactsService } from '#src/services/contactsService.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
+  import { toStore } from 'svelte/store';
   import { observePublicProfile } from '#src/lib/state/publicProfiles.ts';
   import type { ContactRecord } from '#src/types/contact.ts';
   import Avatar from './Avatar.svelte';
@@ -16,7 +16,7 @@
   export let onopen: (contact: ContactRecord) => Promise<void>;
   export let onback: (() => void) | undefined = undefined;
   const nostr = useNostrStore();
-  const version = observe(() => nostr.contactListVersion);
+  const version = toStore(() => nostr.contactListVersion);
   $: publicProfile = observePublicProfile(publicKey);
   let contact: ContactRecord | null = null;
   let mounted = false,

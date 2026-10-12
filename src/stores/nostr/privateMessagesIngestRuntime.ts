@@ -1079,7 +1079,7 @@ export function createPrivateMessagesIngestRuntime({
       }
 
       try {
-        const { useMessageStore } = await import('#src/stores/messageStore.ts');
+        const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
         await useMessageStore().upsertPersistedMessage(epochNoticeMessage);
       } catch (error) {
         console.error('Failed to sync incoming epoch notice into live state', error);
@@ -1572,7 +1572,7 @@ export function createPrivateMessagesIngestRuntime({
       : chat.last_message_at;
     // Publish verified content to reactive state before any message write. The
     // ingestion promise still represents the durable commit for EOSE coverage.
-    const { useMessageStore } = await import('#src/stores/messageStore.ts');
+    const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
     if (shouldUpdateChatPreview) {
       chatStore.applyIncomingMessage({
         publicKey: chat.public_key,

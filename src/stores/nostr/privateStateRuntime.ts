@@ -52,7 +52,7 @@ import {
   countUnseenReactionsForAuthor,
   normalizeMessageReactions,
 } from '#src/utils/messageReactions.ts';
-import type { Ref } from '#src/lib/state/reactivity.ts';
+
 
 interface RestoreRuntimeState {
   restoreContactCursorStatePromise: Promise<void> | null;
@@ -125,7 +125,7 @@ interface PrivateStateRuntimeDeps {
   getFilterSince: () => number;
   getLoggedInPublicKeyHex: () => string | null;
   getStartupStepSnapshot: (stepId: any) => { status: string };
-  isRestoringStartupState: Ref<boolean>;
+  isRestoringStartupState: boolean;
   ndk: NostrClient;
   normalizeEventId: (value: unknown) => string | null;
   normalizeTimestamp: (value: unknown) => string | null;
@@ -2092,7 +2092,7 @@ export function createPrivateStateRuntime({
           return;
         }
 
-        const { useMessageStore } = await import('#src/stores/messageStore.ts');
+        const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
         const messageStore = useMessageStore();
         const readStateSyncSummary = await messageStore.syncChatsReadStateFromSeenBoundary(
           contacts.map((contact) => contact.public_key),

@@ -3,9 +3,9 @@
   import { onMount } from 'svelte';
   import { portal } from '#src/lib/actions/portal.ts';
   import { contactsService } from '#src/services/contactsService.ts';
-  import { useNostrStore } from '#src/stores/nostrStore.ts';
-  import { useChatStore } from '#src/stores/chatStore.ts';
-  import { observe } from '#src/lib/state/store.ts';
+  import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
+  import { useChatStore } from '#src/stores/chatStore.svelte.ts';
+  import { toStore } from 'svelte/store';
   import { searchContactsForList } from '#src/utils/contactList.ts';
   import type { ContactRecord } from '#src/types/contact.ts';
   import type { ProfileSearchResult } from '#src/stores/nostr/profileSearchRuntime.ts';
@@ -21,7 +21,7 @@
   export let onclose: () => void;
   const nostr = useNostrStore();
   const chats = useChatStore();
-  const requests = observe(() => chats.requestChats.flatMap((chat) => [chat.id, chat.publicKey]));
+  const requests = toStore(() => chats.requestChats.flatMap((chat) => [chat.id, chat.publicKey]));
   let contacts: ContactRecord[] = [];
   let query = '';
   let selected: ProfileSearchResult[] = [];

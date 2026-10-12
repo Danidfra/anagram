@@ -152,7 +152,7 @@ for (const rejectSearch of [false, true])
       await page.evaluate(async (event) => {
         const { PublicGroupData } = await import('/src/services/publicGroupData.ts');
         const { parsePublicRoom } = await import('/src/stores/nostr/publicGroups.ts');
-        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
         const db = new PublicGroupData(useNostrStore().getLoggedInPublicKeyHex()!);
         const room = parsePublicRoom(event);
         await db.save({ address: room.address, room, joined: true, updated: Date.now() });

@@ -233,11 +233,11 @@ async function bootstrapSession(options: AppE2EBootstrapOptions): Promise<AppE2E
     { useChatStore },
     { useMessageStore },
   ] = await Promise.all([
-    import('#src/stores/nostrStore.ts'),
+    import('#src/stores/nostrStore.svelte.ts'),
     import('#src/stores/relayStore.ts'),
     import('#src/stores/nip65RelayStore.ts'),
-    import('#src/stores/chatStore.ts'),
-    import('#src/stores/messageStore.ts'),
+    import('#src/stores/chatStore.svelte.ts'),
+    import('#src/stores/messageStore.svelte.ts'),
   ]);
 
   const nostrStore = useNostrStore();
@@ -302,7 +302,7 @@ async function bootstrapSession(options: AppE2EBootstrapOptions): Promise<AppE2E
 }
 
 async function waitForHistoryRestore(): Promise<void> {
-  const { useNostrStore } = await import('#src/stores/nostrStore.ts');
+  const { useNostrStore } = await import('#src/stores/nostrStore.svelte.ts');
   const deadline = Date.now() + 150_000;
   while (Date.now() < deadline) {
     const step = useNostrStore().startupSteps.find((step) => step.id === 'message-history-restore');
@@ -332,7 +332,7 @@ async function seedFailedOutboundRelay(options: {
 
 async function resumeSession(): Promise<void> {
   const [{ useNostrStore }, { useRelayStore }] = await Promise.all([
-    import('#src/stores/nostrStore.ts'),
+    import('#src/stores/nostrStore.svelte.ts'),
     import('#src/stores/relayStore.ts'),
   ]);
   await useNostrStore().runReconnectHealing('session-resume', {
@@ -343,7 +343,7 @@ async function resumeSession(): Promise<void> {
 
 async function getSessionSnapshot(): Promise<AppE2ESessionSnapshot> {
   const [{ useNostrStore }, { useRelayStore }] = await Promise.all([
-    import('#src/stores/nostrStore.ts'),
+    import('#src/stores/nostrStore.svelte.ts'),
     import('#src/stores/relayStore.ts'),
   ]);
 
@@ -363,7 +363,7 @@ async function getSessionSnapshot(): Promise<AppE2ESessionSnapshot> {
 }
 
 async function getDeveloperDiagnosticsSnapshot(): Promise<DeveloperDiagnosticsSnapshot> {
-  const { useNostrStore } = await import('#src/stores/nostrStore.ts');
+  const { useNostrStore } = await import('#src/stores/nostrStore.svelte.ts');
   const nostrStore = useNostrStore();
   return JSON.parse(
     JSON.stringify(await nostrStore.getDeveloperDiagnosticsSnapshot()),
@@ -399,7 +399,7 @@ async function waitForAppReady(options: AppE2EWaitForAppReadyOptions = {}): Prom
   const deadlineAt = Date.now() + timeoutMs;
 
   const [{ useNostrStore }, { contactsService }] = await Promise.all([
-    import('#src/stores/nostrStore.ts'),
+    import('#src/stores/nostrStore.svelte.ts'),
     import('#src/services/contactsService.ts'),
   ]);
 
@@ -433,10 +433,10 @@ async function waitForAppReady(options: AppE2EWaitForAppReadyOptions = {}): Prom
 async function refreshSession(options: AppE2ERefreshOptions = {}): Promise<void> {
   const [{ useNostrStore }, { useRelayStore }, { useChatStore }, { useMessageStore }] =
     await Promise.all([
-      import('#src/stores/nostrStore.ts'),
+      import('#src/stores/nostrStore.svelte.ts'),
       import('#src/stores/relayStore.ts'),
-      import('#src/stores/chatStore.ts'),
-      import('#src/stores/messageStore.ts'),
+      import('#src/stores/chatStore.svelte.ts'),
+      import('#src/stores/messageStore.svelte.ts'),
     ]);
 
   const nostrStore = useNostrStore();
@@ -483,7 +483,7 @@ async function refreshSession(options: AppE2ERefreshOptions = {}): Promise<void>
 async function refreshPrivateMessagesLiveReconnect(
   options: AppE2EPrivateMessagesLiveReconnectOptions = {},
 ): Promise<DeveloperDiagnosticsSnapshot> {
-  const { useNostrStore } = await import('#src/stores/nostrStore.ts');
+  const { useNostrStore } = await import('#src/stores/nostrStore.svelte.ts');
   const nostrStore = useNostrStore();
   const previousPrivateMessagesEoseAt = nostrStore.privateMessagesSubscriptionLastEoseAt ?? null;
 
@@ -495,7 +495,7 @@ async function refreshPrivateMessagesLiveReconnect(
 }
 
 async function logout(): Promise<void> {
-  const [{ useNostrStore }] = await Promise.all([import('#src/stores/nostrStore.ts')]);
+  const [{ useNostrStore }] = await Promise.all([import('#src/stores/nostrStore.svelte.ts')]);
 
   const nostrStore = useNostrStore();
   await nostrStore.logout();
@@ -513,7 +513,7 @@ async function rotateGroupEpoch(options: AppE2ERotateGroupEpochOptions): Promise
     throw new Error('A group public key is required for e2e rotation.');
   }
 
-  const [{ useNostrStore }] = await Promise.all([import('#src/stores/nostrStore.ts')]);
+  const [{ useNostrStore }] = await Promise.all([import('#src/stores/nostrStore.svelte.ts')]);
 
   const nostrStore = useNostrStore();
   await nostrStore.rotateGroupEpochAndSendTickets(
@@ -547,8 +547,8 @@ async function sendMessages(
   }
 
   const [{ useChatStore }, { useMessageStore }] = await Promise.all([
-    import('#src/stores/chatStore.ts'),
-    import('#src/stores/messageStore.ts'),
+    import('#src/stores/chatStore.svelte.ts'),
+    import('#src/stores/messageStore.svelte.ts'),
   ]);
 
   const chatStore = useChatStore();
@@ -604,8 +604,8 @@ async function removeStoredMessageByEventId(
 
   const [{ useChatStore }, { useMessageStore }, { chatDataService }, { nostrEventDataService }] =
     await Promise.all([
-      import('#src/stores/chatStore.ts'),
-      import('#src/stores/messageStore.ts'),
+      import('#src/stores/chatStore.svelte.ts'),
+      import('#src/stores/messageStore.svelte.ts'),
       import('#src/services/chatDataService.ts'),
       import('#src/services/nostrEventDataService.ts'),
     ]);
@@ -645,7 +645,7 @@ async function setStoredMessageAttachments(
   const [{ chatDataService }, { useMessageStore }, { normalizeMessageAttachment }] =
     await Promise.all([
       import('#src/services/chatDataService.ts'),
-      import('#src/stores/messageStore.ts'),
+      import('#src/stores/messageStore.svelte.ts'),
       import('#src/utils/messageAttachments.ts'),
     ]);
   await chatDataService.init();
@@ -673,13 +673,13 @@ async function setStoredMessageAttachments(
 }
 
 function startManualReconnectHealing(): void {
-  void import('#src/stores/nostrStore.ts').then(({ useNostrStore }) =>
+  void import('#src/stores/nostrStore.svelte.ts').then(({ useNostrStore }) =>
     useNostrStore().runReconnectHealing('manual-refresh'),
   );
 }
 
 async function isReconnectHealing(): Promise<boolean> {
-  const { useNostrStore } = await import('#src/stores/nostrStore.ts');
+  const { useNostrStore } = await import('#src/stores/nostrStore.svelte.ts');
   return useNostrStore().isReconnectHealing;
 }
 

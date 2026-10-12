@@ -199,7 +199,7 @@ test('failed private preference saves keep previous values and never surface sec
   await expect(page.getByTestId('settings-blossom-server-input')).toBeEnabled();
   const original = await page.getByTestId('settings-blossom-server-input').inputValue();
   await page.evaluate(async (secret) => {
-    const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+    const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
     const store = useNostrStore();
     store.saveBlossomServerUrl = async () => {
       throw new Error(secret);

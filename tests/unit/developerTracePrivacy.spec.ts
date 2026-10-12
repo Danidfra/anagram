@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { generateSecretKey, nip19 } from 'nostr-tools';
-import { ref } from '#src/lib/state/reactivity.ts';
+
 import {
   createDeveloperTraceRuntime,
   readDeveloperDiagnosticsEnabledFromStorage,
@@ -12,10 +12,10 @@ vi.mock('#src/services/developerTraceDataService.ts', () => ({
 
 function runtime(enabled: boolean) {
   return createDeveloperTraceRuntime({
-    developerDiagnosticsEnabled: ref(enabled),
-    developerDiagnosticsVersion: ref(0),
+    developerDiagnosticsEnabled: enabled,
+    developerDiagnosticsVersion: 0,
     developerTraceState: { developerTraceCounter: 0 },
-    developerTraceVersion: ref(0),
+    developerTraceVersion: 0,
     developerDiagnosticsStorageKey: 'diagnostics',
     getLoggedInPublicKeyHex: () => 'a'.repeat(64),
   });
