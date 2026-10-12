@@ -23,6 +23,20 @@ export async function startRelay() {
     server.once('error', reject);
   });
   const url = `ws://127.0.0.1:${server.address().port}/`;
+  function hasLiveInboxSubscription() {
+    return [...sockets].some(
+      ([socket, subscriptions]) =>
+        socket.readyState === 1 &&
+        [...subscriptions.values()].some((filters) =>
+          filters.some(
+            (filter) =>
+              filter.kinds?.includes(1059) &&
+              filter['#p']?.includes(pubkey) &&
+              filter.until === undefined,
+          ),
+        ),
+    );
+  }
   function emit(event) {
     events.set(event.id, event);
     for (const [socket, subs] of sockets) {
@@ -90,6 +104,7 @@ export async function startRelay() {
     nsec: nip19.nsecEncode(key),
     received,
     stats,
+    hasLiveInboxSubscription,
     deliver(text) {
       emit(
         wrapEvent(

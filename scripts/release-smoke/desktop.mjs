@@ -311,11 +311,13 @@ try {
   await send('packaged-release-outbound');
   relay.deliver('packaged-release-inbound');
   await until(() => bodyIncludes('packaged-release-inbound'), 'incoming message rendered');
-  const requests = relay.stats.requests;
+  // Profile/settings REQs can arrive before the inbox. Only the live DM
+  // subscription on a new connection proves this step is ready.
+  const connections = relay.stats.connections;
   relay.disconnect();
   await until(
-    () => relay.stats.requests > requests,
-    'relay subscriptions restored after disconnect',
+    () => relay.stats.connections > connections && relay.hasLiveInboxSubscription(),
+    'live message inbox restored after disconnect',
   );
   relay.deliver('packaged-release-reconnected');
   await until(
@@ -370,7 +372,11 @@ try {
 } finally {
   await writeFile(
     `${output}/relay.json`,
-    JSON.stringify({ ...relay.stats, received: relay.received }, null, 2),
+    JSON.stringify(
+      { ...relay.stats, liveInbox: relay.hasLiveInboxSubscription(), received: relay.received },
+      null,
+      2,
+    ),
   );
   if (session) {
     await execute(
