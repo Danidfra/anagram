@@ -283,7 +283,7 @@ export async function replyToMessage(page: Page, text: string, reply: string, _o
   await sendMessage(page, reply);
 }
 export async function reactToMessage(page: Page, text: string, _label = '') {
-  await threadMessage(page, text).click({ button: 'right' });
+  await threadMessage(page, text).locator('.message-content').click({ button: 'right' });
   await page.getByRole('button', { name: 'React', exact: true }).click();
 }
 export async function deleteMessage(page: Page, text: string) {

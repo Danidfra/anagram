@@ -1,6 +1,6 @@
 <script lang="ts">
   import { dismissOnOutside } from '#src/lib/actions/dismissOnOutside.ts';
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import type { NostrMentionProfile } from '#src/utils/nostrMentions.ts';
   export let mentionProfiles: NostrMentionProfile[] = [];
   import { autosizeTextarea } from '#src/lib/actions/autosizeTextarea.ts';
@@ -26,6 +26,15 @@
   export let onsend: () => void;
   export let onfile: (file?: File) => void;
   export let onchange: () => void = () => {};
+  let mobileKeyboard = false;
+  onMount(() => {
+    // Include touch devices in landscape and tablets, as well as the mobile layout.
+    const media = window.matchMedia('(max-width: 767px), (pointer: coarse)');
+    const update = () => (mobileKeyboard = media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  });
   function chooseUpload(types: string) {
     attachmentMenu = false;
     fileInput.accept = types;
@@ -94,6 +103,7 @@
     replaceAutocomplete('@' + handle, '@');
   }
   function composerKey(event: KeyboardEvent) {
+    if (mobileKeyboard && event.key === 'Enter') return;
     const count = mentionSuggestions.length || emojiSuggestions.length;
     if (
       count &&
@@ -215,6 +225,7 @@
       {placeholder}
       {maxlength}
       rows="1"
+      enterkeyhint={mobileKeyboard ? 'enter' : 'send'}
       data-testid="message-composer-input"
       oninput={(event) => {
         draft = event.currentTarget.value;
@@ -231,6 +242,7 @@
         if (
           !event.defaultPrevented &&
           event.key === 'Enter' &&
+          !mobileKeyboard &&
           !event.shiftKey &&
           !event.isComposing
         ) {

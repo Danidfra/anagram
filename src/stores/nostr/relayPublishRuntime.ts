@@ -27,6 +27,7 @@ import type {
   SendGiftWrappedRumorOptions,
 } from '#src/stores/nostr/types.ts';
 import type { MessageRelayStatus } from '#src/types/chat.ts';
+import { RecordedMessageDeliveryError } from '#src/utils/messageRelayStatus.ts';
 
 interface RelayPublishRuntimeDeps {
   prepareOutgoingPrivateMessage: (
@@ -488,6 +489,8 @@ export function createRelayPublishRuntime({
         );
         combinedRelayStatuses.push(...skippedSelfRelayStatuses);
         selfRelayStatusesFinalized = true;
+        if (options.localMessageId && rumorEventId)
+          throw new RecordedMessageDeliveryError(recipientPublishResult.error);
         throw recipientPublishResult.error;
       }
 

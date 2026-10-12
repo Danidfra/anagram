@@ -6,6 +6,7 @@ import {
   areMessageEditTimestampsEqual,
   buildEditedMessageMeta,
   messageEditReferencesEventId,
+  withoutEditSelfReply,
 } from '#src/utils/messageEdits.ts';
 import {
   isDeletedMessageMeta,
@@ -328,7 +329,7 @@ function toMessageRow(record: MessageRecord): MessageRow {
     message: record.message,
     created_at: record.created_at,
     event_id: normalizeEventId(record.event_id),
-    meta: normalizeMeta(record.meta),
+    meta: withoutEditSelfReply(normalizeMeta(record.meta)),
   };
 }
 

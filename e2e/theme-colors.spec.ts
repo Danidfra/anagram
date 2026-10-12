@@ -107,7 +107,9 @@ test('selected chat and contact menus remain readable through every accent and m
       }
     }
     await selected.getByRole('button', { name: 'Chat actions' }).click();
-    await threadMessage(page, 'Theme-aware message').click({ button: 'right' });
+    await threadMessage(page, 'Theme-aware message')
+      .locator('.message-content')
+      .click({ button: 'right' });
     const messageMenu = page.getByTestId('message-context-menu');
     for (const dark of [true, false]) {
       await setTheme(page, dark);

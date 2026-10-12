@@ -43,12 +43,18 @@ for (const kind of ['private', 'public'] as const) {
         await b.getByRole('button', { name: 'Accept', exact: true }).click();
       } else await b.goto(a.url());
       await expect(rows(b).filter({ hasText: 'A useful group announcement' })).toBeVisible();
-      await rows(a).filter({ hasText: 'A useful group announcement' }).click({ button: 'right' });
+      await rows(a)
+        .filter({ hasText: 'A useful group announcement' })
+        .locator('.message-content')
+        .click({ button: 'right' });
       await a.getByRole('menuitem', { name: 'Pin message', exact: true }).click();
       await expect(a.getByTestId('pinned-message')).toContainText('A useful group announcement');
       await expect(b.getByTestId('pinned-message')).toContainText('A useful group announcement');
       await expect(b.getByRole('button', { name: 'Unpin message', exact: true })).toHaveCount(0);
-      await rows(b).filter({ hasText: 'A useful group announcement' }).click({ button: 'right' });
+      await rows(b)
+        .filter({ hasText: 'A useful group announcement' })
+        .locator('.message-content')
+        .click({ button: 'right' });
       await expect(b.getByRole('menuitem', { name: 'Pin message', exact: true })).toHaveCount(0);
       await b.keyboard.press('Escape');
       // Ordinary profile edits must preserve the pin.
@@ -83,12 +89,18 @@ for (const kind of ['private', 'public'] as const) {
       );
       await a.screenshot({ path: info.outputPath(`${kind}-pin-mobile.png`) });
       // Editing and deleting the target update the card via the same message state.
-      await rows(a).filter({ hasText: 'A useful group announcement' }).click({ button: 'right' });
+      await rows(a)
+        .filter({ hasText: 'A useful group announcement' })
+        .locator('.message-content')
+        .click({ button: 'right' });
       await a.getByRole('menuitem', { name: 'Edit', exact: true }).click();
       await send('Updated group announcement');
       await expect(a.getByTestId('pinned-message')).toContainText('Updated group announcement');
       await expect(b.getByTestId('pinned-message')).toContainText('Updated group announcement');
-      await rows(a).filter({ hasText: 'Updated group announcement' }).click({ button: 'right' });
+      await rows(a)
+        .filter({ hasText: 'Updated group announcement' })
+        .locator('.message-content')
+        .click({ button: 'right' });
       await expect(a.getByRole('menuitem', { name: 'Unpin message', exact: true })).toBeVisible();
       await a.getByRole('menuitem', { name: 'Delete', exact: true }).click();
       await expect(a.getByTestId('pinned-message')).toContainText('Message deleted');

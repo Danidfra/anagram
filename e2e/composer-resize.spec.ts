@@ -30,6 +30,7 @@ test('composer shrinks after sending and restores the right height for each chat
     await page
       .getByTestId('message-bubble')
       .filter({ hasText: 'Draft line 8' })
+      .locator('.message-content')
       .click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
     await expect(input).toHaveValue(multiline);
@@ -64,6 +65,34 @@ test('composer shrinks after sending and restores the right height for each chat
     await expect.poll(height).toBe(wideHeight);
     await input.fill('');
     await expect.poll(height).toBe(40);
+    // Desktop retains Enter-to-send and Shift+Enter for a newline.
+    await input.fill('Desktop first line');
+    await input.press('Shift+Enter');
+    await input.press('End');
+    await input.type('Desktop second line');
+    await expect(input).toHaveValue('Desktop first line\nDesktop second line');
+    await input.press('Enter');
+    await expect(input).toHaveValue('');
+    await expect(
+      page.getByTestId('message-bubble').filter({ hasText: 'Desktop second line' }),
+    ).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(input).toHaveAttribute('enterkeyhint', 'enter');
+    await input.fill('Mobile first line');
+    await input.press('Enter');
+    await expect(input).toHaveValue('Mobile first line\n');
+    await expect(
+      page.getByTestId('message-bubble').filter({ hasText: 'Mobile first line' }),
+    ).toHaveCount(0);
+    await input.type('Mobile second line');
+    await page.getByTestId('message-send-button').click();
+    await expect(input).toHaveValue('');
+    await expect(
+      page.getByTestId('message-bubble').filter({ hasText: 'Mobile second line' }),
+    ).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(input).toHaveAttribute('enterkeyhint', 'send');
     expect(user.browserErrors).toEqual([]);
   } finally {
     await user.context.close();

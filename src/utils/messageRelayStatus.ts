@@ -1,5 +1,13 @@
 import type { MessageRelayStatus } from '#src/types/chat.ts';
 
+/** Delivery failed, and its details are already persisted on the message's status bar. */
+export class RecordedMessageDeliveryError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'RecordedMessageDeliveryError';
+  }
+}
+
 export function isMessageRelayStatus(value: unknown): value is MessageRelayStatus {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;

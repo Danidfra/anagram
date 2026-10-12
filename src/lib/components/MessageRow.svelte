@@ -29,9 +29,7 @@
 </script>
 
 {#snippet name()}{#if authorLabel}{@render authorLabel()}{:else}{author.name}{/if}{/snippet}
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <article
-  tabindex={onactions && !message.meta.deleted ? 0 : undefined}
   class="message-row"
   class:context-open={contextOpen}
   class:highlighted
@@ -44,8 +42,6 @@
   data-chat-public-key={message.chatId}
   data-author-public-key={message.authorPublicKey}
   data-day-label={dayLabel}
-  oncontextmenu={message.meta.deleted ? undefined : onactions}
-  use:messagePress={Boolean(onactions) && !message.meta.deleted}
 >
   {#if bubbleLayout}
     {#if !senderContinues}<button
@@ -78,7 +74,13 @@
       <strong>{@render name()}</strong>
     </button>
   {/if}
-  <div class="message-content">
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_static_element_interactions -->
+  <div
+    class="message-content"
+    tabindex={onactions && !message.meta.deleted ? 0 : undefined}
+    oncontextmenu={message.meta.deleted ? undefined : onactions}
+    use:messagePress={Boolean(onactions) && !message.meta.deleted}
+  >
     {#if bubbleLayout && !continuesSender}<button
         class="bubble-author-name"
         data-testid="thread-author-name-link"

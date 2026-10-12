@@ -76,6 +76,7 @@
     ALREADY_LOGGED_IN_BUNKER_MESSAGE,
   } from '#src/utils/bunkerLoginQuery.ts';
   import { Notify } from '#src/lib/platform/ui.ts';
+  import { RecordedMessageDeliveryError } from '#src/utils/messageRelayStatus.ts';
   import { parseRoomLink } from '#src/utils/callRoom.ts';
   import type { Chat, Message, MessageReplyPreview } from '#src/types/chat.ts';
   import type { ContactRecord } from '#src/types/contact.ts';
@@ -271,7 +272,9 @@
     if (message.meta.deleted) return;
     event.preventDefault();
     contextTrigger =
-      event.target instanceof Element ? event.target.closest<HTMLElement>('.message-row') : null;
+      event.target instanceof Element
+        ? event.target.closest<HTMLElement>('.message-content')
+        : null;
     contextPosition = messageMenuPosition(event);
     contextMessage = message.id;
   }
@@ -559,6 +562,7 @@
     }
   }
   function fail(error: unknown) {
+    if (error instanceof RecordedMessageDeliveryError) return;
     Notify.create({
       type: 'negative',
       message: error instanceof Error ? error.message : String(error),

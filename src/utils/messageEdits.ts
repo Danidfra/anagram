@@ -52,6 +52,15 @@ export function messageEditReferencesEventId(
   );
 }
 
+/** Older clients incorrectly treated the edit predecessor as a reply target. */
+export function withoutEditSelfReply(meta: Record<string, unknown>): Record<string, unknown> {
+  const reply = meta.reply;
+  const target = isPlainRecord(reply) ? normalizeEventId(reply.eventId) : null;
+  if (!target || !messageEditReferencesEventId(meta, target)) return meta;
+  const { reply: _reply, ...cleanMeta } = meta;
+  return cleanMeta;
+}
+
 export function buildEditedMessageMeta(
   originalMeta: Record<string, unknown>,
   replacementMeta: Record<string, unknown>,
@@ -80,7 +89,7 @@ export function buildEditedMessageMeta(
     } satisfies EditedMessageMetadata;
   }
 
-  return nextMeta;
+  return withoutEditSelfReply(nextMeta);
 }
 
 export function readMessageEditTargetEventId(tags: string[][]): string | null {

@@ -7,6 +7,7 @@ import NostrClient, {
   type NostrEvent,
 } from '#src/lib/nostr/client.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { MESSAGE_EDIT_MARKER } from '#src/utils/messageEdits.ts';
 import { INVITATION_PROOF_TAG } from '#src/stores/nostr/constants.ts';
 import type { ChatRow } from '#src/services/chatDataService.ts';
 import type { ChatGroupEpochKey } from '#src/types/chat.ts';
@@ -490,7 +491,10 @@ export function createMessageEventRuntime({
   }
 
   function readReplyTargetEventId(event: ClientEvent): string | null {
-    const replyTag = event.getMatchingTags('e').find((tag) => {
+    const replyCandidates = event.getMatchingTags('e').filter(
+      (tag) => tag[3]?.trim().toLowerCase() !== MESSAGE_EDIT_MARKER
+    );
+    const replyTag = replyCandidates.find((tag) => {
       const marker = String(tag[3] ?? '')
         .trim()
         .toLowerCase();
@@ -500,7 +504,7 @@ export function createMessageEventRuntime({
       return normalizeEventId(replyTag[1] ?? '');
     }
 
-    return normalizeEventId(event.getMatchingTags('e')[0]?.[1] ?? '');
+    return normalizeEventId(replyCandidates[0]?.[1] ?? '');
   }
 
   function readReactionTargetAuthorPubkey(event: ClientEvent): string | null {

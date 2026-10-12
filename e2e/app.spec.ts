@@ -145,6 +145,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await b
     .getByTestId('message-bubble')
     .filter({ hasText: 'A real encrypted message' })
+    .locator('.message-content')
     .click({ button: 'right' });
   await b.getByRole('button', { name: 'React', exact: true }).click();
   await expect(a.locator('.reactions')).toContainText('👍');
@@ -172,7 +173,11 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
     )
     .toBe(true);
 
-  await a.getByTestId('message-bubble').first().click({ button: 'right' });
+  await a
+    .getByTestId('message-bubble')
+    .first()
+    .locator('.message-content')
+    .click({ button: 'right' });
   await a.getByRole('menuitem', { name: 'Edit', exact: true }).click();
   await a.getByTestId('message-composer-input').fill('Edited encrypted message');
   await a.getByTestId('message-send-button').click();
@@ -265,6 +270,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await b
     .getByTestId('message-bubble')
     .filter({ hasText: 'Hello encrypted group' })
+    .locator('.message-content')
     .click({ button: 'right' });
   await b.getByRole('button', { name: 'React', exact: true }).click();
   await expect(
@@ -276,6 +282,7 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await a
     .getByTestId('message-bubble')
     .filter({ hasText: 'Hello encrypted group' })
+    .locator('.message-content')
     .click({ button: 'right' });
   await a.getByRole('menuitem', { name: 'Edit', exact: true }).click();
   await a.getByTestId('message-composer-input').fill('Edited encrypted group message');
@@ -1320,6 +1327,10 @@ test('message actions support click, keyboard, tap and long press without steali
 }, testInfo) => {
   await login(page);
   await contact(page, getPublicKey(generateSecretKey()), 'Menu placement fixture');
+  await page.evaluate(async () => {
+    const { saveDesktopMessageLayoutPreference } = await import('/src/utils/themeStorage.ts');
+    saveDesktopMessageLayoutPreference('text');
+  });
   const composer = page.getByTestId('message-composer-input');
   await composer.fill('Pointer anchor fixture');
   await page.getByTestId('message-send-button').click();
@@ -1329,6 +1340,35 @@ test('message actions support click, keyboard, tap and long press without steali
   await message.hover();
   await expect(menu).toHaveCount(0);
   const content = message.locator('.message-content');
+  async function expectAdjacentSpaceInactive() {
+    const row = (await message.boundingBox())!;
+    const bubble = (await content.boundingBox())!;
+    const leftGap = bubble.x - row.x;
+    const rightGap = row.x + row.width - bubble.x - bubble.width;
+    expect(Math.max(leftGap, rightGap)).toBeGreaterThan(10);
+    const x = leftGap > rightGap ? row.x + 3 : row.x + row.width - 3;
+    const y = bubble.y + bubble.height / 2;
+    await page.mouse.click(x, y);
+    await expect(menu).toHaveCount(0);
+    await page.mouse.click(x, y, { button: 'right' });
+    await expect(menu).toHaveCount(0);
+    // A long press in the row's empty space must not start a message gesture.
+    await message.dispatchEvent('pointerdown', {
+      pointerType: 'touch',
+      pointerId: 1,
+      isPrimary: true,
+      clientX: x,
+      clientY: y,
+    });
+    await page.waitForTimeout(550);
+    await message.dispatchEvent('pointerup', {
+      pointerType: 'touch',
+      pointerId: 1,
+      isPrimary: true,
+    });
+    await expect(menu).toHaveCount(0);
+  }
+  await expectAdjacentSpaceInactive();
   await expect(message.getByRole('button', { name: 'Message actions' })).toHaveCount(0);
   await content.click({ position: { x: 5, y: 5 } });
   const box = (await content.boundingBox())!;
@@ -1350,7 +1390,7 @@ test('message actions support click, keyboard, tap and long press without steali
   await expect(page.locator('.composer-context')).toContainText('Pointer anchor fixture');
   await expect(composer).toBeFocused();
   await page.getByRole('button', { name: 'Cancel reply or edit' }).click();
-  await message.click({ button: 'right' });
+  await message.locator('.message-content').click({ button: 'right' });
   await menu.getByRole('menuitem', { name: 'Forward', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Close dialog' }).click();
@@ -1360,8 +1400,8 @@ test('message actions support click, keyboard, tap and long press without steali
   await expect(menu.getByRole('menuitem', { name: 'Copy message' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
-  await expect(message).toBeFocused();
-  await message.press('Enter');
+  await expect(content).toBeFocused();
+  await content.press('Enter');
   await expect(reply).toBeFocused();
   await page.keyboard.press('Escape');
   await message.locator('.message-text').evaluate((node) => {
@@ -1377,7 +1417,8 @@ test('message actions support click, keyboard, tap and long press without steali
     const { saveDesktopMessageLayoutPreference } = await import('/src/utils/themeStorage.ts');
     saveDesktopMessageLayoutPreference('bubbles');
   });
-  await message.click({ button: 'right' });
+  await expectAdjacentSpaceInactive();
+  await message.locator('.message-content').click({ button: 'right' });
   await expect(menu).toBeVisible();
   await menu.getByRole('button', { name: 'Choose reaction' }).click();
   await expect(menu.locator('input')).toBeVisible();
@@ -1389,6 +1430,7 @@ test('message actions support click, keyboard, tap and long press without steali
   await expect(message.locator('.bubble-avatar')).toBeHidden();
   await expect(message.locator('.bubble-author-name')).toBeHidden();
   await expect(message.locator('.message-text')).toHaveCSS('font-size', '15px');
+  await expectAdjacentSpaceInactive();
   await content.click({ position: { x: 5, y: 5 } });
   await expect(menu).toBeVisible();
   await page.keyboard.press('Escape');

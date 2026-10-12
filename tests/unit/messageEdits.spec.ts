@@ -5,6 +5,7 @@ import {
   messageEditReferencesEventId,
   readEditedMessageMetadata,
   readMessageEditTargetEventId,
+  withoutEditSelfReply,
 } from '#src/utils/messageEdits.ts';
 import { describe, expect, it } from 'vitest';
 
@@ -15,7 +16,7 @@ describe('message edit helpers', () => {
 
     expect(tag).toEqual(['e', eventId.toLowerCase(), '', 'edit']);
     expect(readMessageEditTargetEventId([['p', 'recipient'], tag ?? []])).toBe(
-      eventId.toLowerCase()
+      eventId.toLowerCase(),
     );
   });
 
@@ -38,10 +39,20 @@ describe('message edit helpers', () => {
       'Edited text',
       1_767_225_600,
       null,
-      [['e', eventId, '', 'edit']]
+      [['e', eventId, '', 'edit']],
     );
 
     expect(rumor.tags).toContainEqual(['e', eventId, '', 'edit']);
+    expect(runtime.readReplyTargetEventId(rumor)).toBeNull();
+    const parent = 'd'.repeat(64);
+    // Explicit and legacy unmarked replies still work alongside an edit link.
+    for (const marker of ['reply', '']) {
+      rumor.tags = [
+        ['e', eventId, '', ' EDIT '],
+        ['e', parent, '', marker],
+      ];
+      expect(runtime.readReplyTargetEventId(rumor)).toBe(parent);
+    }
   });
 
   it('accumulates predecessor ids while clearing deletion metadata', () => {
@@ -57,7 +68,7 @@ describe('message edit helpers', () => {
       },
       { source: 'nostr' },
       secondEventId,
-      '2026-01-01T00:00:03.000Z'
+      '2026-01-01T00:00:03.000Z',
     );
 
     expect(meta.deleted).toBeUndefined();
@@ -69,12 +80,26 @@ describe('message edit helpers', () => {
     expect(messageEditReferencesEventId(meta, secondEventId)).toBe(true);
   });
 
+  it('removes cached replies to edit predecessors without removing genuine replies', () => {
+    const meta = {
+      edited: { editedAt: '2026-01-01T00:00:00.000Z', previousEventIds: ['old-id'] },
+      reply: { eventId: 'old-id', text: 'Original text' },
+    };
+    expect(withoutEditSelfReply(meta)).toEqual({ edited: meta.edited });
+    expect(meta.reply).toBeDefined();
+    const actualReply = { ...meta, reply: { eventId: 'parent-id', text: 'Parent' } };
+    expect(withoutEditSelfReply(actualReply)).toBe(actualReply);
+    expect(
+      buildEditedMessageMeta({}, { reply: meta.reply }, 'old-id', meta.edited.editedAt).reply,
+    ).toBeUndefined();
+  });
+
   it('matches timestamps at Nostr second precision only', () => {
     expect(
-      areMessageEditTimestampsEqual('2026-01-01T00:00:00.100Z', '2026-01-01T00:00:00.900Z')
+      areMessageEditTimestampsEqual('2026-01-01T00:00:00.100Z', '2026-01-01T00:00:00.900Z'),
     ).toBe(true);
     expect(
-      areMessageEditTimestampsEqual('2026-01-01T00:00:00.900Z', '2026-01-01T00:00:01.000Z')
+      areMessageEditTimestampsEqual('2026-01-01T00:00:00.900Z', '2026-01-01T00:00:01.000Z'),
     ).toBe(false);
   });
 });

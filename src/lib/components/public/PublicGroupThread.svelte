@@ -146,7 +146,9 @@
     if (message.meta.deleted) return;
     event.preventDefault();
     contextTrigger =
-      event.target instanceof Element ? event.target.closest<HTMLElement>('.message-row') : null;
+      event.target instanceof Element
+        ? event.target.closest<HTMLElement>('.message-content')
+        : null;
     contextPosition = messageMenuPosition(event);
     actionMessage = message;
   }

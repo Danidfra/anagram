@@ -752,6 +752,9 @@ test('public chat shares layouts, sender grouping, date dividers, emoji input an
   });
   await expect(first.locator('.message-author')).toBeVisible();
   await expect(first.locator('.bubble-author-name')).toHaveCount(0);
+  const empty = (await first.boundingBox())!;
+  await page.mouse.click(empty.x + empty.width - 3, empty.y + empty.height / 2);
+  await expect(page.getByRole('menu', { name: 'Message actions' })).toHaveCount(0);
   await page.evaluate(() => {
     localStorage.setItem('ui-desktop-message-layout', 'bubbles');
     window.dispatchEvent(
@@ -793,15 +796,16 @@ test('public chat shares layouts, sender grouping, date dividers, emoji input an
   await expect(log.getByTestId('public-message')).toHaveCount(4);
   await page.screenshot({ path: info.outputPath('public-shared-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
-  const bounds = await first.boundingBox();
-  await first.dispatchEvent('pointerdown', {
+  const content = first.locator('.message-content');
+  const bounds = await content.boundingBox();
+  await content.dispatchEvent('pointerdown', {
     pointerType: 'touch',
     isPrimary: true,
     clientX: bounds!.x + 60,
     clientY: bounds!.y + 10,
   });
   await expect(menu).toBeVisible();
-  await first.dispatchEvent('pointerup', { pointerType: 'touch', isPrimary: true });
+  await content.dispatchEvent('pointerup', { pointerType: 'touch', isPrimary: true });
   await expect(menu.getByRole('menuitem', { name: 'Copy message', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
@@ -1554,7 +1558,7 @@ test('an edited public pin resolves and jumps after the original has disappeared
   await expect(card).toContainText('Welcome to Anagram!', { timeout: 5000 });
   await page.getByRole('button', { name: 'Go to pinned message' }).click();
   await expect(message).toHaveClass(/highlighted/);
-  await message.click({ button: 'right' });
+  await message.locator('.message-content').click({ button: 'right' });
   await expect(page.getByRole('menuitem', { name: 'Unpin message', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await page.reload();
@@ -1707,4 +1711,24 @@ test('same-second public replies follow their parent despite reverse event-id or
   await expect(rows).toHaveCount(2);
   await expect(rows.first().locator('.message-text')).toHaveText(parent.content);
   await expect(rows.last().locator('.message-text')).toHaveText(reply.content);
+});
+
+test('touch public composer uses Enter for newlines even at tablet width', async ({ browser }) => {
+  const page = await browser.newPage({ hasTouch: true, viewport: { width: 1024, height: 768 } });
+  try {
+    await login(page);
+    await create(page, 'Mobile multiline');
+    const input = page.getByLabel('Public message', { exact: true });
+    await expect(input).toHaveAttribute('enterkeyhint', 'enter');
+    await input.fill('Touch first line');
+    await input.press('Enter');
+    await expect(input).toHaveValue('Touch first line\n');
+    await expect(page.getByTestId('public-message')).toHaveCount(0);
+    await input.type('Touch second line');
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect(input).toHaveValue('');
+    await expect(page.getByTestId('public-message')).toContainText('Touch second line');
+  } finally {
+    await page.context().close();
+  }
 });
