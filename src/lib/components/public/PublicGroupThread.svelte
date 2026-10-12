@@ -537,11 +537,17 @@
         </p>
       </div>{/each}
   </ThreadTimeline>
-  {#if $state.refreshing}<p class="status" role="status">
-      Syncing public group…
-    </p>{:else if $state.stale}<p class="status">Offline · Showing saved messages.</p>{/if}
-  {#if notice}<p class="status" role="status">{notice}</p>{/if}
-  {#if error || $state.error}<p class="status error" role="alert">{error || $state.error}</p>{/if}
+  <div class="thread-feedback">
+    <div class="thread-feedback-content">
+      {#if !$state.refreshing && $state.stale}<p class="status" role="status">
+          Offline · Showing saved messages.
+        </p>{/if}
+      {#if notice}<p class="status" role="status">{notice}</p>{/if}
+      {#if error || $state.error}<p class="status error" role="alert">
+          {error || $state.error}
+        </p>{/if}
+    </div>
+  </div>
   {#if mediaNotice}<ModalFrame title="Media sharing" onclose={() => (mediaNotice = false)}>
       <p>
         Only trusted users can post media. Ask the group creator
@@ -670,6 +676,26 @@
   </ModalFrame>{/if}
 
 <style>
+  .thread-feedback {
+    position: relative;
+    flex: 0 0 0;
+    height: 0;
+    z-index: 4;
+  }
+  .thread-feedback-content {
+    position: absolute;
+    bottom: 8px;
+    left: 16px;
+    right: 16px;
+    pointer-events: none;
+  }
+  .thread-feedback-content .status {
+    width: fit-content;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    background: var(--nc-panel-header-bg);
+    border-radius: 8px;
+  }
   .status,
   .history {
     padding: 8px 16px;

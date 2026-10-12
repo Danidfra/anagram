@@ -1732,3 +1732,63 @@ test('touch public composer uses Enter for newlines even at tablet width', async
     await page.context().close();
   }
 });
+
+test('public status changes keep the thread and composer in place', async ({ page }) => {
+  await login(page);
+  await create(page, 'Stable thread');
+  const input = page.getByLabel('Public message', { exact: true });
+  await input.fill('A message that stays in place');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const message = page.getByTestId('public-message');
+  await expect(message).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        return new Promise<boolean>((resolve) => {
+          const unsubscribe = useNostrStore().publicGroups.state.subscribe((state) =>
+            resolve(state.refreshing),
+          );
+          unsubscribe();
+        });
+      }),
+    )
+    .toBe(false);
+
+  const geometry = () =>
+    page.evaluate(() => {
+      const box = (selector: string) => {
+        const rect = document.querySelector(selector)!.getBoundingClientRect();
+        return [rect.top, rect.height];
+      };
+      return [
+        box('[data-testid="chat-thread"]'),
+        box('.composer'),
+        box('[data-testid="public-message"]'),
+      ];
+    });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(input).toBeVisible();
+    const before = await geometry();
+    for (const status of [
+      { refreshing: true, stale: false, error: '' },
+      { refreshing: false, stale: true, error: '' },
+      { refreshing: false, stale: false, error: 'Test public group error' },
+      { refreshing: false, stale: false, error: '' },
+    ]) {
+      await page.evaluate(async (status) => {
+        const { useNostrStore } = await import('/src/stores/nostrStore.ts');
+        useNostrStore().publicGroups.state.update((state) => ({ ...state, ...status }));
+      }, status);
+      await expect(page.getByText('Syncing public group…', { exact: true })).toHaveCount(0);
+      await expect(
+        page.getByText('Public: anyone can read these messages.', { exact: true }),
+      ).toBeVisible();
+      if (status.error) await expect(page.getByRole('alert')).toHaveText(status.error);
+      if (status.stale)
+        await expect(page.getByText('Offline · Showing saved messages.')).toBeVisible();
+      await expect.poll(geometry).toEqual(before);
+    }
+  }
+});
