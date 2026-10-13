@@ -1,4 +1,4 @@
-export const chat = { id: -100123456, type: 'supergroup', username: 'public_test' };
+export const chat = { id: -1001234567890, type: 'supergroup', username: 'public_test' };
 export class FakeTelegram {
   constructor() {
     this.calls = [];

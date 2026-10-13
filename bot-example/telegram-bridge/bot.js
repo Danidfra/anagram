@@ -4,9 +4,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { Network, State } from './runtime.js';
 import { Telegram, TelegramError } from './telegram.js';
 import { TelegramBridge } from './bridge.js';
+import { DeletionSync, deletionConfig } from './deletion-sync.js';
 
 export async function main() {
   process.umask(0o077);
+  const deletionOptions = deletionConfig(process.env);
   const telegram = new Telegram(process.env.TELEGRAM_BOT_TOKEN);
   const store = new State(
     process.env.DATA_DIR || fileURLToPath(new URL('./data/', import.meta.url)),
@@ -44,6 +46,15 @@ export async function main() {
     process.once('SIGTERM', shutdown);
     await bot.start();
     if (bot.stopped) return;
+    if (deletionOptions) {
+      bot.deletions = new DeletionSync({
+        bot,
+        ...deletionOptions,
+        token: process.env.TELEGRAM_BOT_TOKEN,
+      });
+      await bot.deletions.start();
+      if (bot.stopped) return;
+    }
     timer = setInterval(() => {
       void bot
         .submit('flush', () => bot.flush())

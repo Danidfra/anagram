@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
+import { generateSecretKey, getPublicKey, nip19, verifyEvent } from 'nostr-tools';
 import { TelegramBridge } from '../bridge.js';
 import { Network, State, now, sign } from '../runtime.js';
 import { Telegram, TelegramError, escapeHTML, replyParts } from '../telegram.js';
@@ -443,4 +443,96 @@ test('private group identifiers and conflicting saved Nostr identities fail clos
   const restored = new State(f.dir);
   assert.equal(getPublicKey(restored.key), f.bot.pubkey);
   restored.close();
+});
+
+test('Telegram deletions remove only mapped imports, cancel pending replies, and persist signed NIP-09 requests', async (t) => {
+  const f = fixture(t);
+  f.bot.receiveTelegram(f.update());
+  const original = f.store.data.outbox[0].event;
+  await f.bot.receiveReply(f.reply(original.id));
+  f.bot.receiveTelegram(f.update({ message_id: 43 }, 11));
+  const other = f.store.data.outbox.find(
+    (item) => item.event?.kind === 9 && item.event.id !== original.id,
+  ).event;
+  f.bot.receiveTelegramDeletes(chat.id - 1, [42]);
+  assert.equal(f.store.data.outbox.length, 3);
+  f.bot.receiveTelegramDeletes(chat.id, [42, 999, -1]);
+  assert.equal(f.store.data.links[original.id], undefined);
+  assert.equal(f.store.data.links[other.id].messageId, 43);
+  assert.equal(f.store.data.outbox.length, 2);
+  const deletion = f.store.data.outbox.find((item) => item.event.kind === 5).event;
+  assert.equal(deletion.pubkey, original.pubkey);
+  assert.deepEqual(deletion.tags, [
+    ['h', f.bot.address],
+    ['k', '9'],
+    ['e', original.id],
+  ]);
+  assert.equal(verifyEvent(deletion), true);
+  const disk = JSON.parse(readFileSync(f.store.file));
+  assert.equal(disk.links[original.id], undefined);
+  assert.equal(disk.outbox[1].event.id, deletion.id);
+  f.bot.receiveTelegramDeletes(chat.id, [42]);
+  await f.bot.receiveReply(f.reply(original.id));
+  assert.equal(f.store.data.outbox.length, 2);
+  await f.bot.flush();
+  assert.deepEqual(
+    f.published.map((event) => event.id),
+    [other.id, deletion.id],
+  );
+  assert.equal(f.telegram.calls.filter((call) => call.method === 'sendMessage').length, 0);
+});
+
+test('deletion arriving before the Bot API message prevents a later import, including after restart', async (t) => {
+  const f = fixture(t);
+  f.bot.receiveTelegramDeletes(chat.id, [42]);
+  f.store.close();
+  const store = new State(f.dir);
+  f.bot.store = store;
+  f.bot.state = store.data;
+  f.bot.receiveTelegram(f.update());
+  assert.equal(store.data.outbox.length, 0);
+  assert.deepEqual(store.data.links, {});
+  assert.equal(store.data.offset, 11);
+});
+
+test('deletion retries survive restart, lost relay acknowledgements, expiry and revoked trust', async (t) => {
+  const f = fixture(t);
+  f.bot.receiveTelegram(f.update());
+  const original = f.store.data.outbox[0].event;
+  f.net.publish = async (event) => {
+    f.published.push(event);
+    throw new Error('lost ACK');
+  };
+  await f.bot.flush();
+  f.bot.receiveTelegramDeletes(chat.id, [42]);
+  const deletion = f.store.data.outbox[0].event;
+  await f.bot.flush();
+  f.store.close();
+  const store = new State(f.dir);
+  f.bot.store = store;
+  f.bot.state = store.data;
+  assert.equal(store.data.outbox[0].event.id, deletion.id);
+  store.data.outbox[0].at = now() - 2 * 86400;
+  store.data.outbox[0].retryAt = 0;
+  f.bot.acceptRoom(f.room([['blocked', f.bot.pubkey]], now() + 1));
+  f.net.publish = async (event) => f.published.push(event);
+  await f.bot.flush();
+  assert.deepEqual(
+    f.published.map((event) => event.id),
+    [original.id, deletion.id, deletion.id],
+  );
+  assert.equal(store.data.outbox.length, 0);
+});
+
+test('bulk deletion requests are bounded to 100 event references each', async (t) => {
+  const f = fixture(t);
+  const ids = Array.from({ length: 205 }, (_, i) => i + 1);
+  for (const id of ids) f.bot.receiveTelegram(f.update({ message_id: id }, id));
+  f.bot.receiveTelegramDeletes(chat.id, ids);
+  assert.equal(f.store.data.outbox.length, 3);
+  assert.deepEqual(
+    f.store.data.outbox.map((item) => item.event.tags.filter((tag) => tag[0] === 'e').length),
+    [100, 100, 5],
+  );
+  assert.deepEqual(f.store.data.links, {});
 });

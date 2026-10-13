@@ -5,11 +5,14 @@ import { join } from 'node:path';
 import { nip19 } from 'nostr-tools';
 import { bootstrapUser, TEST_ACCOUNTS, disposeUsers } from '../../../e2e/parity/helpers.ts';
 import { TelegramBridge } from '../bridge.js';
+import { DeletionSync } from '../deletion-sync.js';
+import { Api } from 'teleproto';
+import { fakeMTProto } from './mtproto-fixture.js';
 import { Network, State, now } from '../runtime.js';
 import { FakeTelegram, chat } from './telegram-fixture.js';
 import { relay } from './relay.js';
 
-test('trusted Telegram Bridge shows incoming messages and sends an Anagram UI reply to the original Telegram message', async ({
+test('trusted Telegram Bridge imports messages, sends replies and reconciles Telegram deletions in Anagram', async ({
   browser,
 }) => {
   const local = await relay();
@@ -93,6 +96,25 @@ test('trusted Telegram Bridge shows incoming messages and sends an Anagram UI re
         .filter({ hasText: 'Hello back from Anagram' })
         .locator('.reply-preview'),
     ).toContainText('Hello from Telegram');
+    const mtproto = fakeMTProto();
+    mtproto.messages = [new Api.MessageEmpty({ id: 42 })];
+    bot.deletions = new DeletionSync({ bot, client: mtproto, token: 'test' });
+    await bot.deletions.start();
+    await bot.submit('flush', () => bot.flush());
+    await expect(page.getByTestId('public-message').filter({ hasText: 'Alice said:' })).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByTestId('public-message').filter({ hasText: 'Ordinary Anagram message' }),
+    ).toBeVisible();
+    const reply = page.getByTestId('public-message').filter({ hasText: 'Hello back from Anagram' });
+    await expect(reply).toBeVisible();
+    await expect(reply.locator('.reply-preview')).toContainText('Message deleted');
+    await page.reload();
+    await expect(page.getByTestId('public-message').filter({ hasText: 'Alice said:' })).toHaveCount(
+      0,
+    );
+    await expect(reply.locator('.reply-preview')).toContainText('Message deleted');
     expect(user.browserErrors).toEqual([]);
   } finally {
     if (user) await disposeUsers(user);

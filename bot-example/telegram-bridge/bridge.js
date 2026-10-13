@@ -174,7 +174,8 @@ export class TelegramBridge {
       message.from?.id !== this.telegramId &&
       message.date >= this.state.startedAt &&
       Number.isSafeInteger(message.message_id) &&
-      message.message_id > 0
+      message.message_id > 0 &&
+      !this.state.deletedTelegram?.[message.message_id]
     ) {
       const text = telegramText(message);
       if (text) {
@@ -200,6 +201,37 @@ export class TelegramBridge {
     }
     // The update is acknowledged only after the exact signed event and mapping are durable.
     this.state.offset = update.update_id + 1;
+    this.save();
+  }
+  receiveTelegramDeletes(chatId, messageIds) {
+    if (chatId !== this.chat.id) return;
+    const ids = new Set(messageIds.filter((id) => Number.isSafeInteger(id) && id > 0));
+    if (!ids.size) return;
+    const removed = Object.entries(this.state.links).filter(([, link]) => ids.has(link.messageId));
+    const eventIds = new Set(removed.map(([id]) => id));
+    // The original publish may have succeeded even when its relay acknowledgement was lost.
+    const outbox = this.state.outbox.filter(
+      (item) =>
+        !eventIds.has(item.event?.id) && !(item.direction === 'telegram' && ids.has(item.parent)),
+    );
+    if (outbox.length + Math.ceil(removed.length / 100) > 1000)
+      throw new Error('Outbox full; restore delivery before restarting.');
+    for (let i = 0; i < removed.length; i += 100) {
+      outbox.push({
+        direction: 'nostr',
+        at: now(),
+        event: sign(this.key, 5, [
+          ['h', this.address],
+          ['k', '9'],
+          ...removed.slice(i, i + 100).map(([id]) => ['e', id]),
+        ]),
+      });
+    }
+    this.state.deletedTelegram ??= {};
+    for (const id of ids) this.state.deletedTelegram[id] = now();
+    for (const [id] of removed) delete this.state.links[id];
+    this.state.outbox = outbox;
+    // Tombstones, removed reply mappings and signed deletion requests become durable together.
     this.save();
   }
   async receiveReply(event) {
@@ -267,9 +299,10 @@ export class TelegramBridge {
     for (const item of this.state.outbox.slice(0, 20)) {
       if (this.stopped) return;
       if (
-        !this.active ||
-        (item.author && this.room.blocked.includes(item.author)) ||
-        item.at < now() - DAY
+        item.event?.kind !== 5 &&
+        (!this.active ||
+          (item.author && this.room.blocked.includes(item.author)) ||
+          item.at < now() - DAY)
       ) {
         this.state.outbox.splice(this.state.outbox.indexOf(item), 1);
         this.save();
@@ -278,7 +311,7 @@ export class TelegramBridge {
       if (item.retryAt > now()) continue;
       try {
         if (item.direction === 'nostr') {
-          await this.net.publish(item.event, this.room.relays, this.key);
+          await this.net.publish(item.event, this.room?.relays ?? this.target.relays, this.key);
         } else {
           // Recheck public visibility before sending; a once-public chat can become private.
           const chat = await this.telegram.call('getChat', { chat_id: this.chat.id });
@@ -318,6 +351,9 @@ export class TelegramBridge {
         delete this.state.links[id];
     for (const [id, at] of Object.entries(this.state.seen))
       if (at < now() - 2 * DAY) delete this.state.seen[id];
+    const deleted = Object.entries(this.state.deletedTelegram ?? {}).sort((a, b) => b[1] - a[1]);
+    for (const [index, [id, at]] of deleted.entries())
+      if (index >= 50000 || at < now() - 30 * DAY) delete this.state.deletedTelegram[id];
     this.save();
   }
   async poll() {
@@ -334,7 +370,11 @@ export class TelegramBridge {
     this.stopped = true;
     this.telegram.close();
     this.net.close();
-    await this.work;
-    this.store.close();
+    try {
+      await this.deletions?.close();
+    } finally {
+      await this.work;
+      this.store.close();
+    }
   }
 }

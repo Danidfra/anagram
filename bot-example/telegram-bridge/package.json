@@ -10,10 +10,11 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env bot.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check bot.js && node --check bridge.js && node --check telegram.js && node --check runtime.js && node --check public-groups.js"
+    "check": "node --check deletion-sync.js && node --check bot.js && node --check bridge.js && node --check telegram.js && node --check runtime.js && node --check public-groups.js"
   },
   "dependencies": {
     "nostr-tools": "2.25.2",
+    "teleproto": "1.230.0",
     "ws": "8.22.0"
   }
 }
