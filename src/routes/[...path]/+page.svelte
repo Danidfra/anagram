@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { publicGroupLinkTarget } from '#src/utils/publicGroupLink.ts';
   import PwaControls from '#src/lib/components/PwaControls.svelte';
   import AppPrompts from '#src/lib/components/AppPrompts.svelte';
   import Auth from '#src/lib/components/Auth.svelte';
@@ -21,6 +23,12 @@
       'body--dark',
       (localStorage.getItem('anagram-theme') ?? 'dark') === 'dark',
     );
+    // Clean-URL hosting or an older app-shell cache can send share pages here.
+    // Keep the validated destination in the route throughout login and onboarding.
+    if (/^\/join\/chat(?:\.html)?\/?$/.test(window.location.pathname)) {
+      const target = publicGroupLinkTarget(window.location.href);
+      if (target) void goto(target, { replace: true });
+    }
     authenticated =
       Boolean(localStorage.getItem('npub')) && !localStorage.getItem('anagram-onboarding-pending');
     ready = true;
