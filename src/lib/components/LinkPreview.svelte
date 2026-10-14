@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { loadLinkPreview, loadPreviewImage } from '#src/services/linkPreviewService.ts';
+  import { loadLinkPreview } from '#src/services/linkPreviewService.ts';
   import { previewUrl, type LinkPreview } from '#src/utils/linkPreview.ts';
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   export let url: string;
@@ -9,39 +9,19 @@
   let revealed = false;
   let visible = false;
   let preview: LinkPreview | null = null;
-  let imageUrl = '';
-  let imageRequest: AbortController | null = null;
-  function clearImage() {
-    imageRequest?.abort();
-    imageRequest = null;
-    if (imageUrl) URL.revokeObjectURL(imageUrl);
-    imageUrl = '';
-  }
   let revision = 0;
   let disposed = false;
   $: void refresh(url, visible && (allowed || revealed));
   async function refresh(value: string, enabled: boolean) {
     const request = ++revision;
     preview = null;
-    clearImage();
     if (!enabled) return;
     const target = previewUrl(value);
     const nostr = useNostrStore();
     if (!target || nostr.containsSessionSecret(decodeURIComponent(target))) return;
     const result = await loadLinkPreview(target);
     if (!disposed && request === revision && result) {
-      preview = {
-        ...result,
-        image:
-          result.image && !nostr.containsSessionSecret(decodeURIComponent(result.image))
-            ? result.image
-            : '',
-      };
-      if (preview.image) {
-        imageRequest = new AbortController();
-        const blob = await loadPreviewImage(preview.image, imageRequest.signal);
-        if (blob && !disposed && request === revision) imageUrl = URL.createObjectURL(blob);
-      }
+      preview = result;
     }
   }
   function watch(node: HTMLElement) {
@@ -60,7 +40,6 @@
   onDestroy(() => {
     disposed = true;
     revision++;
-    clearImage();
   });
 </script>
 
@@ -83,13 +62,6 @@
         ><small>{preview.site}</small><strong>{preview.title}</strong>
         {#if preview.description}<span class="description">{preview.description}</span>{/if}
       </span>
-      {#if imageUrl}<img
-          src={imageUrl}
-          alt=""
-          loading="lazy"
-          referrerpolicy="no-referrer"
-          onerror={clearImage}
-        />{/if}
     </a>
   {/if}
 </div>
@@ -102,7 +74,6 @@
   }
   .link-preview {
     display: flex;
-    gap: 12px;
     width: 440px;
     max-width: 100%;
     margin: 8px 0 4px;
@@ -152,25 +123,13 @@
     -webkit-line-clamp: 3;
     line-clamp: 3;
   }
-  img {
-    width: 72px;
-    height: 72px;
-    object-fit: cover;
-    border-radius: 6px;
-    flex-shrink: 0;
-  }
   .load-preview {
     font-size: 12px;
     margin-top: 6px;
   }
   @media (max-width: 480px) {
     .link-preview {
-      gap: 8px;
       padding: 8px;
-    }
-    img {
-      width: 52px;
-      height: 52px;
     }
   }
 </style>

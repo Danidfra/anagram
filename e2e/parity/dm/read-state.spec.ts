@@ -38,6 +38,7 @@ test('mark as read survives a hard reload', async ({ browser }) => {
 
     await navigateToChat(bob.page, charlie.session.publicKey);
     await bob.page.goto('/settings/profile');
+    await setAppVisibility(bob.page, { visibilityState: 'hidden', hasFocus: false });
     await sendMessage(alice.page, firstMessage, {
       chatId: bob.session.publicKey,
     });
@@ -50,7 +51,10 @@ test('mark as read survives a hard reload', async ({ browser }) => {
       chatId: bob.session.publicKey,
     });
 
-    await bob.page.goto('/chats');
+    // Desktop /chats can select the newest conversation and mark it read.
+    // Keep the other chat open while testing Alice's unread context-menu action.
+    await navigateToChat(bob.page, charlie.session.publicKey);
+    await setAppVisibility(bob.page, { visibilityState: 'visible', hasFocus: true });
     await waitForChatPreview(bob.page, latestOtherChatMessage);
     await waitForChatPreview(bob.page, secondMessage, secondMessage);
     await waitForChatUnreadBadge(bob.page, secondMessage);

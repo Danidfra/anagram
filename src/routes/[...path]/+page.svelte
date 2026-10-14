@@ -8,6 +8,7 @@
   import Shell from '#src/lib/components/Shell.svelte';
   import { applyThemeAccent, readThemeAccent, ACCENT_STORAGE_KEY } from '#src/utils/themeAccent.ts';
   import { notices } from '#src/lib/platform/ui.ts';
+  import { updateAppBadge } from '#src/lib/platform/appBadge.ts';
   import '#src/app.css';
   import '#src/lib/components/shell.css';
   let authenticated = false;
@@ -31,6 +32,7 @@
     }
     authenticated =
       Boolean(localStorage.getItem('npub')) && !localStorage.getItem('anagram-onboarding-pending');
+    if (!authenticated) void updateAppBadge(0);
     ready = true;
     return () => window.removeEventListener('storage', syncAccent);
   });
