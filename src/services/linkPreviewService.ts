@@ -1,4 +1,9 @@
-import { parseLinkPreview, previewUrl, type LinkPreview } from '#src/utils/linkPreview.ts';
+import {
+  parseLinkPreview,
+  parseOEmbedPreview,
+  previewUrl,
+  type LinkPreview,
+} from '#src/utils/linkPreview.ts';
 
 const cache = new Map<string, { expires: number; result: Promise<LinkPreview | null> }>();
 const requests = new Set<AbortController>();
@@ -33,12 +38,10 @@ async function boundedText(response: Response, html = false): Promise<string> {
 // Keep preview traffic in the browser/webview; never turn this into a server fetcher.
 async function previewRequest<T>(
   request: (options: RequestInit) => Promise<T | null>,
-  signal?: AbortSignal,
 ): Promise<T | null> {
-  if (typeof window === 'undefined' || signal?.aborted || queue.length >= 30) return null;
+  if (typeof window === 'undefined' || queue.length >= 30) return null;
   const controller = new AbortController();
   const abort = () => controller.abort();
-  signal?.addEventListener('abort', abort, { once: true });
   requests.add(controller);
   if (active >= 3) await new Promise<void>((resolve) => queue.push(resolve));
   else active++;
@@ -57,7 +60,6 @@ async function previewRequest<T>(
     return null;
   } finally {
     clearTimeout(timer);
-    signal?.removeEventListener('abort', abort);
     requests.delete(controller);
     const next = queue.shift();
     if (next) next();
@@ -67,6 +69,44 @@ async function previewRequest<T>(
 async function fetchPreview(url: string): Promise<LinkPreview | null> {
   return previewRequest(async (options) => {
     const parsed = new URL(url);
+    // Use provider-owned CORS endpoints; strip tracking parameters from their target URLs.
+    const youtube = [
+      'youtube.com',
+      'www.youtube.com',
+      'm.youtube.com',
+      'music.youtube.com',
+    ].includes(parsed.hostname);
+    const videoId =
+      parsed.hostname === 'youtu.be'
+        ? parsed.pathname.slice(1)
+        : youtube
+          ? parsed.pathname === '/watch'
+            ? parsed.searchParams.get('v')
+            : parsed.pathname.match(/^\/(?:shorts|live|embed)\/([^/]+)\/?$/)?.[1]
+          : null;
+    const post = [
+      'x.com',
+      'www.x.com',
+      'twitter.com',
+      'www.twitter.com',
+      'mobile.twitter.com',
+    ].includes(parsed.hostname)
+      ? parsed.pathname.match(/^\/([\w]+)\/status\/(\d+)(?:\/|$)/)
+      : null;
+    const endpoint =
+      videoId && /^[\w-]{11}$/.test(videoId)
+        ? `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`
+        : post
+          ? `https://publish.x.com/oembed?omit_script=true&dnt=true&url=${encodeURIComponent(`https://x.com/${post[1]}/status/${post[2]}`)}`
+          : '';
+    if (endpoint) {
+      const response = await fetch(endpoint, options);
+      if (!response.ok) {
+        await response.body?.cancel();
+        return null;
+      }
+      return parseOEmbedPreview(JSON.parse(await boundedText(response)), post ? 'X' : 'YouTube');
+    }
     // GitHub's page HTML is not CORS-readable, but its public repository API is.
     const repo =
       parsed.hostname === 'github.com' && parsed.pathname.match(/^\/([\w.-]+)\/([\w.-]+)(?:\/|$)/);
@@ -85,8 +125,6 @@ async function fetchPreview(url: string): Promise<LinkPreview | null> {
         title: `${data.full_name.slice(0, 150)}${location}`,
         description: typeof data.description === 'string' ? data.description.slice(0, 360) : '',
         site: 'GitHub',
-        image:
-          typeof data.owner?.avatar_url === 'string' ? previewUrl(data.owner.avatar_url) || '' : '',
       };
     }
     const response = await fetch(url, options);
@@ -101,35 +139,6 @@ async function fetchPreview(url: string): Promise<LinkPreview | null> {
   });
 }
 
-/** Use the same request policy for thumbnails; a direct img URL would follow redirects. */
-export function loadPreviewImage(value: string, signal?: AbortSignal): Promise<Blob | null> {
-  const url = previewUrl(value);
-  if (!url) return Promise.resolve(null);
-  return previewRequest(async (options) => {
-    const response = await fetch(url, options);
-    const type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!response.ok || !/^image\/(?:png|jpeg|gif|webp|avif|svg\+xml)$/.test(type)) {
-      await response.body?.cancel();
-      return null;
-    }
-    if (!response.body) return null;
-    const reader = response.body.getReader();
-    const chunks: ArrayBuffer[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > 2 * 1024 * 1024) return null;
-        chunks.push(new Uint8Array(value).buffer);
-      }
-      return size ? new Blob(chunks, { type }) : null;
-    } finally {
-      await reader.cancel().catch(() => {});
-    }
-  }, signal);
-}
 export function loadLinkPreview(value: string): Promise<LinkPreview | null> {
   const url = previewUrl(value);
   if (!url || typeof window === 'undefined') return Promise.resolve(null);

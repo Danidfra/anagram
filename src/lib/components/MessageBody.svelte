@@ -35,6 +35,7 @@
     bubbleLayout?: boolean;
     // Public rooms supply their owner-authorized media policy and sanitized formatting.
     allowMedia?: boolean;
+    allowLinkPreviews?: boolean;
     formattedParts?: FormattedMessagePart[] | undefined;
     oncontact: (pubkey: string) => void;
     onroom: (link: string) => void;
@@ -47,6 +48,7 @@
     message,
     bubbleLayout = false,
     allowMedia = false,
+    allowLinkPreviews = false,
     formattedParts = undefined,
     oncontact,
     onroom,
@@ -129,16 +131,20 @@
   );
   let parts = $derived(expanded ? content : collapseFormattedMessage(content));
   let previewLinks = $derived(
-    [...messageFormatUrls(parts).visible]
-      .filter(
-        (href) =>
-          !parseRoomLink(href) &&
-          !publicGroupLinkTarget(href) &&
-          previewUrl(href) &&
-          !attachments.some((attachment) => attachment.url === href) &&
-          !/\.(?:png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|pdf)(?:[?#]|$)/i.test(href),
-      )
-      .slice(0, 2),
+    !allowLinkPreviews
+      ? []
+      : [...messageFormatUrls(parts).visible]
+          .filter(
+            (href) =>
+              !parseRoomLink(href) &&
+              !publicGroupLinkTarget(href) &&
+              previewUrl(href) &&
+              !attachments.some((attachment) => attachment.url === href) &&
+              !/\.(?:png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|pdf)(?:[?#]|$)/i.test(
+                href,
+              ),
+          )
+          .slice(0, 2),
   );
 </script>
 

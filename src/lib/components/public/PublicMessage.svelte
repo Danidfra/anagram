@@ -89,6 +89,7 @@
   {message}
   formattedParts={parts}
   allowMedia={trusted}
+  allowLinkPreviews={trusted}
   {bubbleLayout}
   {oncontact}
   onroom={(url) => {

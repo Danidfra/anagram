@@ -77,6 +77,7 @@
     ALREADY_LOGGED_IN_BUNKER_MESSAGE,
   } from '#src/utils/bunkerLoginQuery.ts';
   import { Notify } from '#src/lib/platform/ui.ts';
+  import { updateAppBadge } from '#src/lib/platform/appBadge.ts';
   import { RecordedMessageDeliveryError } from '#src/utils/messageRelayStatus.ts';
   import { parseRoomLink } from '#src/utils/callRoom.ts';
   import type { Chat, Message, MessageReplyPreview } from '#src/types/chat.ts';
@@ -953,6 +954,9 @@
     return chatDate(value, $locale);
   }
   onMount(() => {
+    const stopBadge = toStore(() => chats.unreadMessageCount).subscribe((count) => {
+      void updateAppBadge(count);
+    });
     if (readTopLevelBunkerLoginQueryParam()) {
       removeTopLevelBunkerLoginQueryParam();
       Notify.create({ message: ALREADY_LOGGED_IN_BUNKER_MESSAGE });
@@ -1029,6 +1033,8 @@
       })
       .catch(fail);
     return () => {
+      stopBadge();
+      void updateAppBadge(0);
       window.removeEventListener(DESKTOP_MESSAGE_LAYOUT_CHANGED_EVENT, updateLayout);
       document.removeEventListener('visibilitychange', resumeAndroidNotifications);
       disposed = true;

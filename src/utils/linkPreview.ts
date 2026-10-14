@@ -2,7 +2,6 @@ export interface LinkPreview {
   title: string;
   description: string;
   site: string;
-  image: string;
 }
 
 // Reject explicit local addresses and secret-bearing URLs. Browser network policy
@@ -85,15 +84,30 @@ export function parseLinkPreview(html: string, source: string): LinkPreview | nu
       360,
     ),
     site: text(values.get('og:site_name') || new URL(url).hostname, 80),
-    image:
-      previewUrl(
-        decode(
-          values.get('og:image:secure_url') ||
-            values.get('og:image') ||
-            values.get('twitter:image') ||
-            '',
-        ),
-        url,
-      ) || '',
+  };
+}
+
+/** Extract provider metadata as text; never mount oEmbed's HTML, scripts or players. */
+export function parseOEmbedPreview(value: unknown, site: string): LinkPreview | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  const author = typeof data.author_name === 'string' ? text(data.author_name, 150) : '';
+  const title = typeof data.title === 'string' ? text(data.title, 200) : '';
+  if (!title && !(site === 'X' && author)) return null;
+  const html =
+    typeof data.html === 'string'
+      ? data.html
+          .slice(0, 262144)
+          .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+          .replace(/<script\b[^<>]{0,4096}>[\s\S]*?(?:<\/script\s*>|$)/gi, '')
+      : '';
+  const paragraph = site === 'X' ? /<p\b[^<>]{0,4096}>/i.exec(html) : null;
+  const post = paragraph
+    ? html.slice(paragraph.index + paragraph[0].length).match(/^([\s\S]*?)<\/p\s*>/i)?.[1]
+    : '';
+  return {
+    title: title || `${author} on X`,
+    description: post ? text(post.replace(/<[^<>]*>/g, ' '), 360) : author,
+    site,
   };
 }

@@ -1,10 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { parseLinkPreview, previewUrl } from '../../src/utils/linkPreview';
-import {
-  loadLinkPreview,
-  loadPreviewImage,
-  clearLinkPreviews,
-} from '../../src/services/linkPreviewService';
+import { parseLinkPreview, parseOEmbedPreview, previewUrl } from '../../src/utils/linkPreview';
+import { loadLinkPreview, clearLinkPreviews } from '../../src/services/linkPreviewService';
 
 beforeEach(() => vi.stubGlobal('window', {}));
 
@@ -13,7 +9,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('link previews', () => {
-  it('reads Open Graph metadata, entities and relative images without executing HTML', () => {
+  it('reads Open Graph text and entities while ignoring images and scripts', () => {
     const result = parseLinkPreview(
       `<head><script>"<meta property='og:title' content='Wrong'>"</script>
       <!-- <meta property="og:title" content="Comment"> -->
@@ -25,23 +21,21 @@ describe('link previews', () => {
     expect(result).toEqual({
       title: 'Anagram & friends',
       description: 'Public 🌐 "chat"',
-      image: 'https://example.org/cover.png',
       site: 'Example',
     });
   });
-  it('uses Twitter/title fallbacks and permits cards without thumbnails', () => {
+  it('uses Twitter/title fallbacks', () => {
     expect(parseLinkPreview('<title>Plain &lt;title&gt;</title>', 'https://example.org')).toEqual({
       title: 'Plain <title>',
       description: '',
-      image: '',
       site: 'example.org',
     });
     expect(
       parseLinkPreview(
         '<meta name="twitter:title" content="Social card"><meta name="twitter:image" content="javascript:alert(1)">',
         'https://example.org',
-      )?.image,
-    ).toBe('');
+      )?.title,
+    ).toBe('Social card');
     expect(parseLinkPreview('<p>No metadata</p>', 'https://example.org')).toBeNull();
   });
   it.each([
@@ -79,79 +73,14 @@ describe('link previews', () => {
     vi.stubGlobal('fetch', fetcher);
     expect(previewUrl(value)).toBeNull();
     expect(await loadLinkPreview(value)).toBeNull();
-    expect(await loadPreviewImage(value)).toBeNull();
     expect(fetcher).not.toHaveBeenCalled();
   });
-  it('never performs preview or thumbnail requests in a server environment', async () => {
+  it('never performs preview requests in a server environment', async () => {
     vi.stubGlobal('window', undefined);
     const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
     expect(await loadLinkPreview('https://example.org/server')).toBeNull();
-    expect(await loadPreviewImage('https://example.org/server.png')).toBeNull();
     expect(fetcher).not.toHaveBeenCalled();
-  });
-  it('loads bounded thumbnail blobs without redirects, credentials or referrers', async () => {
-    const fetcher = vi.fn().mockResolvedValue(
-      new Response('image bytes', {
-        headers: { 'content-type': 'image/png' },
-      }),
-    );
-    vi.stubGlobal('fetch', fetcher);
-    const blob = await loadPreviewImage('https://example.org/cover.png');
-    expect(blob?.type).toBe('image/png');
-    expect(await blob?.text()).toBe('image bytes');
-    expect(fetcher).toHaveBeenCalledWith(
-      'https://example.org/cover.png',
-      expect.objectContaining({
-        mode: 'cors',
-        credentials: 'omit',
-        referrerPolicy: 'no-referrer',
-        redirect: 'error',
-        cache: 'no-store',
-      }),
-    );
-    fetcher.mockResolvedValue(
-      new Response('<script>bad()</script>', { headers: { 'content-type': 'text/html' } }),
-    );
-    expect(await loadPreviewImage('https://example.org/fake.png')).toBeNull();
-    const cancel = vi.fn();
-    fetcher.mockResolvedValue(
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(new Uint8Array(2 * 1024 * 1024 + 1));
-          },
-          cancel,
-        }),
-        { headers: { 'content-type': 'image/png' } },
-      ),
-    );
-    expect(await loadPreviewImage('https://example.org/large.png')).toBeNull();
-    expect(cancel).toHaveBeenCalledOnce();
-  });
-  it('aborts thumbnail requests when their component is removed', async () => {
-    const aborted = vi.fn();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        (_url, options) =>
-          new Promise((_resolve, reject) => {
-            options.signal.addEventListener(
-              'abort',
-              () => {
-                aborted();
-                reject(new DOMException('Aborted', 'AbortError'));
-              },
-              { once: true },
-            );
-          }),
-      ),
-    );
-    const controller = new AbortController();
-    const pending = loadPreviewImage('https://example.org/slow.png', controller.signal);
-    controller.abort();
-    expect(await pending).toBeNull();
-    expect(aborted).toHaveBeenCalledOnce();
   });
   it('bounds malformed metadata and ignores unterminated script/comment contents', () => {
     const source = 'https://example.org';
@@ -264,8 +193,141 @@ describe('link previews', () => {
       title: 'lnbits/anagram at brutal',
       description: 'Nostr chat',
       site: 'GitHub',
-      image: 'https://avatars.githubusercontent.com/u/1',
     });
+  });
+  it.each([
+    'https://www.youtube.com/watch?v=jNQXAC9IVRw&t=10&si=tracking',
+    'https://youtu.be/jNQXAC9IVRw?si=tracking',
+    'https://m.youtube.com/watch?v=jNQXAC9IVRw',
+    'https://youtube.com/shorts/jNQXAC9IVRw',
+    'https://www.youtube.com/live/jNQXAC9IVRw',
+    'https://www.youtube.com/embed/jNQXAC9IVRw',
+  ])(
+    'loads video metadata through YouTube for %s without players or tracking parameters',
+    async (url) => {
+      const fetcher = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            title: 'Video title',
+            author_name: 'Channel',
+            thumbnail_url: 'https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg',
+            html: '<iframe src="https://youtube.com/embed/jNQXAC9IVRw"></iframe>',
+          }),
+        ),
+      );
+      vi.stubGlobal('fetch', fetcher);
+      expect(await loadLinkPreview(url)).toEqual({
+        title: 'Video title',
+        description: 'Channel',
+        site: 'YouTube',
+      });
+      expect(fetcher).toHaveBeenCalledOnce();
+      const endpoint = new URL(fetcher.mock.calls[0][0]);
+      expect(endpoint.origin + endpoint.pathname).toBe('https://www.youtube.com/oembed');
+      expect(endpoint.searchParams.get('url')).toBe('https://www.youtube.com/watch?v=jNQXAC9IVRw');
+      expect(fetcher.mock.calls[0][1]).toMatchObject({
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+        redirect: 'error',
+      });
+    },
+  );
+  it.each(['https://x.com/jack/status/20?s=20', 'https://twitter.com/jack/status/20/photo/1'])(
+    'loads only text metadata for an X post %s',
+    async (url) => {
+      const fetcher = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            author_name: 'jack',
+            html: '<blockquote><p>Hello &amp; welcome<br>to <a href="https://example.org">Nostr</a></p><script>bad()</script></blockquote>',
+          }),
+        ),
+      );
+      vi.stubGlobal('fetch', fetcher);
+      expect(await loadLinkPreview(url)).toEqual({
+        title: 'jack on X',
+        description: 'Hello & welcome to Nostr',
+        site: 'X',
+      });
+      const endpoint = new URL(fetcher.mock.calls[0][0]);
+      expect(endpoint.origin + endpoint.pathname).toBe('https://publish.x.com/oembed');
+      expect(endpoint.searchParams.get('url')).toBe('https://x.com/jack/status/20');
+      expect(endpoint.searchParams.get('omit_script')).toBe('true');
+      expect(endpoint.searchParams.get('dnt')).toBe('true');
+    },
+  );
+  it('validates oEmbed metadata and ignores thumbnails and embed HTML', () => {
+    for (const value of [null, [], {}, { title: 12 }, { html: '<iframe></iframe>' }])
+      expect(parseOEmbedPreview(value, 'YouTube')).toBeNull();
+    expect(
+      parseOEmbedPreview(
+        {
+          title: '<script>Text only</script>',
+          thumbnail_url: 'https://127.0.0.1/private',
+          html: '<img src="https://example.org/tracker">',
+        },
+        'YouTube',
+      ),
+    ).toEqual({ title: '<script>Text only</script>', description: '', site: 'YouTube' });
+    expect(
+      parseOEmbedPreview(
+        {
+          author_name: 'Name',
+          html: '<script><p>Hidden</p></script><!--<p>Hidden</p>--><p>&lt;img src=x onerror=alert(1)&gt;</p>',
+        },
+        'X',
+      )?.description,
+    ).toBe('<img src=x onerror=alert(1)>');
+  });
+  it('bounds malformed post HTML without repeatedly rescanning paragraphs or tags', () => {
+    expect(
+      parseOEmbedPreview({ author_name: 'Name', html: '<p>'.repeat(80000) }, 'X')?.description,
+    ).toBe('Name');
+    expect(
+      parseOEmbedPreview({ author_name: 'Name', html: '<p>' + '<'.repeat(250000) + '</p>' }, 'X')
+        ?.description,
+    ).toHaveLength(360);
+  });
+  it('does not send lookalike YouTube domains to a provider endpoint', async () => {
+    const fetcher = vi.fn().mockRejectedValue(new TypeError('CORS'));
+    vi.stubGlobal('fetch', fetcher);
+    await loadLinkPreview('https://youtube.com.example.org/watch?v=jNQXAC9IVRw');
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://youtube.com.example.org/watch?v=jNQXAC9IVRw',
+      expect.anything(),
+    );
+  });
+  it('shares repeated video requests and bounds a burst to three active fetches', async () => {
+    const fetcher = vi.fn(
+      (_url: string, options: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          options.signal!.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal('fetch', fetcher);
+    const repeated = Array.from({ length: 20 }, () =>
+      loadLinkPreview('https://youtu.be/jNQXAC9IVRw'),
+    );
+    expect(fetcher).toHaveBeenCalledOnce();
+    const burst = Array.from({ length: 40 }, (_, i) =>
+      loadLinkPreview(`https://youtu.be/${String(i).padStart(11, '0')}`),
+    );
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    clearLinkPreviews();
+    expect(await Promise.all([...repeated, ...burst])).toEqual(Array(60).fill(null));
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+  it('leaves unavailable videos as plain links and caches the failed lookup', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('Unavailable', { status: 404 }));
+    vi.stubGlobal('fetch', fetcher);
+    const url = 'https://youtu.be/jNQXAC9IVRw';
+    expect(await loadLinkPreview(url)).toBeNull();
+    expect(await loadLinkPreview(url)).toBeNull();
+    expect(fetcher).toHaveBeenCalledOnce();
   });
   it('silently falls back to the original link on fetch failure or oversized HTML', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('CORS')));

@@ -6,126 +6,71 @@ import {
   establishAcceptedDirectChat,
   sendMessage,
   threadMessage,
+  createGroup,
+  addGroupMemberAndPublish,
+  openRequests,
+  acceptFirstRequest,
+  navigateToChat,
 } from '../helpers';
 
-test('link cards display GitHub and Open Graph metadata, respect media trust, and fit mobile', async ({
-  browser,
-}, info) => {
-  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.previewAlice);
-  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.previewBob);
-  const github = 'https://github.com/lnbits/anagram/tree/brutal';
-  const article = 'https://preview.example.org/article';
-  let bobRequests = 0;
-  try {
-    for (const user of [alice, bob]) {
-      await user.page.route('https://api.github.com/repos/lnbits/anagram', (route) => {
-        if (user === bob) bobRequests++;
-        return route.fulfill({
-          json: {
-            private: false,
-            full_name: 'lnbits/anagram',
-            description: 'Private Nostr messaging',
-            owner: { avatar_url: 'https://preview.example.org/cover.svg' },
+for (const kind of ['DM', 'private group']) {
+  test(`${kind} never fetches link previews, including own and media-trusted messages`, async ({
+    browser,
+  }) => {
+    const alice = await bootstrapUser(browser, TEST_ACCOUNTS[`previewAlice-${kind}`]);
+    const bob = await bootstrapUser(browser, TEST_ACCOUNTS[`previewBob-${kind}`]);
+    const requests: string[] = [];
+    try {
+      for (const user of [alice, bob]) {
+        await user.page.route(
+          /^https:\/\/(?:api\.github\.com|github\.com|www\.youtube\.com|youtu\.be|publish\.x\.com|x\.com|preview\.example\.org)\//,
+          (route) => {
+            requests.push(route.request().url());
+            return route.fulfill({
+              contentType: 'text/html',
+              body: '<title>Must not fetch</title>',
+            });
           },
-        });
-      });
-      await user.page.route(article, (route) =>
-        route.fulfill({
-          contentType: 'text/html',
-          body: '<head><meta property="og:title" content="Open Graph title"><meta property="og:description" content="A useful article"><meta property="og:image" content="/cover.svg"></head>',
-        }),
-      );
-      await user.page.route('https://preview.example.org/cover.svg', (route) =>
-        route.fulfill({
-          contentType: 'image/svg+xml',
-          body: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="teal"/></svg>',
-        }),
-      );
-    }
-    await establishAcceptedDirectChat(alice, bob);
-    await sendMessage(alice.page, `Here is the branch ${github}`);
-    const sent = threadMessage(alice.page, 'Here is the branch');
-    const received = threadMessage(bob.page, 'Here is the branch');
-    await expect(sent.getByTestId('message-link-preview')).toContainText(
-      'lnbits/anagram at brutal',
-    );
-    await expect(sent.getByTestId('message-link-preview')).toHaveAttribute('href', github);
-    await expect(
-      received.getByRole('button', { name: 'Load link preview', exact: true }),
-    ).toBeVisible();
-    expect(bobRequests).toBe(0);
-    await received.getByRole('button', { name: 'Load link preview', exact: true }).click();
-    await expect(received.getByTestId('message-link-preview')).toContainText(
-      'Private Nostr messaging',
-    );
-    expect(bobRequests).toBe(1);
-    await sendMessage(alice.page, `Read this ${article}`);
-    const card = threadMessage(alice.page, 'Read this').getByTestId('message-link-preview');
-    await expect(card).toContainText('Open Graph title');
-    await expect(card.locator('img')).toHaveAttribute('src', /^blob:/);
-    await expect
-      .poll(() => card.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth))
-      .toBe(100);
-    for (const layout of ['bubbles', 'text']) {
-      await alice.page.evaluate((layout) => {
-        localStorage.setItem('ui-desktop-message-layout', layout);
-        window.dispatchEvent(
-          new CustomEvent('anagram:desktop-message-layout-changed', { detail: { layout } }),
         );
-      }, layout);
-      for (const width of [1280, 390]) {
-        await alice.page.setViewportSize({ width, height: 844 });
-        await expect(card).toBeVisible();
-        const bounds = await card.boundingBox();
-        expect(bounds!.x).toBeGreaterThanOrEqual(0);
-        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
-        await alice.page.screenshot({ path: info.outputPath(`preview-${layout}-${width}.png`) });
       }
+      await establishAcceptedDirectChat(alice, bob);
+      await bob.page.evaluate(async (key) => {
+        const { useTrustedMediaStore } = await import('/src/stores/trustedMediaStore.svelte.ts');
+        useTrustedMediaStore().trustImageSender(key);
+      }, alice.session.publicKey);
+      if (kind === 'private group') {
+        const group = await createGroup(alice.page, { name: 'Private links', about: '' });
+        await addGroupMemberAndPublish(alice.page, bob.session.publicKey);
+        await openRequests(bob.page, { publicKey: group });
+        await acceptFirstRequest(bob.page, { publicKey: group });
+        await navigateToChat(alice.page, group);
+        await navigateToChat(bob.page, group);
+      }
+      for (const text of [
+        'Private links one https://github.com/lnbits/anagram https://youtu.be/jNQXAC9IVRw',
+        'Private links two https://x.com/anagram/status/20 https://preview.example.org/article',
+      ]) {
+        await sendMessage(alice.page, text);
+        for (const user of [alice, bob]) {
+          const message = threadMessage(user.page, text);
+          await expect(message).toBeVisible();
+          await expect(message.getByTestId('message-url-link')).toHaveCount(2);
+          await expect(message.locator('.preview-container')).toHaveCount(0);
+          await expect(message.getByRole('button', { name: 'Load link preview' })).toHaveCount(0);
+        }
+      }
+      await bob.page.setViewportSize({ width: 390, height: 844 });
+      await bob.page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(threadMessage(bob.page, 'Private links two')).toBeVisible();
+      await expect(bob.page.locator('.preview-container')).toHaveCount(0);
+      expect(requests).toEqual([]);
+    } finally {
+      await disposeUsers(alice, bob);
     }
-    // Synthetic test-account secrets must never become preview HTTP requests,
-    // including percent-encoded raw keys. Nothing here uses a real account key.
-    const blockedRequests: string[] = [];
-    await alice.page.route('https://preview.example.org/secret/**', (route) => {
-      blockedRequests.push(route.request().url());
-      return route.fulfill({ contentType: 'text/html', body: '<title>Must not fetch</title>' });
-    });
-    const key = alice.account.privateKey;
-    const encodedKey = [...key].map((char) => `%${char.charCodeAt(0).toString(16)}`).join('');
-    await sendMessage(
-      alice.page,
-      `Secret URL fixture https://preview.example.org/secret/${key} https://preview.example.org/secret/${encodedKey}`,
-    );
-    await expect(
-      threadMessage(alice.page, 'Secret URL fixture').getByTestId('message-link-preview'),
-    ).toHaveCount(0);
-    await alice.page.route('https://preview.example.org/escaped', (route) =>
-      route.fulfill({
-        contentType: 'text/html',
-        body: '<meta property="og:title" content="&lt;img src=x onerror=alert(1)&gt;"><meta property="og:image" content="javascript:alert(1)">',
-      }),
-    );
-    await sendMessage(alice.page, 'Escaped metadata https://preview.example.org/escaped');
-    const escapedMessage = threadMessage(alice.page, 'Escaped metadata');
-    // Layout/viewport changes can leave the thread scrolled above this message.
-    // Link previews intentionally fetch only when their container enters view.
-    await escapedMessage.locator('.preview-container').scrollIntoViewIfNeeded();
-    const escaped = escapedMessage.getByTestId('message-link-preview');
-    await expect(escaped).toContainText('<img src=x onerror=alert(1)>');
-    await expect(escaped.locator('img, script')).toHaveCount(0);
-    expect(blockedRequests).toEqual([]);
-    await alice.page.route('https://preview.example.org/unavailable', (route) => route.abort());
-    await sendMessage(alice.page, 'Still clickable https://preview.example.org/unavailable');
-    await expect(
-      threadMessage(alice.page, 'Still clickable').getByTestId('message-url-link'),
-    ).toBeVisible();
-  } finally {
-    await disposeUsers(alice, bob);
-  }
-});
+  });
+}
 
-test('preview metadata and thumbnails reject private targets and never follow redirects', async ({
-  page,
-}) => {
+test('preview metadata rejects private targets and never follows redirects', async ({ page }) => {
   await page.goto('/');
   const privateRequests: string[] = [];
   await page.route(
@@ -149,22 +94,17 @@ test('preview metadata and thumbnails reject private targets and never follow re
     }),
   );
   const results = await page.evaluate(async () => {
-    const { loadLinkPreview, loadPreviewImage } =
-      await import('/src/services/linkPreviewService.ts');
+    const { loadLinkPreview } = await import('/src/services/linkPreviewService.ts');
     return {
       metadataRedirect: await loadLinkPreview('https://preview.example.org/redirect-page'),
-      imageRedirect: await loadPreviewImage('https://preview.example.org/redirect-image'),
       local: await loadLinkPreview('https://127.0.0.1/private'),
-      localImage: await loadPreviewImage('https://10.0.0.1/private.png'),
       metadata: await loadLinkPreview('https://preview.example.org/private-image'),
     };
   });
   expect(results).toMatchObject({
     metadataRedirect: null,
-    imageRedirect: null,
     local: null,
-    localImage: null,
-    metadata: { title: 'Safe text', image: '' },
+    metadata: { title: 'Safe text' },
   });
   expect(privateRequests).toEqual([]);
 });

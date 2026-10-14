@@ -6,7 +6,7 @@ Public groups use signed, unencrypted events on ordinary Nostr relays.
 
 - NIP-72 `kind:34550` defines the room: `d`, `name`, `description`, optional `image`, 1–8 `relay` tags and `["anagram-room", "1"]`.
 - Its address is `34550:<owner>:<d>`. NIP-19 `naddr` links carry this identity and relay hints.
-- Anagram's `trusted` and `blocked` tags define client-side policy. The owner is trusted; blocking wins. Untrusted posts display as text with web links removed and no media.
+- Anagram's `trusted` and `blocked` tags define client-side policy. The owner is trusted; blocking wins. Untrusted posts display as text with web links removed and no message media. Author names and profile pictures load for all displayed participants, independently of posting trust. Text-only web previews are enabled for trusted public posts; DMs and private groups never fetch web previews, regardless of media trust.
 
 ## Messages
 

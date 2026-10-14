@@ -511,8 +511,94 @@ test('uses cached author photos and shared media rendering for redirected Blosso
   );
   const untrusted = page.getByTestId('public-message').filter({ hasText: 'Stranger message' });
   await expect(untrusted).toBeVisible();
-  await expect(untrusted.locator('img')).toHaveCount(0);
-  expect(strangerRequests).toBe(0);
+  await expect(
+    untrusted.locator('img[src="https://avatars.example.org/stranger.png"]'),
+  ).toBeVisible();
+  expect(strangerRequests).toBe(1);
+});
+
+test('new public authors hydrate profiles without a DM or search and keep message media restricted', async ({
+  page,
+}) => {
+  await login(page);
+  const room = await create(page, 'New author profiles');
+  const key = generateSecretKey();
+  const author = getPublicKey(key);
+  const now = Math.floor(Date.now() / 1000);
+  const picture = 'https://profiles.test/new-public-author.png';
+  const updatedPicture = 'https://profiles.test/updated-public-author.png';
+  const image = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+    'base64',
+  );
+  await page.route('https://profiles.test/**', (route) =>
+    route.fulfill({ contentType: 'image/png', body: image }),
+  );
+  let attachmentRequests = 0;
+  await page.route('https://untrusted-media.test/**', (route) => {
+    attachmentRequests++;
+    return route.fulfill({ contentType: 'image/png', body: image });
+  });
+  const profile = (name: string, picture: string, created_at: number) =>
+    finalizeEvent(
+      {
+        kind: 0,
+        created_at,
+        tags: [],
+        content: JSON.stringify({ name, picture }),
+      },
+      key,
+    );
+  // Metadata exists on the relay, but this author has never been searched or cached.
+  await publish(profile('New public author', picture, now - 1));
+  await publish(
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: now,
+        tags: [
+          ['a', room.address],
+          ['imeta', 'url https://untrusted-media.test/attachment.png', 'm image/png'],
+        ],
+        content: 'First public post https://untrusted-media.test/attachment.png',
+      },
+      key,
+    ),
+  );
+  const message = page.getByTestId('public-message').filter({ hasText: 'First public post' });
+  const avatar = message.getByTestId('thread-author-profile-link').locator('img');
+  await expect(message).toBeVisible();
+  await expect(message.locator('.bubble-author-name, .message-author strong')).toHaveText(
+    'New public author',
+  );
+  await expect(avatar).toHaveAttribute('src', picture);
+  await expect(avatar).toBeVisible();
+  await expect(message).toContainText('[link removed]');
+  await expect(message.locator('a, video, iframe')).toHaveCount(0);
+  expect(attachmentRequests).toBe(0);
+  // A later signed update should repaint the mounted name and avatar.
+  await publish(profile('Updated public author', updatedPicture, now + 1));
+  await expect(message.locator('.bubble-author-name, .message-author strong')).toHaveText(
+    'Updated public author',
+  );
+  await expect(avatar).toHaveAttribute('src', updatedPicture);
+  // Profile hydration must not silently accept the author into private contacts.
+  expect(
+    await page.evaluate(async (author) => {
+      const { contactsService } = await import('/src/services/contactsService.ts');
+      return (
+        (await contactsService.getContactByPublicKey(author))?.meta.private_contact_list_member ===
+        true
+      );
+    }, author),
+  ).toBe(false);
+  await page.reload();
+  const restored = page.getByTestId('public-message').filter({ hasText: 'First public post' });
+  await expect(restored.getByTestId('thread-author-profile-link').locator('img')).toHaveAttribute(
+    'src',
+    updatedPicture,
+  );
+  expect(attachmentRequests).toBe(0);
 });
 
 test('public relay failures can retry the same message through the shared dialog', async ({
@@ -1792,4 +1878,88 @@ test('public status changes keep the thread and composer in place', async ({ pag
       await expect.poll(geometry).toEqual(before);
     }
   }
+});
+
+test('trusted public posts retain text-only previews without thumbnail requests', async ({
+  page,
+}) => {
+  await login(page);
+  const room = await create(page, 'Public text previews');
+  const requests: string[] = [];
+  let thumbnails = 0;
+  await page.route('https://preview.example.org/cover.png', (route) => {
+    thumbnails++;
+    return route.abort();
+  });
+  await page.route('https://api.github.com/repos/lnbits/anagram', (route) => {
+    requests.push(route.request().url());
+    return route.fulfill({
+      json: {
+        private: false,
+        full_name: 'lnbits/anagram',
+        description: 'Nostr messaging',
+        owner: { avatar_url: 'https://preview.example.org/cover.png' },
+      },
+    });
+  });
+  await page.route('https://www.youtube.com/oembed?*', (route) => {
+    requests.push(route.request().url());
+    return route.fulfill({
+      json: {
+        title: 'Video demo',
+        author_name: 'Channel',
+        thumbnail_url: 'https://preview.example.org/cover.png',
+      },
+    });
+  });
+  await page.route('https://publish.x.com/oembed?*', (route) => {
+    requests.push(route.request().url());
+    return route.fulfill({
+      json: { author_name: 'Anagram', html: '<p>Hello &amp; welcome</p><script>bad()</script>' },
+    });
+  });
+  await page.route('https://preview.example.org/article', (route) => {
+    requests.push(route.request().url());
+    return route.fulfill({
+      contentType: 'text/html',
+      body: '<title>Article title</title><meta property="og:image" content="/cover.png">',
+    });
+  });
+  for (const [url, title] of [
+    ['https://github.com/lnbits/anagram', 'lnbits/anagram'],
+    ['https://youtu.be/jNQXAC9IVRw', 'Video demo'],
+    ['https://x.com/anagram/status/20', 'Hello & welcome'],
+    ['https://preview.example.org/article', 'Article title'],
+  ]) {
+    await page.getByRole('textbox', { name: 'Public message', exact: true }).fill(url);
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    const message = page.getByTestId('public-message').filter({ hasText: url });
+    await expect(message.getByTestId('message-link-preview')).toContainText(title);
+    await expect(
+      message.getByTestId('message-link-preview').locator('img, iframe, script'),
+    ).toHaveCount(0);
+  }
+  expect(requests).toHaveLength(4);
+  expect(thumbnails).toBe(0);
+  const stranger = generateSecretKey();
+  await publish(
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['a', room.address]],
+        content: 'Untrusted link https://preview.example.org/untrusted',
+      },
+      stranger,
+    ),
+  );
+  const untrusted = page.getByTestId('public-message').filter({ hasText: 'Untrusted link' });
+  await expect(untrusted).toContainText('[link removed]');
+  await expect(untrusted.locator('.preview-container')).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const card = page.getByTestId('message-link-preview').last();
+  await card.scrollIntoViewIfNeeded();
+  const bounds = await card.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
 });

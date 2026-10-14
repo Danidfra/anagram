@@ -464,7 +464,6 @@
         {message}
         {author}
         highlighted={highlightedMessage === message.id}
-        allowAvatar={trusted || message.sender === 'me'}
         bubbleLayout={messageLayout === 'bubbles'}
         continuesSender={presentation.continuesSender}
         senderContinues={presentation.senderContinues}
@@ -483,7 +482,11 @@
       >
         {#snippet authorLabel()}{#if message.sender === 'me'}{$translate(
               'common.you',
-            )}{:else}<ProfileName publicKey={event.pubkey} fallback={author.name} />{/if}{/snippet}
+            )}{:else}<ProfileName
+              publicKey={event.pubkey}
+              fallback={author.name}
+              hydrate
+            />{/if}{/snippet}
         {#if message.meta.reply && !message.meta.deleted}<MessageReply
             reply={message.meta.reply}
             onclick={() => {

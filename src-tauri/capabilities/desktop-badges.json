@@ -1,0 +1,7 @@
+{
+  "identifier": "desktop-badges",
+  "description": "Main desktop window can update its unread badge",
+  "platforms": ["linux", "macOS", "windows"],
+  "windows": ["main"],
+  "permissions": ["core:window:allow-set-badge-count", "core:window:allow-set-overlay-icon"]
+}
