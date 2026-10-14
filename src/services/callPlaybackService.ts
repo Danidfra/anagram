@@ -21,8 +21,10 @@ export async function setCallSpeaker(element: HTMLMediaElement, deviceId: string
 }
 
 export function followCallLive(element: HTMLMediaElement | null) {
-  if (!element?.buffered.length) return;
-  const end = element.buffered.end(element.buffered.length - 1);
-  if (end - element.currentTime > 1.5)
-    element.currentTime = Math.max(element.buffered.start(0), end - 0.35);
+  if (!element?.buffered.length || element.seeking) return;
+  const latest = element.buffered.length - 1;
+  const end = element.buffered.end(latest);
+  // Recover from brief stalls while retaining the existing 350 ms playback cushion.
+  if (end - element.currentTime > 0.6)
+    element.currentTime = Math.max(element.buffered.start(latest), end - 0.35);
 }
