@@ -1258,29 +1258,50 @@ it('pages edited replacements whose originals were already removed by relays', a
   ).toContain('Older replacement');
 });
 
-it('pins only as owner, keeps the pin across profile edits, and loads an old pin without changing the message window', async () => {
+it('pins only as owner, keeps the pin across profile edits, and removes it on request', async () => {
   const key = generateSecretKey(),
     definition = room(key, 'pins');
   const address = `34550:${getPublicKey(key)}:pins`;
-  const notes = Array.from({ length: 80 }, (_, i) =>
+  const note = finalizeEvent(
+    { kind: 9, created_at: 100, tags: [['a', address]], content: 'Pinned message' },
+    key,
+  );
+  const f = setup([definition, note], key);
+  await f.runtime.open(encodeRoomLink(parsePublicRoom(definition)));
+  await vi.waitFor(() =>
+    expect(get(f.runtime.state).messages.some((message) => message.id === note.id)).toBe(true),
+  );
+  await f.runtime.pinMessage(note.id);
+  expect(get(f.runtime.state).room?.pinned).toBe(note.id);
+  await f.runtime.update({ about: 'Updated description' }, get(f.runtime.state).room!.event.id!);
+  expect(get(f.runtime.state).room?.pinned).toBe(note.id);
+  await f.runtime.pinMessage(null);
+  expect(get(f.runtime.state).room?.pinned).toBeUndefined();
+  const member = setup(f.events);
+  await member.runtime.open(encodeRoomLink(parsePublicRoom(definition)));
+  await expect(member.runtime.pinMessage(note.id)).rejects.toThrow(
+    'Only the current group owner',
+  );
+});
+
+it('loads a remotely pinned old message without changing the message window', async () => {
+  const key = generateSecretKey(),
+    definition = room(key, 'old-pin');
+  const group = parsePublicRoom(definition);
+  // One message beyond the 50-message page exercises the history boundary.
+  const notes = Array.from({ length: 51 }, (_, i) =>
     finalizeEvent(
-      { kind: 9, created_at: 100 + i, tags: [['a', address]], content: `Pinned history ${i}` },
+      { kind: 9, created_at: 100 + i, tags: [['a', group.address]], content: `Pinned history ${i}` },
       key,
     ),
   );
   const f = setup([definition, ...notes], key);
-  await f.runtime.open(encodeRoomLink(parsePublicRoom(definition)));
-  await vi.waitFor(() =>
-    expect(get(f.runtime.state).messages.some((message) => message.id === notes[79].id)).toBe(true),
-  );
-  await f.runtime.pinMessage(notes[79].id);
-  expect(get(f.runtime.state).room?.pinned).toBe(notes[79].id);
-  await f.runtime.update({ about: 'Updated description' }, get(f.runtime.state).room!.event.id!);
-  expect(get(f.runtime.state).room?.pinned).toBe(notes[79].id);
+  await f.runtime.open(encodeRoomLink(group));
+  await vi.waitFor(() => expect(get(f.runtime.state).messages).toHaveLength(50));
   // Simulate a signed remote profile pin to a message outside the bounded window.
   const latest = room(
     key,
-    'pins',
+    'old-pin',
     [['pinned', notes[0].id]],
     get(f.runtime.state).room!.event.created_at + 1,
   );
@@ -1291,13 +1312,6 @@ it('pins only as owner, keeps the pin across profile edits, and loads an old pin
   expect(window).not.toContain(notes[0].id);
   expect((await f.runtime.pinnedMessage())?.text).toBe('Pinned history 0');
   expect(get(f.runtime.state).messages.map((m) => m.id)).toEqual(window);
-  await f.runtime.pinMessage(null);
-  expect(get(f.runtime.state).room?.pinned).toBeUndefined();
-  const member = setup(f.events);
-  await member.runtime.open(encodeRoomLink(parsePublicRoom(latest)));
-  await expect(member.runtime.pinMessage(notes[0].id)).rejects.toThrow(
-    'Only the current group owner',
-  );
 });
 
 it('seeds the verified starter group offline, once per account, without opening its timeline', async () => {
