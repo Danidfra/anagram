@@ -1736,3 +1736,198 @@ it('does not let another author replace an owner-controlled pin through a claime
   const pin = await runtime.pinnedMessage();
   expect(pin).toBeNull();
 });
+
+it('absorbs a five-relay catch-up burst without disconnecting and preserves each receipt', async () => {
+  const key = generateSecretKey(),
+    definition = room(key, 'replica-burst');
+  const group = parsePublicRoom(definition);
+  const { runtime, listeners } = setup([definition], key);
+  await runtime.open(encodeRoomLink(group));
+  const live = [...listeners].find(
+    (l) =>
+      l.filters.some((f) => f.kinds?.includes(34550)) &&
+      l.filters.some((f) => f.kinds?.includes(9)),
+  )!;
+  const events = Array.from({ length: 75 }, (_, i) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 100 + i,
+        tags: [['a', group.address]],
+        content: `Burst ${i}`,
+      },
+      key,
+    ),
+  );
+  const writes = vi.spyOn(PublicGroupData.prototype, 'putMany');
+  for (let replica = 0; replica < 5; replica++)
+    for (const event of events)
+      live.options.onEvent?.(new ClientEvent(undefined, event), {
+        url: `wss://replica${replica}.example.org/`,
+      } as never);
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(75));
+  expect(get(runtime.state).stale).toBe(false);
+  expect(get(runtime.state).error).toBe('');
+  expect(listeners.has(live)).toBe(true);
+  expect(get(runtime.state).messages.every((event) => event.relay_statuses?.length === 5)).toBe(
+    true,
+  );
+  expect(writes.mock.calls.every(([, events]) => events.length <= 64)).toBe(true);
+  const reader = new PublicGroupData(getPublicKey(key));
+  await vi.waitFor(async () => expect(await reader.inboxPage(group.address)).toEqual([]));
+  // The idle worker must not poll IndexedDB continuously.
+  const pages = vi.spyOn(PublicGroupData.prototype, 'inboxPage');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(pages).not.toHaveBeenCalled();
+  await reader.close();
+});
+
+it('batches more than 256 actions during slow storage without dropping the connection', async () => {
+  const key = generateSecretKey(),
+    definition = room(key, 'action-burst');
+  const group = parsePublicRoom(definition);
+  const messages = [0, 1, 2].map((i) =>
+    finalizeEvent(
+      { kind: 9, created_at: 100 + i, tags: [['a', group.address]], content: `Target ${i}` },
+      key,
+    ),
+  );
+  const { runtime, listeners } = setup([definition, ...messages], key);
+  await runtime.open(encodeRoomLink(group));
+  await vi.waitFor(() =>
+    expect([...listeners].some((l) => l.filters.some((f) => f['#e']))).toBe(true),
+  );
+  const activity = [...listeners].find((l) => l.filters.some((f) => f['#e']))!;
+  const original = PublicGroupData.prototype.putActions;
+  const write = vi
+    .spyOn(PublicGroupData.prototype, 'putActions')
+    .mockImplementation(async function (...args) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return original.apply(this, args);
+    });
+  const reactions = Array.from({ length: 300 }, (_, i) =>
+    finalizeEvent(
+      {
+        kind: 7,
+        created_at: 200 + i,
+        tags: [
+          ['h', group.address],
+          ['e', messages[i % 3].id],
+        ],
+        content: '+',
+      },
+      key,
+    ),
+  );
+  for (const event of reactions) activity.options.onEvent?.(new ClientEvent(undefined, event));
+  await vi.waitFor(
+    () =>
+      expect(
+        get(runtime.state).messages.reduce((n, event) => n + (event.activity?.length ?? 0), 0),
+      ).toBe(300),
+    { timeout: 5000 },
+  );
+  expect(get(runtime.state).stale).toBe(false);
+  expect(get(runtime.state).error).toBe('');
+  expect(write.mock.calls.length).toBeLessThan(10);
+  expect(write.mock.calls.every(([, events]) => events.length <= 64)).toBe(true);
+}, 10000);
+
+it('replays an interrupted public inbox after restart without a relay replay or live scroll signal', async () => {
+  const key = generateSecretKey(),
+    definition = room(key, 'restart-inbox');
+  const group = parsePublicRoom(definition);
+  const first = setup([definition], key);
+  await first.runtime.open(encodeRoomLink(group));
+  const live = [...first.listeners].find((l) => l.filters.some((f) => f.kinds?.includes(9)))!;
+  const event = finalizeEvent(
+    { kind: 9, created_at: 100, tags: [['a', group.address]], content: 'Durable pending post' },
+    key,
+  );
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const original = PublicGroupData.prototype.putMany;
+  const write = vi
+    .spyOn(PublicGroupData.prototype, 'putMany')
+    .mockImplementationOnce(async function (...args) {
+      await blocked;
+      return original.apply(this, args);
+    });
+  live.options.onEvent?.(new ClientEvent(undefined, event));
+  await vi.waitFor(() => expect(write).toHaveBeenCalled());
+  const reader = new PublicGroupData(getPublicKey(key));
+  expect((await reader.inboxPage(group.address)).some((row) => row.event.id === event.id)).toBe(
+    true,
+  );
+  first.runtime.stop();
+  release();
+  write.mockRestore();
+  const scroll = vi.fn();
+  stops.push(onLiveThreadMessage(scroll));
+  const restarted = setup([], key);
+  await restarted.runtime.open(encodeRoomLink(group));
+  await vi.waitFor(() =>
+    expect(get(restarted.runtime.state).messages.map((event) => event.content)).toContain(
+      'Durable pending post',
+    ),
+  );
+  await vi.waitFor(async () => expect(await reader.inboxPage(group.address)).toEqual([]));
+  expect(scroll).not.toHaveBeenCalled();
+  await reader.close();
+});
+
+it.each(['group', 'account'])(
+  'keeps an interrupted batch out of a different %s and retains it for replay',
+  async (switching) => {
+    const key = generateSecretKey(),
+      definition = room(key, 'isolation-source');
+    const destination = room(key, 'isolation-destination');
+    const source = parsePublicRoom(definition),
+      target = parsePublicRoom(destination);
+    const { runtime, listeners, setAccount } = setup([definition, destination], key);
+    await runtime.open(encodeRoomLink(source));
+    const live = [...listeners].find((l) => l.filters.some((f) => f.kinds?.includes(9)))!;
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = PublicGroupData.prototype.putMany;
+    const write = vi
+      .spyOn(PublicGroupData.prototype, 'putMany')
+      .mockImplementationOnce(async function (...args) {
+        await paused;
+        return original.apply(this, args);
+      });
+    const event = finalizeEvent(
+      {
+        kind: 9,
+        created_at: 100,
+        tags: [['a', source.address]],
+        content: 'Only in original room and account',
+      },
+      key,
+    );
+    live.options.onEvent?.(new ClientEvent(undefined, event));
+    await vi.waitFor(() => expect(write).toHaveBeenCalled());
+    if (switching === 'account') setAccount(getPublicKey(generateSecretKey()));
+    await runtime.open(encodeRoomLink(switching === 'account' ? source : target));
+    release();
+    write.mockRestore();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(get(runtime.state).messages.some((message) => message.id === event.id)).toBe(false);
+    const originalAccount = new PublicGroupData(getPublicKey(key));
+    expect(
+      (await originalAccount.inboxPage(source.address)).some(
+        (record) => record.event.id === event.id,
+      ),
+    ).toBe(true);
+    if (switching === 'account') setAccount(getPublicKey(key));
+    await runtime.open(encodeRoomLink(source));
+    await vi.waitFor(() =>
+      expect(get(runtime.state).messages.some((message) => message.id === event.id)).toBe(true),
+    );
+    await originalAccount.close();
+  },
+);

@@ -180,3 +180,90 @@ it('upgrades the existing public cache without losing messages and isolates acti
   await db.close();
   await other.close();
 });
+
+it('journals bounded pages, merges replica receipts, and resumes after reopening', async () => {
+  const key = generateSecretKey(),
+    account = getPublicKey(key);
+  const db = new PublicGroupData(account);
+  const events = Array.from({ length: 300 }, (_, i) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: i + 1,
+        tags: [['a', 'room']],
+        content: `pending ${i}`,
+      },
+      key,
+    ),
+  );
+  const receipt = (relay_url: string) => ({
+    relay_url,
+    direction: 'inbound' as const,
+    scope: 'subscription' as const,
+    status: 'received' as const,
+    updated_at: '2026-10-14T12:00:00Z',
+  });
+  await Promise.all(
+    events.flatMap((event) =>
+      ['wss://one.example/', 'wss://two.example/'].map((url) =>
+        db.enqueue('room', { ...event, relay_statuses: [receipt(url)] }, true),
+      ),
+    ),
+  );
+  const first = await db.inboxPage('room');
+  expect(first).toHaveLength(64);
+  expect(first[0].event.id).toBe(events[0].id);
+  expect(first[0].event.relay_statuses).toHaveLength(2);
+  // A new receipt during processing must not be deleted by an older completion.
+  await db.enqueue(
+    'room',
+    { ...events[0], relay_statuses: [receipt('wss://three.example/')] },
+    false,
+  );
+  await db.completeInbox(first);
+  await db.close();
+  const reopened = new PublicGroupData(account);
+  const other = new PublicGroupData(getPublicKey(generateSecretKey()));
+  expect(await other.inboxPage('room')).toEqual([]);
+  expect(await reopened.inboxPage('other-room')).toEqual([]);
+  const pending = await reopened.inboxPage('room');
+  expect(pending[0].event.relay_statuses).toHaveLength(3);
+  expect(pending[0].timeline).toBe(true);
+  let drained = 0;
+  for (let batch = pending; batch.length; batch = await reopened.inboxPage('room')) {
+    expect(batch.length).toBeLessThanOrEqual(64);
+    drained += batch.length;
+    await reopened.completeInbox(batch);
+  }
+  expect(drained).toBe(237);
+  await reopened.close();
+  await other.close();
+});
+
+it('upgrades version 3 without rebuilding or losing stored public messages', async () => {
+  const key = generateSecretKey(),
+    account = getPublicKey(key);
+  const event = finalizeEvent(
+    { kind: 9, created_at: 1, tags: [], content: 'Saved before upgrade' },
+    key,
+  );
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open(`anagram-public-groups-${account}`, 3);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore('rooms', { keyPath: 'address' });
+      const messages = request.result.createObjectStore('messages', { keyPath: ['room', 'id'] });
+      messages.createIndex('timeline', ['room', 'created_at', 'id']);
+      messages.put({ ...event, room: 'room' });
+    };
+    request.onsuccess = () => {
+      request.result.close();
+      resolve();
+    };
+    request.onerror = () => reject(request.error);
+  });
+  const db = new PublicGroupData(account);
+  expect((await db.page('room'))[0].id).toBe(event.id);
+  await db.enqueue('room', event, true);
+  expect(await db.inboxPage('room')).toHaveLength(1);
+  await db.close();
+});

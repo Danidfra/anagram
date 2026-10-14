@@ -8,6 +8,13 @@ export type PublicGroupMessage = NostrEvent & {
   activity?: PublicGroupMessage[];
   replyEvent?: PublicGroupMessage;
 };
+export interface PublicInboxRecord {
+  sequence: number;
+  revision: number;
+  room: string;
+  event: PublicGroupMessage;
+  timeline: boolean;
+}
 export interface SavedPublicRoom {
   address: string;
   room: PublicRoom;
@@ -20,8 +27,16 @@ export class PublicGroupData {
   constructor(account: string) {
     if (!/^[a-f0-9]{64}$/.test(account)) throw new Error('Public groups require an account.');
     this.db = new Promise((resolve, reject) => {
-      const req = indexedDB.open(`anagram-public-groups-${account}`, 3);
+      const req = indexedDB.open(`anagram-public-groups-${account}`, 4);
       req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains('inbox')) {
+          const inbox = req.result.createObjectStore('inbox', {
+            keyPath: 'sequence',
+            autoIncrement: true,
+          });
+          inbox.createIndex('identity', ['room', 'event.id'], { unique: true });
+          inbox.createIndex('room', ['room', 'sequence']);
+        }
         if (!req.result.objectStoreNames.contains('rooms')) {
           req.result.createObjectStore('rooms', { keyPath: 'address' });
           const messages = req.result.createObjectStore('messages', { keyPath: ['room', 'id'] });
@@ -59,6 +74,7 @@ export class PublicGroupData {
     });
   }
   async close() {
+    await this.writesDone;
     (await this.db).close();
   }
   private async transaction<T>(
@@ -75,6 +91,107 @@ export class PublicGroupData {
       run(tx.objectStore(store), (v) => {
         value = v;
       });
+    });
+  }
+  private writes = new Map<
+    string,
+    {
+      room: string;
+      event: PublicGroupMessage;
+      timeline: boolean;
+      resolve: () => void;
+      reject: (error: unknown) => void;
+      promise: Promise<void>;
+    }
+  >();
+  private writing = false;
+  private writesDone: Promise<void> = Promise.resolve();
+  /** Coalesce replica receipts before bounded journal writes, independently of hydration. */
+  enqueue(room: string, event: PublicGroupMessage, timeline: boolean): Promise<void> {
+    const key = JSON.stringify([room, event.id]);
+    const previous = this.writes.get(key);
+    if (previous) {
+      previous.event = {
+        ...event,
+        relay_statuses: mergeMessageRelayStatuses(
+          previous.event.relay_statuses ?? [],
+          event.relay_statuses ?? [],
+        ).slice(-32),
+      };
+      previous.timeline ||= timeline;
+      return previous.promise;
+    }
+    let resolve!: () => void, reject!: (error: unknown) => void;
+    const promise = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    this.writes.set(key, { room, event, timeline, resolve, reject, promise });
+    if (!this.writing) {
+      this.writing = true;
+      this.writesDone = this.flushInbox();
+    }
+    return promise;
+  }
+  private async flushInbox() {
+    // Coalesce a synchronous relay burst before taking the first write batch.
+    await Promise.resolve();
+    try {
+      while (this.writes.size) {
+        const batch = [];
+        for (const entry of this.writes) {
+          batch.push(entry);
+          if (batch.length === 64) break;
+        }
+        for (const [key] of batch) this.writes.delete(key);
+        try {
+          await this.transaction<void>('inbox', 'readwrite', (store) => {
+            for (const [, item] of batch) {
+              const request = store.index('identity').get([item.room, item.event.id!]);
+              request.onsuccess = () => {
+                const previous = request.result as PublicInboxRecord | undefined;
+                store.put({
+                  ...(previous ? { sequence: previous.sequence } : {}),
+                  revision: (previous?.revision ?? 0) + 1,
+                  room: item.room,
+                  timeline: item.timeline || previous?.timeline || false,
+                  event: {
+                    ...item.event,
+                    relay_statuses: mergeMessageRelayStatuses(
+                      previous?.event.relay_statuses ?? [],
+                      item.event.relay_statuses ?? [],
+                    ).slice(-32),
+                  },
+                });
+              };
+            }
+          });
+          for (const [, item] of batch) item.resolve();
+        } catch (error) {
+          for (const [, item] of batch) item.reject(error);
+        }
+      }
+    } finally {
+      this.writing = false;
+    }
+  }
+  inboxPage(room: string): Promise<PublicInboxRecord[]> {
+    return this.transaction('inbox', 'readonly', (store, done) => {
+      const request = store
+        .index('room')
+        .getAll(IDBKeyRange.bound([room, 0], [room, Number.MAX_SAFE_INTEGER]), 64);
+      request.onsuccess = () => done(request.result);
+    });
+  }
+  completeInbox(records: PublicInboxRecord[]): Promise<void> {
+    return this.transaction('inbox', 'readwrite', (store) => {
+      for (const record of records) {
+        const request = store.get(record.sequence);
+        request.onsuccess = () => {
+          // A receipt arriving during processing must survive this acknowledgement.
+          if (request.result?.revision === record.revision) store.delete(record.sequence);
+        };
+      }
     });
   }
   list(): Promise<SavedPublicRoom[]> {

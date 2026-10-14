@@ -24,3 +24,9 @@ The owner can add one `["pinned", "<kind:9 event ID>"]` tag to the signed room d
 - Transfers require the old owner's signed `successor` and the new owner's reciprocal `predecessor`. Historical messages keep their original addresses and authors.
 
 Trust, blocking and transfer tags are tags used by anagram specifically. NIP-72 approval moderation and NIP-29 are not used. Anyone can read public events; client-side blocking cannot prevent publication through other clients.
+
+## Incoming event recovery
+
+Verified public events are journaled in the account's public-group IndexedDB before processing. Duplicate deliveries merge relay receipts, and messages and actions drain in batches of at most 64 with a yield between batches. Entries are acknowledged only after processing succeeds; a receipt arriving during processing remains pending. Reopening a room resumes its unfinished inbox without requiring the relay to resend those events. Replay does not generate live-message scroll signals.
+
+The journal is independent of history pagination: opening a room still requests a bounded recent page, and older messages load on demand. Background connection/storage failures are indicated in the existing header rather than overlays over the thread. Disk failures still require recovery or a refresh; a committed inbox does not protect against clearing browser storage.

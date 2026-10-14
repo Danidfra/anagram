@@ -1,3 +1,4 @@
+import { yieldToMainThread } from '#src/utils/backgroundTasks.ts';
 import { buildMessageEditTag } from '#src/utils/messageEdits.ts';
 import { notifyLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 import {
@@ -529,7 +530,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     }
   }
   function append(events: PublicGroupMessage[], older = false, liveIds?: Set<string>) {
-    const previousIds = liveIds?.size ? new Set(get(state).messages.map((event) => event.id)) : null;
+    const previousIds = liveIds?.size
+      ? new Set(get(state).messages.map((event) => event.id))
+      : null;
     state.update((s) => {
       const all = publicMessageRoots([...s.messages, ...events]).sort(
         (a, b) => a.created_at - b.created_at || a.id!.localeCompare(b.id!),
@@ -747,12 +750,53 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     stopLive();
     liveKey = key;
     const revision = liveRevision;
-    const active = () => revision === liveRevision && token === view && owner === deps.account();
+    const active = () =>
+      revision === liveRevision && token === view && owner === deps.account() && data === db;
     let draining = false;
+    let failed = false;
+    let arrivals = 0;
+    const liveIds = new Set<string>();
+    function scheduleDrain() {
+      if (!active() || failed || draining || liveTimer !== undefined) return;
+      liveTimer = setTimeout(() => {
+        liveTimer = undefined;
+        void drain();
+      }, 0);
+    }
+    function storageFailed() {
+      if (!active()) return;
+      failed = true;
+      state.update((s) => ({ ...s, error: 'Could not save public messages. Refresh to retry.' }));
+    }
+    function enqueue(event: ClientEvent, address: string, timeline: boolean, relay?: string) {
+      if (!active()) return;
+      const message = receivedMessage(event, relay);
+      // Journal only bounded, verified public events; private envelopes never enter this store.
+      if (message.kind === 34550) {
+        try {
+          parsePublicRoom(message, address);
+        } catch {
+          return;
+        }
+      } else if (
+        !(timeline && validRoomMessage(message, address)) &&
+        !validPublicAction(message, address)
+      )
+        return;
+      if (timeline && message.kind === 9) {
+        received++;
+        if (ready && !editTarget(message)) {
+          liveIds.add(message.id!);
+          if (liveIds.size > ROOM_WINDOW) liveIds.delete(liveIds.values().next().value!);
+        }
+      }
+      void db.enqueue(address, message, timeline).then(() => {
+        arrivals++;
+        scheduleDrain();
+      }, storageFailed);
+    }
     let received = 0;
     let ready = false;
-    const pending: PublicGroupMessage[] = [];
-    const liveMessages = new WeakSet<PublicGroupMessage>();
     live = deps.client.subscribe(
       [
         { kinds: [9], '#a': [room.address], limit: ROOM_PAGE },
@@ -762,27 +806,8 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       {
         relayUrls: urls,
         includeRelayDuplicates: true,
-        onEvent: (event, relay) => {
-          if (!active()) return;
-          if (pending.length >= 256) {
-            stopLive();
-            state.update((s) => ({
-              ...s,
-              stale: true,
-              error: 'Public group traffic exceeded the local queue. Refresh to catch up.',
-            }));
-            return;
-          }
-          if (event.kind === 9) received++;
-          const message = receivedMessage(event, relay?.url ?? event.relay?.url);
-          if (ready && event.kind === 9 && !editTarget(message)) liveMessages.add(message);
-          pending.push(message);
-          if (!draining && liveTimer === undefined)
-            liveTimer = setTimeout(() => {
-              liveTimer = undefined;
-              void drain();
-            }, 0);
-        },
+        onEvent: (event, relay) =>
+          enqueue(event, room.address, true, relay?.url ?? event.relay?.url),
         onEose: () => {
           ready = true;
           if (active() && !get(state).messages.length && received === 0)
@@ -801,8 +826,6 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     let activitySub: NostrSubscription | undefined;
     let activityKey = '',
       activityTimer: ReturnType<typeof setTimeout> | undefined;
-    let activityQueue = Promise.resolve(),
-      queued = 0;
     const unwatch = state.subscribe((snapshot) => {
       const address = snapshot.history || snapshot.room?.address;
       if (!address) return;
@@ -832,35 +855,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
               ...(snapshot.ancestors.find((prior) => prior.address === address)?.relays ?? []),
             ]),
           ],
-          onEvent: (event, relay) => {
-            if (!active() || !validPublicAction(event.rawEvent(), address)) return;
-            if (queued >= 256) {
-              stopLive();
-              state.update((s) => ({
-                ...s,
-                stale: true,
-                error: 'Public group traffic exceeded the local queue. Refresh to catch up.',
-              }));
-              return;
-            }
-            queued++;
-            activityQueue = activityQueue
-              .then(async () => {
-                if (!active()) return;
-                await cacheEvents(address, [receivedMessage(event, relay?.url)], db);
-                if (active()) await refreshVisible(address, db, token);
-              })
-              .catch(() => {
-                if (active())
-                  state.update((s) => ({
-                    ...s,
-                    error: 'Could not save message actions. Refresh to retry.',
-                  }));
-              })
-              .finally(() => {
-                queued--;
-              });
-          },
+          onEvent: (event, relay) => enqueue(event, address, false, relay?.url),
         });
       }, 50);
     });
@@ -869,64 +864,95 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       clearTimeout(activityTimer);
       activitySub?.stop();
     };
+    // Replay unfinished durable work even when relays have no events to resend.
+    scheduleDrain();
     async function drain() {
-      if (draining) return;
+      if (draining || failed || !active()) return;
       draining = true;
       try {
-        while (pending.length && active()) {
-          const event = pending.shift()!;
-          const current = get(state).room!;
-          if (event.kind === 34550) {
-            let next: PublicRoom;
-            try {
-              next = parsePublicRoom(event, current.address);
-            } catch {
-              continue;
-            }
-            if (!newerRoom(next, current)) continue;
-            if (next.successor) {
-              void open(requested);
-              return;
-            }
-            state.update((s) => ({ ...s, room: next }));
-            await saveRoom(next, true, undefined, owner);
+        while (active()) {
+          const observedArrivals = arrivals;
+          const snapshot = get(state);
+          const addresses = [
+            ...new Set([room.address, ...snapshot.ancestors.map((prior) => prior.address)]),
+          ];
+          let records: Awaited<ReturnType<PublicGroupData['inboxPage']>> = [];
+          for (const address of addresses) {
+            records = await db.inboxPage(address);
             if (!active()) return;
-
-            if (JSON.stringify(next.relays) !== JSON.stringify(current.relays)) {
-              void open(requested);
-              return;
-            }
-          } else {
-            const batch = [event];
-            // Do not move messages across an owner policy update.
-            while (batch.length < 64 && pending[0]?.kind === 9) batch.push(pending.shift()!);
-            const saved = await cacheTimelineEvents(current.address, batch, urls, db, active);
-            if (active() && !get(state).history && !get(state).hasNewer) {
-              const hydrated = await hydrate(current.address, saved, db);
-              if (active() && !get(state).history && !get(state).hasNewer)
-                append(
-                  hydrated,
-                  false,
-                  new Set(
-                    batch.filter((event) => liveMessages.has(event)).map((event) => event.id!),
-                  ),
-                );
-            }
-            if (active() && batch.some((event) => event.kind !== 9 || editTarget(event)))
-              await refreshVisible(current.address, db, token);
+            if (records.length) break;
           }
+          if (!records.length) {
+            if (arrivals !== observedArrivals) continue;
+            return;
+          }
+          const first = records[0];
+          if (first.event.kind === 34550) {
+            let next: PublicRoom | undefined;
+            try {
+              next = parsePublicRoom(first.event, first.room);
+            } catch {
+              /* Discard invalid stored data. */
+            }
+            const current = get(state).room;
+            if (next && current?.address === next.address && newerRoom(next, current)) {
+              next = await saveRoom(next, true, undefined, owner);
+              if (!active()) return;
+              state.update((s) => ({ ...s, room: next! }));
+              await db.completeInbox([first]);
+              if (!active()) return;
+              if (
+                next.successor ||
+                JSON.stringify(next.relays) !== JSON.stringify(current.relays)
+              ) {
+                void open(requested);
+                return;
+              }
+            } else await db.completeInbox([first]);
+          } else {
+            // Preserve policy arrival order while batching message/action storage and repaint.
+            const boundary = records.findIndex((record) => record.event.kind === 34550);
+            if (boundary >= 0) records = records.slice(0, boundary);
+            const timeline = records
+              .filter((record) => record.timeline)
+              .map((record) => record.event);
+            const actions = records
+              .filter((record) => !record.timeline)
+              .map((record) => record.event);
+            const saved = timeline.length
+              ? await cacheTimelineEvents(first.room, timeline, urls, db, active)
+              : [];
+            if (!active()) return;
+            if (actions.length) await cacheEvents(first.room, actions, db);
+            if (!active()) return;
+            const current = get(state);
+            if (
+              saved.length &&
+              first.room === current.room?.address &&
+              !current.history &&
+              !current.hasNewer
+            ) {
+              const hydrated = await hydrate(first.room, saved, db);
+              if (!active()) return;
+              if (!get(state).history && !get(state).hasNewer) append(hydrated, false, liveIds);
+            }
+            if (records.some(({ event }) => event.kind !== 9 || editTarget(event)))
+              await refreshVisible(first.room, db, token);
+            if (!active()) return;
+            // A crash before acknowledgement replays idempotently from the journal.
+            await db.completeInbox(records);
+            for (const record of records) liveIds.delete(record.event.id!);
+          }
+          await yieldToMainThread();
         }
       } catch {
-        if (active())
-          state.update((s) => ({
-            ...s,
-            error: 'Could not save public messages. Refresh to retry.',
-          }));
+        storageFailed();
       } finally {
         draining = false;
       }
     }
   }
+
   async function older() {
     const s = get(state);
     if (!s.room || s.loading) return;

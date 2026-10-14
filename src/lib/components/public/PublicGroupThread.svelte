@@ -368,7 +368,9 @@
     name={room.name}
     picture={room.picture}
     publicGroup
-    subtitle="Public group"
+    subtitle={!$state.refreshing && ($state.stale || $state.error)
+      ? 'Public group · Updates paused'
+      : 'Public group'}
     label="Public group settings"
     onopen={() => (details = true)}
     onback={() => goto('/chats')}
@@ -385,6 +387,7 @@
       <button
         class="icon-button"
         aria-label="Refresh public group"
+        title={$state.error || ($state.stale ? 'Refresh to reconnect' : 'Refresh public group')}
         onclick={() => runtime.open(link)}><Icon name="refresh" /></button
       >
     {/snippet}
@@ -516,12 +519,9 @@
   </ThreadTimeline>
   <div class="thread-feedback">
     <div class="thread-feedback-content">
-      {#if !$state.refreshing && $state.stale}<p class="status" role="status">
-          Offline · Showing saved messages.
-        </p>{/if}
       {#if notice}<p class="status" role="status">{notice}</p>{/if}
-      {#if error || $state.error}<p class="status error" role="alert">
-          {error || $state.error}
+      {#if error}<p class="status error" role="alert">
+          {error}
         </p>{/if}
     </div>
   </div>

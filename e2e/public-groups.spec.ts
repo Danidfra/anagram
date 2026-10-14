@@ -1872,9 +1872,17 @@ test('public status changes keep the thread and composer in place', async ({ pag
       await expect(
         page.getByText('Public: anyone can read these messages.', { exact: true }),
       ).toBeVisible();
-      if (status.error) await expect(page.getByRole('alert')).toHaveText(status.error);
-      if (status.stale)
-        await expect(page.getByText('Offline · Showing saved messages.')).toBeVisible();
+      await expect(page.getByRole('alert')).toHaveCount(0);
+      await expect(page.getByText('Offline · Showing saved messages.')).toHaveCount(0);
+      if (status.error)
+        await expect(page.getByRole('button', { name: 'Refresh public group' })).toHaveAttribute(
+          'title',
+          status.error,
+        );
+      if (status.stale || status.error)
+        await expect(
+          page.getByText('Public group · Updates paused', { exact: true }),
+        ).toBeVisible();
       await expect.poll(geometry).toEqual(before);
     }
   }
@@ -1962,4 +1970,114 @@ test('trusted public posts retain text-only previews without thumbnail requests'
   const bounds = await card.boundingBox();
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+});
+
+test('mobile public catch-up stays writable and replays its durable inbox after reload', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const owner = await login(page);
+  const room = await create(page, 'Mobile catch-up');
+  const input = page.getByLabel('Public message', { exact: true });
+  await expect(input).toBeEnabled();
+  // Make message processing slower than receipt, without slowing journal writes.
+  await page.evaluate(async () => {
+    const { PublicGroupData } = await import('/src/services/publicGroupData.ts');
+    const put = PublicGroupData.prototype.putMany;
+    PublicGroupData.prototype.putMany = async function (...args) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return put.apply(this, args);
+    };
+  });
+  const now = Math.floor(Date.now() / 1000);
+  const events = Array.from({ length: 300 }, (_, i) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: now - 300 + i,
+        tags: [['a', room.address]],
+        content: `Mobile burst ${i}`,
+      },
+      owner.key,
+    ),
+  );
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(relay);
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error('Burst publish timed out'));
+    }, 10000);
+    const pending = new Set(events.map((event) => event.id));
+    ws.on('open', () => {
+      for (const event of events) ws.send(JSON.stringify(['EVENT', event]));
+    });
+    ws.on('message', (data) => {
+      const message = JSON.parse(String(data));
+      if (message[0] !== 'OK' || !pending.has(message[1])) return;
+      if (!message[2]) {
+        clearTimeout(timer);
+        ws.close();
+        reject(new Error(message[3]));
+        return;
+      }
+      pending.delete(message[1]);
+      if (!pending.size) {
+        clearTimeout(timer);
+        ws.close();
+        resolve();
+      }
+    });
+  });
+  await input.fill('My draft stays usable during catch-up');
+  await expect(input).toHaveValue('My draft stays usable during catch-up');
+  await expect(
+    page.getByTestId('public-message').filter({ hasText: 'Mobile burst 299' }),
+  ).toBeVisible();
+  await expect(page.getByText('Public group · Updates paused', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(input).toBeEnabled();
+  // Verify the whole burst committed, not just the relay's last 50-event page.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        async ({ account, address }) => {
+          const { PublicGroupData } = await import('/src/services/publicGroupData.ts');
+          const db = new PublicGroupData(account);
+          try {
+            return (await db.page(address, undefined, 400)).filter((event) =>
+              event.content.startsWith('Mobile burst '),
+            ).length;
+          } finally {
+            await db.close();
+          }
+        },
+        { account: owner.pubkey, address: room.address },
+      ),
+    )
+    .toBe(300);
+  // This event exists only in the journal, not on the relay or in the rendered cache.
+  const pending = finalizeEvent(
+    {
+      kind: 9,
+      created_at: now + 1,
+      tags: [['a', room.address]],
+      content: 'Recovered after mobile reload',
+    },
+    owner.key,
+  );
+  await page.evaluate(
+    async ({ account, address, event }) => {
+      const { PublicGroupData } = await import('/src/services/publicGroupData.ts');
+      const db = new PublicGroupData(account);
+      await db.enqueue(address, event, true);
+      await db.close();
+    },
+    { account: owner.pubkey, address: room.address, event: pending },
+  );
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(
+    page.getByTestId('public-message').filter({ hasText: pending.content }),
+  ).toBeVisible();
+  await expect(input).toBeEnabled();
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
