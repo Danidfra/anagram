@@ -318,7 +318,8 @@ test('private images are encrypted before upload and decrypted by the recipient'
 
     // The event view never shows the decryption key or nonce.
     await aliceBubble.hover();
-    await aliceBubble.getByRole('button', { name: 'Message actions', exact: true }).click();
+    // Bubble padding opens the message menu without hitting the decrypted image.
+    await aliceBubble.locator('.message-content').click({ position: { x: 5, y: 5 } });
     await alice.page.getByRole('menuitem', { name: 'Nostr info', exact: true }).click();
     await alice.page.getByText('Event JSON', { exact: true }).click();
     const eventJson = JSON.parse(await alice.page.locator('.event-json').innerText()) as {
@@ -538,6 +539,11 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
     expect(backupAttempt?.origin).toBe(BACKUP_ORIGIN);
     expect(backupAttempt?.body.equals(movedAttempt!.body)).toBe(true);
     await expect(alice.page.getByTestId('message-encrypted-media')).toHaveCount(4);
+    // The bubble renders optimistically; the dialog closes only once the message is sent and
+    // the server has been saved.
+    await expect(alice.page.getByRole('dialog', { name: 'upload' })).toBeHidden({
+      timeout: 30_000,
+    });
     blossom.failingOrigins.delete(BLOSSOM_ORIGIN);
     await openMediaSettings(alice.page);
     await expect(alice.page.getByTestId('settings-private-media-server-input')).toHaveValue(
