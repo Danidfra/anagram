@@ -95,7 +95,8 @@ class AndroidSmokeNavigation(unittest.TestCase):
 
 
 class AndroidNotificationPrompt(unittest.TestCase):
-    def prompt(self, message='Allow Anagram to send you notifications?', package='com.google.android.permissioncontroller'):
+    @staticmethod
+    def prompt(message='Allow Anagram to send you notifications?', package='com.google.android.permissioncontroller'):
         root = ET.Element('hierarchy')
         ET.SubElement(root, 'node', {
             'package': package, 'text': message,
@@ -148,17 +149,41 @@ class AndroidNotificationPrompt(unittest.TestCase):
 class AndroidNotificationListener(unittest.TestCase):
     def test_waits_for_foreground_service_not_just_live_app(self):
         with patch.object(android, 'running'), \
+                patch.object(android, 'tree', return_value=screen()), \
                 patch.object(android, 'adb', side_effect=['(nothing)', 'isForeground=false', 'isForeground=true foregroundId=4101']), \
                 patch.object(android.time, 'sleep'):
             android.wait_notification_listener()
 
     def test_fails_when_listener_does_not_start(self):
         with patch.object(android, 'running'), \
+                patch.object(android, 'tree', return_value=screen()), \
                 patch.object(android, 'adb', return_value='isForeground=false'), \
                 patch.object(android.time, 'monotonic', side_effect=[0, 0, 31]), \
                 patch.object(android.time, 'sleep'):
             with self.assertRaisesRegex(RuntimeError, 'notification listener did not enter the foreground'):
                 android.wait_notification_listener()
+
+    def test_accepts_permission_that_arrives_after_home_then_waits_for_service(self):
+        with patch.object(android, 'running'), \
+                patch.object(android, 'tree', side_effect=[screen(), AndroidNotificationPrompt.prompt(), screen()]), \
+                patch.object(android, 'adb', side_effect=['(nothing)', '(nothing)', '', 'isForeground=false', 'isForeground=true']) as adb, \
+                patch.object(android.time, 'sleep'):
+            android.wait_notification_listener()
+        self.assertEqual(adb.call_args_list[2].args,
+                         ('shell', 'input', 'tap', '160', '351'))
+        self.assertEqual(sum(call.args[:3] == ('shell', 'dumpsys', 'activity')
+                             for call in adb.call_args_list), 4)
+
+    def test_permission_approval_does_not_pass_a_stopped_service(self):
+        with patch.object(android, 'running'), \
+                patch.object(android, 'tree', return_value=AndroidNotificationPrompt.prompt()), \
+                patch.object(android, 'adb', side_effect=['isForeground=false', '']) as adb, \
+                patch.object(android.time, 'monotonic', side_effect=[0, 0, 31]), \
+                patch.object(android.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'notification listener did not enter the foreground'):
+                android.wait_notification_listener()
+        self.assertEqual(adb.call_args_list[1].args,
+                         ('shell', 'input', 'tap', '160', '351'))
 
 
 if __name__ == '__main__':

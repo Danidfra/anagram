@@ -156,6 +156,10 @@ def wait_notification_listener(seconds=30):
                       f'{PACKAGE}/.RelayNotificationService')
         if 'isForeground=true' in service:
             return
+        # Session restoration can request permission after the chat screen is
+        # visible. Keep answering the app's notification prompt while waiting
+        # for the service; permission approval alone must not pass this check.
+        allow_notification_prompt(tree())
         time.sleep(0.5)
     raise RuntimeError('Android notification listener did not enter the foreground')
 
