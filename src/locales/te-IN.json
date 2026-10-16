@@ -725,6 +725,8 @@
   "call.phase.preparing": "కాల్ సిద్ధమవుతోంది…",
   "call.phase.outgoing": "రింగ్ అవుతోంది…",
   "call.phase.incoming": "ఇన్‌కమింగ్ కాల్",
+  "call.error.video": "వీడియో ఆగిపోయింది. ఆడియో ఇంకా కనెక్ట్ అయి ఉంది.",
+  "call.phase.reconnecting": "మళ్లీ కనెక్ట్ అవుతోంది…",
   "call.phase.connecting": "కనెక్ట్ అవుతోంది…",
   "call.ended.hangup": "కాల్ ముగిసింది",
   "call.ended.declined": "కాల్ తిరస్కరించబడింది",

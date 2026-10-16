@@ -725,6 +725,8 @@
   "call.phase.preparing": "Подготовка звонка…",
   "call.phase.outgoing": "Вызов…",
   "call.phase.incoming": "Входящий звонок",
+  "call.error.video": "Видео приостановлено. Аудиосвязь сохраняется.",
+  "call.phase.reconnecting": "Повторное подключение…",
   "call.phase.connecting": "Подключение…",
   "call.ended.hangup": "Звонок завершён",
   "call.ended.declined": "Звонок отклонён",

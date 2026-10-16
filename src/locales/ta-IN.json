@@ -725,6 +725,8 @@
   "call.phase.preparing": "அழைப்பு தயாராகிறது…",
   "call.phase.outgoing": "மணி ஒலிக்கிறது…",
   "call.phase.incoming": "வரும் அழைப்பு",
+  "call.error.video": "காணொளி இடைநிறுத்தப்பட்டது. ஒலி இணைப்பு தொடர்கிறது.",
+  "call.phase.reconnecting": "மீண்டும் இணைக்கிறது…",
   "call.phase.connecting": "இணைக்கிறது…",
   "call.ended.hangup": "அழைப்பு முடிந்தது",
   "call.ended.declined": "அழைப்பு நிராகரிக்கப்பட்டது",

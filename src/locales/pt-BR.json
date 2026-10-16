@@ -725,6 +725,8 @@
   "call.phase.preparing": "Preparando chamada…",
   "call.phase.outgoing": "Chamando…",
   "call.phase.incoming": "Chamada recebida",
+  "call.error.video": "Vídeo pausado. O áudio continua conectado.",
+  "call.phase.reconnecting": "Reconectando…",
   "call.phase.connecting": "Conectando…",
   "call.ended.hangup": "Chamada encerrada",
   "call.ended.declined": "Chamada recusada",

@@ -725,6 +725,8 @@
   "call.phase.preparing": "Call dey prepare…",
   "call.phase.outgoing": "E dey ring…",
   "call.phase.incoming": "Incoming call",
+  "call.error.video": "Video pause. Audio still dey connected.",
+  "call.phase.reconnecting": "Dey connect again…",
   "call.phase.connecting": "E dey connect…",
   "call.ended.hangup": "Call don end",
   "call.ended.declined": "Dem reject call",

@@ -175,12 +175,18 @@ export function createCallMediaReceiver(mimeType: string, onError: () => void): 
   };
 }
 
+export interface CallRecordingOptions {
+  videoBitsPerSecond?: number;
+  onCongestion?: () => void;
+  onSendError?: (cause: unknown) => void;
+}
+
 export function recordCallMedia(
   stream: MediaStream,
   mimeType: string,
   send: (bytes: Uint8Array) => Promise<void>,
   onError: () => void,
-  options?: { videoBitsPerSecond?: number },
+  options?: CallRecordingOptions,
 ): () => void {
   const recorder = new MediaRecorder(stream, {
     mimeType,
@@ -190,14 +196,42 @@ export function recordCallMedia(
   let stopped = false;
   let queuedBytes = 0;
   let queue = Promise.resolve();
-  recorder.onerror = onError;
+  let sequence = 0;
+  const queuedAt = new Map<number, number>();
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(watchdog);
+    queuedAt.clear();
+    recorder.ondataavailable = null;
+    recorder.onerror = null;
+    if (recorder.state !== 'inactive') recorder.stop();
+  };
+  const failed = (callback: () => void) => {
+    if (!stopped) {
+      stop();
+      callback();
+    }
+  };
+  // Byte limits protect memory; age limits protect conversation latency. Stop a
+  // whole video stream, never discard arbitrary chunks from continuous WebM.
+  const watchdog = options?.onCongestion
+    ? setInterval(() => {
+        const oldest = queuedAt.values().next().value;
+        if (oldest !== undefined && performance.now() - oldest > 1500)
+          failed(options.onCongestion!);
+      }, 250)
+    : undefined;
+  recorder.onerror = () => failed(onError);
   recorder.ondataavailable = (event) => {
     if (stopped || !event.data.size) return;
     queuedBytes += event.data.size;
     if (queuedBytes > 1_048_576 || event.data.size > 1_048_575) {
-      onError();
+      failed(options?.onCongestion ?? onError);
       return;
     }
+    const id = sequence++;
+    queuedAt.set(id, performance.now());
     queue = queue
       .then(async () => {
         if (stopped) return;
@@ -207,16 +241,17 @@ export function recordCallMedia(
         frame.set(data, 1);
         await send(frame);
         queuedBytes -= data.length;
+        queuedAt.delete(id);
       })
-      .catch(() => {
-        if (!stopped) onError();
-      });
+      .catch((cause) =>
+        failed(() => (options?.onSendError ? options.onSendError(cause) : onError())),
+      );
   };
-  recorder.start(100);
-  return () => {
-    stopped = true;
-    recorder.ondataavailable = null;
-    recorder.onerror = null;
-    if (recorder.state !== 'inactive') recorder.stop();
-  };
+  try {
+    recorder.start(100);
+  } catch (cause) {
+    stop();
+    throw cause;
+  }
+  return stop;
 }

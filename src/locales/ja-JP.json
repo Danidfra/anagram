@@ -725,6 +725,8 @@
   "call.phase.preparing": "通話を準備中…",
   "call.phase.outgoing": "呼び出し中…",
   "call.phase.incoming": "着信",
+  "call.error.video": "映像を一時停止しました。音声は接続されたままです。",
+  "call.phase.reconnecting": "再接続中…",
   "call.phase.connecting": "接続中…",
   "call.ended.hangup": "通話が終了しました",
   "call.ended.declined": "通話が拒否されました",

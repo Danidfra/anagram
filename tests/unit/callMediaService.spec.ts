@@ -218,3 +218,48 @@ describe('continuous media buffering', () => {
     expect(Recorder.current.state).toBe('inactive');
   });
 });
+
+it('stops a congested video recorder by queue age without dropping chunks or ending audio', async () => {
+  vi.useFakeTimers();
+  class Recorder {
+    static current: Recorder;
+    state = 'inactive';
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor() {
+      Recorder.current = this;
+    }
+    start() {
+      this.state = 'recording';
+    }
+    stop() {
+      this.state = 'inactive';
+    }
+  }
+  vi.stubGlobal('MediaRecorder', Recorder);
+  let now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const congestion = vi.fn(),
+    failure = vi.fn();
+  const send = vi.fn(() => new Promise<void>(() => {}));
+  const stop = recordCallMedia({} as MediaStream, 'video/webm;codecs=vp8', send, failure, {
+    onCongestion: congestion,
+  });
+  try {
+    Recorder.current.ondataavailable?.({
+      data: { size: 2, arrayBuffer: async () => new ArrayBuffer(2) } as Blob,
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(send).toHaveBeenCalledOnce();
+    now = 1600;
+    await vi.advanceTimersByTimeAsync(250);
+    expect(congestion).toHaveBeenCalledOnce();
+    expect(failure).not.toHaveBeenCalled();
+    expect(Recorder.current.state).toBe('inactive');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(congestion).toHaveBeenCalledOnce();
+  } finally {
+    stop();
+    vi.useRealTimers();
+  }
+});

@@ -6,7 +6,8 @@ on:
         type: string
         required: false
         default: ''
-  workflow_dispatch:
+  # Temporarily disabled; uncomment to restore manual iPhone builds.
+  # workflow_dispatch:
 permissions:
   contents: read
 jobs:

@@ -725,6 +725,8 @@
   "call.phase.preparing": "کال تیار ہو رہی ہے…",
   "call.phase.outgoing": "گھنٹی بج رہی ہے…",
   "call.phase.incoming": "آنے والی کال",
+  "call.error.video": "ویڈیو موقوف ہے۔ آڈیو اب بھی منسلک ہے۔",
+  "call.phase.reconnecting": "دوبارہ جڑ رہا ہے…",
   "call.phase.connecting": "جڑ رہا ہے…",
   "call.ended.hangup": "کال ختم ہوئی",
   "call.ended.declined": "کال مسترد ہوئی",

@@ -17,7 +17,7 @@ export const CALL_VIDEO_MIME_TYPE = 'video/webm;codecs=vp8';
 export function parseCallSignal(
   content: string,
   createdAt: number | undefined,
-  now = Date.now()
+  now = Date.now(),
 ): CallSignal | null {
   if (content.length > 4096 || !createdAt || !Number.isSafeInteger(createdAt)) return null;
   const age = now - createdAt * 1000;
@@ -31,9 +31,16 @@ export function parseCallSignal(
       value.protocol !== CALL_PROTOCOL ||
       typeof value.callId !== 'string' ||
       !UUID.test(value.callId) ||
-      !['invite', 'ringing', 'accept', 'end'].includes(value.action) ||
+      !['invite', 'ringing', 'accept', 'end', 'reconnect'].includes(value.action) ||
       !['audio', 'video'].includes(value.mode) ||
       typeof value.expiresAt !== 'string' ||
+      (value.transportVersion !== undefined && value.transportVersion !== 2) ||
+      (value.reconnectSupported !== undefined && typeof value.reconnectSupported !== 'boolean') ||
+      (value.reconnectAttempt !== undefined &&
+        (!Number.isSafeInteger(value.reconnectAttempt) ||
+          value.reconnectAttempt < 1 ||
+          !['accept', 'reconnect'].includes(value.action))) ||
+      (value.action === 'reconnect' && value.reconnectAttempt === undefined) ||
       (value.mediaVersion !== undefined && value.mediaVersion !== 2) ||
       (value.videoSupported !== undefined && typeof value.videoSupported !== 'boolean') ||
       (value.screenSupported !== undefined && typeof value.screenSupported !== 'boolean') ||
@@ -79,6 +86,9 @@ export function parseCallSignal(
       action: value.action,
       expiresAt: new Date(expiration).toISOString(),
       mode: value.mode,
+      ...(value.transportVersion === 2 ? { transportVersion: 2 } : {}),
+      ...(value.reconnectSupported === true ? { reconnectSupported: true } : {}),
+      ...(value.reconnectAttempt === undefined ? {} : { reconnectAttempt: value.reconnectAttempt }),
       ...(value.mediaVersion === 2
         ? {
             mediaVersion: 2,

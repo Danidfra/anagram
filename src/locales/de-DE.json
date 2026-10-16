@@ -725,6 +725,8 @@
   "call.phase.preparing": "Anruf wird vorbereitet…",
   "call.phase.outgoing": "Es klingelt…",
   "call.phase.incoming": "Eingehender Anruf",
+  "call.error.video": "Video pausiert. Die Audioverbindung besteht weiterhin.",
+  "call.phase.reconnecting": "Verbindung wird wiederhergestellt…",
   "call.phase.connecting": "Verbindung wird hergestellt…",
   "call.ended.hangup": "Anruf beendet",
   "call.ended.declined": "Anruf abgelehnt",

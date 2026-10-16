@@ -725,6 +725,8 @@
   "call.phase.preparing": "कॉलची तयारी होत आहे…",
   "call.phase.outgoing": "रिंग वाजत आहे…",
   "call.phase.incoming": "येणारा कॉल",
+  "call.error.video": "व्हिडिओ थांबवला आहे. ऑडिओ अजूनही जोडलेला आहे.",
+  "call.phase.reconnecting": "पुन्हा जोडत आहे…",
   "call.phase.connecting": "जोडत आहे…",
   "call.ended.hangup": "कॉल संपला",
   "call.ended.declined": "कॉल नाकारला",

@@ -211,3 +211,62 @@ describe('call signaling publication', () => {
     expect(sendRumor).not.toHaveBeenCalled();
   });
 });
+
+it('sends through cached routes while metadata discovery is stalled', async () => {
+  const sendRumor = vi.fn().mockResolvedValue({});
+  const runtime = createCallSignalingRuntime({
+    ndk: new NostrClient(),
+    getOwnPubkey: () => 'b'.repeat(64),
+    isBlocked: () => false,
+    refreshRelays: () => new Promise(() => {}),
+    getAppRelays: () => [],
+    sendRumor,
+  });
+  await runtime.sendCallSignal('a'.repeat(64), {
+    protocol: CALL_PROTOCOL,
+    action: 'end',
+    reason: 'hangup',
+    callId: crypto.randomUUID(),
+    mode: 'audio',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  expect(sendRumor).toHaveBeenCalledOnce();
+});
+
+it('retries failed cached delivery using freshly discovered routes', async () => {
+  vi.mocked(contactsService.getContactByPublicKey)
+    .mockResolvedValueOnce({
+      type: 'user',
+      meta: {},
+      relays: [{ url: 'wss://old.example', read: true }],
+    } as never)
+    .mockResolvedValueOnce({
+      type: 'user',
+      meta: {},
+      relays: [{ url: 'wss://new.example', read: true }],
+    } as never);
+  const sendRumor = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Old relay offline'))
+    .mockResolvedValue({});
+  const runtime = createCallSignalingRuntime({
+    ndk: new NostrClient(),
+    getOwnPubkey: () => 'b'.repeat(64),
+    isBlocked: () => false,
+    refreshRelays: async () => {},
+    getAppRelays: () => [],
+    sendRumor,
+  });
+  await runtime.sendCallSignal('a'.repeat(64), {
+    protocol: CALL_PROTOCOL,
+    action: 'end',
+    reason: 'hangup',
+    callId: crypto.randomUUID(),
+    mode: 'audio',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  expect(sendRumor.mock.calls.map((args) => args[1])).toEqual([
+    ['wss://old.example'],
+    ['wss://new.example'],
+  ]);
+});

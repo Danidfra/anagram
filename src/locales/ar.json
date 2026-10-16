@@ -725,6 +725,8 @@
   "call.phase.preparing": "جارٍ إعداد المكالمة…",
   "call.phase.outgoing": "جارٍ الرنين…",
   "call.phase.incoming": "مكالمة واردة",
+  "call.error.video": "توقّف الفيديو مؤقتًا. الصوت ما زال متصلًا.",
+  "call.phase.reconnecting": "جارٍ إعادة الاتصال…",
   "call.phase.connecting": "جارٍ الاتصال…",
   "call.ended.hangup": "انتهت المكالمة",
   "call.ended.declined": "رُفضت المكالمة",

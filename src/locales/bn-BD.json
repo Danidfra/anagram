@@ -725,6 +725,8 @@
   "call.phase.preparing": "কল প্রস্তুত হচ্ছে…",
   "call.phase.outgoing": "রিং হচ্ছে…",
   "call.phase.incoming": "আগত কল",
+  "call.error.video": "ভিডিও থামানো হয়েছে। অডিও এখনও সংযুক্ত আছে।",
+  "call.phase.reconnecting": "পুনরায় সংযুক্ত হচ্ছে…",
   "call.phase.connecting": "সংযুক্ত হচ্ছে…",
   "call.ended.hangup": "কল শেষ হয়েছে",
   "call.ended.declined": "কল প্রত্যাখ্যাত হয়েছে",

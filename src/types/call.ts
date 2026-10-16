@@ -5,15 +5,10 @@ export const CALL_CONNECT_TIMEOUT_MS = 30_000;
 export const CALL_SUPPORT_TIMEOUT_MS = 10_000;
 
 export type CallMode = 'audio' | 'video';
-export type CallPhase = 'preparing' | 'outgoing' | 'incoming' | 'connecting' | 'active' | 'ended';
+export type CallPhase =
+  'preparing' | 'outgoing' | 'incoming' | 'connecting' | 'active' | 'reconnecting' | 'ended';
 export type CallEndReason =
-  | 'hangup'
-  | 'declined'
-  | 'busy'
-  | 'timeout'
-  | 'failed'
-  | 'cancelled'
-  | 'unsupported';
+  'hangup' | 'declined' | 'busy' | 'timeout' | 'failed' | 'cancelled' | 'unsupported';
 export interface CallAddress {
   id: string;
   relayUrl: string;
@@ -21,12 +16,15 @@ export interface CallAddress {
 export interface CallSignal {
   protocol: typeof CALL_PROTOCOL;
   callId: string;
-  action: 'invite' | 'ringing' | 'accept' | 'end';
+  action: 'invite' | 'ringing' | 'accept' | 'end' | 'reconnect';
   expiresAt: string;
   mode: CallMode;
   address?: CallAddress;
   mimeType?: string;
   reason?: CallEndReason;
+  transportVersion?: 2;
+  reconnectSupported?: boolean;
+  reconnectAttempt?: number;
   mediaVersion?: 2;
   videoSupported?: boolean;
   screenSupported?: boolean;
@@ -57,10 +55,16 @@ export interface CallConnection {
   end_reason?(): string | undefined;
 }
 export interface CallEndpoint {
+  multiplexed?: boolean;
   online(): Promise<void>;
   id(): string;
   relay_url(): string;
-  connect(peerId: string, relayUrl: string, callId: string): Promise<CallConnection>;
-  accept(peerId: string, callId: string): Promise<CallConnection>;
+  connect(
+    peerId: string,
+    relayUrl: string,
+    callId: string,
+    multiplexed?: boolean,
+  ): Promise<CallConnection>;
+  accept(peerId: string, callId: string, multiplexed?: boolean): Promise<CallConnection>;
   close(): Promise<void>;
 }

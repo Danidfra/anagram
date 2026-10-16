@@ -106,35 +106,35 @@ afterEach(() => {
 });
 
 describe('link-based Iroh call rooms', () => {
-  it.each([
-    'stop',
-    'leave',
-  ])('discards a pending screen picker after %s and allows another share', async (action) => {
-    const h = setup();
-    await h.runtime.create();
-    let resolve!: (stream: MediaStream) => void;
-    h.deps.media.getScreen.mockImplementationOnce(
-      () =>
-        new Promise((yes) => {
-          resolve = yes;
-        })
-    );
-    const pending = h.runtime.startScreenSharing();
-    if (action === 'leave') {
-      h.runtime.leave();
+  it.each(['stop', 'leave'])(
+    'discards a pending screen picker after %s and allows another share',
+    async (action) => {
+      const h = setup();
       await h.runtime.create();
-    } else await h.runtime.stopScreenSharing();
-    const newTrack = new Track('video');
-    const current = new MediaStream([newTrack] as unknown as MediaStreamTrack[]);
-    h.deps.media.getScreen.mockResolvedValueOnce(current);
-    await h.runtime.startScreenSharing();
-    const oldTrack = new Track('video');
-    resolve(new MediaStream([oldTrack] as unknown as MediaStreamTrack[]));
-    await pending;
-    expect(h.runtime.localScreenStream).toBe(current);
-    expect(oldTrack.stop).toHaveBeenCalledOnce();
-    expect(newTrack.stop).not.toHaveBeenCalled();
-  });
+      let resolve!: (stream: MediaStream) => void;
+      h.deps.media.getScreen.mockImplementationOnce(
+        () =>
+          new Promise((yes) => {
+            resolve = yes;
+          }),
+      );
+      const pending = h.runtime.startScreenSharing();
+      if (action === 'leave') {
+        h.runtime.leave();
+        await h.runtime.create();
+      } else await h.runtime.stopScreenSharing();
+      const newTrack = new Track('video');
+      const current = new MediaStream([newTrack] as unknown as MediaStreamTrack[]);
+      h.deps.media.getScreen.mockResolvedValueOnce(current);
+      await h.runtime.startScreenSharing();
+      const oldTrack = new Track('video');
+      resolve(new MediaStream([oldTrack] as unknown as MediaStreamTrack[]));
+      await pending;
+      expect(h.runtime.localScreenStream).toBe(current);
+      expect(oldTrack.stop).toHaveBeenCalledOnce();
+      expect(newTrack.stop).not.toHaveBeenCalled();
+    },
+  );
   it('selects cameras without unmuting and replaces capture without stopping the microphone', async () => {
     const h = setup();
     await h.runtime.create();
@@ -150,7 +150,7 @@ describe('link-based Iroh call rooms', () => {
     const camera = new Track('video');
     camera.getSettings = () => ({ deviceId: 'camera-3' });
     h.deps.media.getCamera.mockResolvedValueOnce(
-      new MediaStream([camera] as unknown as MediaStreamTrack[])
+      new MediaStream([camera] as unknown as MediaStreamTrack[]),
     );
     await h.runtime.selectCamera('camera-3');
     expect(previous?.stop).toHaveBeenCalledOnce();
@@ -172,8 +172,14 @@ describe('link-based Iroh call rooms', () => {
   it('shares each participant’s own chosen name through join and roster controls', async () => {
     const host = setup();
     const guest = setup('b'.repeat(64));
-    host.deps.getIdentity = async () => ({ name: 'Host chosen name', relays: ['wss://relay.example'] });
-    guest.deps.getIdentity = async () => ({ name: 'Guest chosen name', relays: ['wss://relay.example'] });
+    host.deps.getIdentity = async () => ({
+      name: 'Host chosen name',
+      relays: ['wss://relay.example'],
+    });
+    guest.deps.getIdentity = async () => ({
+      name: 'Guest chosen name',
+      relays: ['wss://relay.example'],
+    });
     await host.runtime.create();
     const link = host.runtime.session!.link;
     await guest.runtime.join(link);
@@ -265,15 +271,14 @@ describe('link-based Iroh call rooms', () => {
       member: { ...latest.member!, name: 'Spoofed', nameRevision: 100 },
     });
     expect(
-      host.runtime.participants.find((member) => member.pubkey === guest.deps.getOwnPubkey())
-        ?.name,
+      host.runtime.participants.find((member) => member.pubkey === guest.deps.getOwnPubkey())?.name,
     ).toBe('Guest latest');
     await host.runtime.updateName('Host changed');
     await deliverRosters();
     for (const user of [guest, observer])
-      expect(
-        user.runtime.participants.find((member) => member.pubkey === link.host)?.name,
-      ).toBe('Host changed');
+      expect(user.runtime.participants.find((member) => member.pubkey === link.host)?.name).toBe(
+        'Host changed',
+      );
     for (const [index, user] of [host, guest, observer].entries()) {
       expect(user.runtime.localStream).toBe(streams[index]);
       expect(user.deps.media.createEndpoint).toHaveBeenCalledTimes(endpointCounts[index]);
@@ -310,7 +315,7 @@ describe('link-based Iroh call rooms', () => {
     expect(h.deps.send).toHaveBeenCalledWith(
       'b'.repeat(64),
       expect.objectContaining({ action: 'roster', revision: 2 }),
-      ['wss://guest.example']
+      ['wss://guest.example'],
     );
   });
   it('caps rooms at six members and ignores blocked users even with the link', async () => {
@@ -328,7 +333,7 @@ describe('link-based Iroh call rooms', () => {
     expect(h.deps.send).toHaveBeenCalledWith(
       extra,
       expect.objectContaining({ action: 'rejected', reason: 'full' }),
-      ['wss://guest.example']
+      ['wss://guest.example'],
     );
   });
   it('accepts membership only from the host and ignores older roster revisions', async () => {
@@ -367,12 +372,12 @@ describe('link-based Iroh call rooms', () => {
     expect(h.runtime.session?.members[1]?.sessionId).toBe(second.senderSession);
     await h.runtime.receive(
       'b'.repeat(64),
-      signal(link, { action: 'leave', senderSession: first.senderSession })
+      signal(link, { action: 'leave', senderSession: first.senderSession }),
     );
     expect(h.runtime.session?.members).toHaveLength(2);
     await h.runtime.receive(
       'b'.repeat(64),
-      signal(link, { action: 'leave', senderSession: second.senderSession })
+      signal(link, { action: 'leave', senderSession: second.senderSession }),
     );
     expect(h.runtime.session?.members).toHaveLength(1);
     await h.runtime.receive('b'.repeat(64), second);
@@ -386,7 +391,7 @@ describe('link-based Iroh call rooms', () => {
       () =>
         new Promise((resolve) => {
           complete = resolve;
-        })
+        }),
     );
     const starting = h.runtime.create();
     h.runtime.leave();
@@ -418,4 +423,88 @@ describe('link-based Iroh call rooms', () => {
     expect(h.runtime.error).toBe('room.error.busy');
     expect(h.deps.media.getMedia).not.toHaveBeenCalled();
   });
+});
+
+it('keeps the room roster while a peer reconnects, and lowers video bitrate as the room grows', async () => {
+  const h = setup();
+  const connections: Array<{
+    send: ReturnType<typeof vi.fn>;
+    recv: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  }> = [];
+  h.deps.media.createEndpoint.mockImplementation(
+    async () =>
+      ({
+        id: () => 'a'.repeat(64),
+        relay_url: () => 'https://relay.example/',
+        online: async () => {},
+        close: vi.fn().mockResolvedValue(undefined),
+        connect: vi.fn(async () => {
+          const connection = {
+            send: vi.fn().mockResolvedValue(undefined),
+            close: vi.fn(),
+            recv: vi
+              .fn()
+              .mockResolvedValueOnce(new Uint8Array([2]))
+              .mockImplementation(() => new Promise(() => {})),
+          };
+          connections.push(connection);
+          return connection;
+        }),
+        accept: () => new Promise<never>(() => {}),
+      }) as never,
+  );
+  h.deps.media.getMedia.mockResolvedValueOnce(
+    new MediaStream([h.microphone, new Track('video')] as unknown as MediaStreamTrack[]),
+  );
+  await h.runtime.create('video');
+  const link = h.runtime.session!.link;
+  for (const pubkey of ['b', 'c', 'd'].map((value) => value.repeat(64))) {
+    const request = join(link, pubkey);
+    await h.runtime.receive(pubkey, request);
+    await vi.waitFor(() =>
+      expect(
+        h.deps.send.mock.calls.some(
+          ([to, body]) => to === pubkey && body.signal?.action === 'invite',
+        ),
+      ).toBe(true),
+    );
+    const outgoing = h.deps.send.mock.calls.find(
+      ([to, body]) => to === pubkey && body.signal?.action === 'invite',
+    )![1];
+    await h.runtime.receive(
+      pubkey,
+      signal(link, {
+        action: 'signal',
+        senderSession: request.senderSession,
+        recipientSession: link.id,
+        signal: {
+          ...outgoing.signal!,
+          action: 'accept',
+          mediaVersion: 2,
+          reconnectSupported: true,
+          videoSupported: true,
+        },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(h.runtime.participants.find((item) => item.pubkey === pubkey)?.phase).toBe('active'),
+    );
+  }
+  await vi.waitFor(() =>
+    expect(
+      h.deps.media.record.mock.calls.filter(
+        (args: any[]) => args[4]?.videoBitsPerSecond === 300_000,
+      ).length,
+    ).toBe(3),
+  );
+  const roster = h.runtime.session!.members;
+  connections[0].send.mockRejectedValue(new Error('Network changed'));
+  h.runtime.toggleMicrophone();
+  await vi.waitFor(() =>
+    expect(h.runtime.participants.some((item) => item.phase === 'reconnecting')).toBe(true),
+  );
+  expect(h.runtime.session!.members).toEqual(roster);
+  expect(h.runtime.session!.phase).toBe('active');
+  expect(h.microphone.stop).not.toHaveBeenCalled();
 });

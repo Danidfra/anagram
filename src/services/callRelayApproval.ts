@@ -17,11 +17,13 @@ export function guardCallRelay(endpoint: CallEndpoint, configuredRelays: string[
   const pending = new Set<() => void>();
   let closed = false;
   return {
+    multiplexed: endpoint.multiplexed,
     online: () => endpoint.online(),
     id: () => endpoint.id(),
     relay_url: () => endpoint.relay_url(),
-    accept: (peer, call) => endpoint.accept(peer, call),
-    async connect(peer, relay, call) {
+    accept: (peer, call, lanes) =>
+      lanes ? endpoint.accept(peer, call, true) : endpoint.accept(peer, call),
+    async connect(peer, relay, call, lanes) {
       const url = normalizeIrohRelayUrl(relay);
       if (closed || !url) throw new Error('Invalid or closed call relay connection');
       if (!trusted.has(url)) {
@@ -48,7 +50,7 @@ export function guardCallRelay(endpoint: CallEndpoint, configuredRelays: string[
         });
         if (!allowed || closed) throw new Error('Call relay connection not approved');
       }
-      return endpoint.connect(peer, url, call);
+      return lanes ? endpoint.connect(peer, url, call, true) : endpoint.connect(peer, url, call);
     },
     close() {
       closed = true;

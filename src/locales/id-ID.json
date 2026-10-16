@@ -725,6 +725,8 @@
   "call.phase.preparing": "Menyiapkan panggilan…",
   "call.phase.outgoing": "Berdering…",
   "call.phase.incoming": "Panggilan masuk",
+  "call.error.video": "Video dijeda. Audio masih terhubung.",
+  "call.phase.reconnecting": "Menghubungkan kembali…",
   "call.phase.connecting": "Menghubungkan…",
   "call.ended.hangup": "Panggilan berakhir",
   "call.ended.declined": "Panggilan ditolak",

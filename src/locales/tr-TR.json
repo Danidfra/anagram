@@ -725,6 +725,8 @@
   "call.phase.preparing": "Arama hazırlanıyor…",
   "call.phase.outgoing": "Çalıyor…",
   "call.phase.incoming": "Gelen arama",
+  "call.error.video": "Video duraklatıldı. Ses bağlantısı devam ediyor.",
+  "call.phase.reconnecting": "Yeniden bağlanıyor…",
   "call.phase.connecting": "Bağlanıyor…",
   "call.ended.hangup": "Arama sona erdi",
   "call.ended.declined": "Arama reddedildi",

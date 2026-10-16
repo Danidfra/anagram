@@ -102,7 +102,9 @@
   $: phase = $state.room?.phase ?? $state.session?.phase;
   $: active = phase === 'active';
   $: hangupLabel = $translate(
-    !room && $state.session?.direction === 'outgoing' && !active ? 'common.cancel' : 'call.hangup',
+    !room && $state.session?.direction === 'outgoing' && !$state.session?.startedAt
+      ? 'common.cancel'
+      : 'call.hangup',
   );
   $: ended = phase === 'ended';
   $: runtime = room ? rooms : calls;
@@ -124,7 +126,9 @@
         ? $state.session.videoAvailable
         : $state.session?.mode === 'video'),
   );
-  $: canMinimize = room ? $state.busy : ['active', 'connecting', 'outgoing'].includes(phase ?? '');
+  $: canMinimize = room
+    ? $state.busy
+    : ['active', 'connecting', 'reconnecting', 'outgoing'].includes(phase ?? '');
   $: focusedSpeaker = $state.participants.some((peer) => peer.pubkey === activeSpeaker)
     ? activeSpeaker
     : 'local';
@@ -606,7 +610,11 @@
                     {$namePreferences.cssEnabled ? '' : displayName}
                     {peer.phase !== 'active'
                       ? $translate(
-                          peer.phase === 'ended' ? 'call.ended.failed' : 'call.phase.connecting',
+                          peer.phase === 'ended'
+                            ? 'call.ended.failed'
+                            : peer.phase === 'reconnecting'
+                              ? 'call.phase.reconnecting'
+                              : 'call.phase.connecting',
                         )
                       : ''}
                   </div>{/if}

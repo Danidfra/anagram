@@ -20,7 +20,7 @@ describe('private call signal validation', () => {
     expect(parse()).toEqual(signal);
     expect(
       parse({ address: { id: 'a'.repeat(64), relayUrl: 'https://RELAY.example' } })?.address
-        ?.relayUrl
+        ?.relayUrl,
     ).toBe('https://relay.example/');
   });
   it.each([
@@ -48,7 +48,7 @@ describe('private call signal validation', () => {
   });
   it('accepts hangups without an endpoint and rejects unknown reasons', () => {
     expect(
-      parse({ action: 'end', reason: 'hangup', address: undefined, mimeType: undefined })?.reason
+      parse({ action: 'end', reason: 'hangup', address: undefined, mimeType: undefined })?.reason,
     ).toBe('hangup');
     expect(parse({ action: 'end', reason: 'unknown' })).toBeNull();
   });
@@ -60,7 +60,7 @@ describe('private call signal validation', () => {
         mimeType: undefined,
         mediaVersion: 2,
         videoSupported: true,
-      })
+      }),
     ).toEqual({
       protocol: CALL_PROTOCOL,
       callId: signal.callId,
@@ -74,4 +74,25 @@ describe('private call signal validation', () => {
     expect(parse({ videoSupported: 'yes' })).toBeNull();
     expect(parse({ action: 'end', reason: 'unsupported' })?.reason).toBe('unsupported');
   });
+});
+
+it('validates recovery attempts and preserves transport capabilities', () => {
+  expect(
+    parse({
+      action: 'reconnect',
+      reconnectAttempt: 1,
+      reconnectSupported: true,
+      transportVersion: 2,
+    }),
+  ).toMatchObject({
+    action: 'reconnect',
+    reconnectAttempt: 1,
+    reconnectSupported: true,
+    transportVersion: 2,
+  });
+  for (const reconnectAttempt of [undefined, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1'])
+    expect(parse({ action: 'reconnect', reconnectAttempt })).toBeNull();
+  expect(parse({ action: 'invite', reconnectAttempt: 1 })).toBeNull();
+  expect(parse({ reconnectSupported: 'true' })).toBeNull();
+  expect(parse({ transportVersion: 3 })).toBeNull();
 });

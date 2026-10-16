@@ -17,6 +17,7 @@ import { type CallRuntimeDeps, createCallRuntime } from './callRuntime.svelte.ts
 
 type PeerRuntime = ReturnType<typeof createCallRuntime>;
 interface Peer {
+  started?: boolean;
   member: CallRoomMember;
   runtime: PeerRuntime;
   stop: () => void;
@@ -144,8 +145,7 @@ export function createCallRoomRuntime(deps: Deps) {
       localStream
         ?.getTracks()
         .filter((track) => track.kind === kind && track.readyState !== 'ended') ?? [];
-    if (!tracks.length)
-      throw new DOMException('Capture device is unavailable', 'NotFoundError');
+    if (!tracks.length) throw new DOMException('Capture device is unavailable', 'NotFoundError');
     return new MediaStream(tracks.map((track) => track.clone()));
   }
   async function broadcastRoster() {
@@ -209,6 +209,20 @@ export function createCallRoomRuntime(deps: Deps) {
         continue;
       const runtime = createCallRuntime({
         ...deps.media,
+        videoProfile: () =>
+          session && session.members.length >= 4
+            ? {
+                cameraBitrate: 300_000,
+                cameraFrameRate: 15,
+                screenBitrate: 750_000,
+                screenFrameRate: 5,
+              }
+            : {
+                cameraBitrate: 600_000,
+                cameraFrameRate: 24,
+                screenBitrate: 1_500_000,
+                screenFrameRate: 15,
+              },
         getOwnPubkey: deps.getOwnPubkey,
         resolvePeer: async (pubkey) =>
           current(s) &&
@@ -242,9 +256,9 @@ export function createCallRoomRuntime(deps: Deps) {
           if (phase === 'incoming') {
             await runtime.accept('audio');
           }
-          if (phase === 'active') {
-            if (runtime.session?.microphoneMuted !== microphoneMuted)
-              runtime.toggleMicrophone();
+          if (phase === 'active' && !peer.started) {
+            peer.started = true;
+            if (runtime.session?.microphoneMuted !== microphoneMuted) runtime.toggleMicrophone();
             if (!cameraMuted && runtime.session?.cameraMuted) await runtime.toggleCamera();
             if (current(s) && localScreenStream) await runtime.startScreenSharing();
           }
@@ -256,6 +270,7 @@ export function createCallRoomRuntime(deps: Deps) {
       });
       if (s.own.pubkey < member.pubkey) void runtime.start(member.pubkey, 'audio');
     }
+    for (const peer of peers) void peer.runtime.refreshVideoQuality();
     const buffered = pending;
     pending = [];
     for (const item of buffered)
@@ -345,7 +360,11 @@ export function createCallRoomRuntime(deps: Deps) {
       if (media.getVideoTracks().length)
         cameraDeviceId = media.getVideoTracks()[0]?.getSettings().deviceId ?? '';
       media.getTracks().forEach((track) => {
-        track.onended = () => leave('call.error.deviceMissing');
+        track.onended = () => {
+          if (track.kind === 'video') {
+            if (!cameraMuted) void updateCamera();
+          } else leave('call.error.deviceMissing');
+        };
       });
       const identity = await deps.getIdentity();
       if (generation !== version || !busy) return;
@@ -391,9 +410,7 @@ export function createCallRoomRuntime(deps: Deps) {
       }
     } catch (cause) {
       if (generation === version && busy)
-        leave(
-          cause instanceof DOMException ? callCaptureErrorKey(cause) : 'room.error.failed',
-        );
+        leave(cause instanceof DOMException ? callCaptureErrorKey(cause) : 'room.error.failed');
     }
   }
   async function receive(pubkey: string, signal: CallRoomSignal) {
@@ -498,11 +515,7 @@ export function createCallRoomRuntime(deps: Deps) {
       removeMember(pubkey);
       return;
     }
-    if (
-      signal.action !== 'signal' ||
-      !signal.signal ||
-      signal.recipientSession !== s.own.sessionId
-    )
+    if (signal.action !== 'signal' || !signal.signal || signal.recipientSession !== s.own.sessionId)
       return;
     const peer = peers.find((item) => item.member.pubkey === pubkey);
     if (!member || !peer) {
@@ -630,8 +643,7 @@ export function createCallRoomRuntime(deps: Deps) {
   }
   async function startScreenSharing() {
     const s = session;
-    if (!s || !current(s) || localScreenStream || screenRequest || !deps.media.getScreen)
-      return;
+    if (!s || !current(s) || localScreenStream || screenRequest || !deps.media.getScreen) return;
     const request = {};
     screenRequest = request;
     try {

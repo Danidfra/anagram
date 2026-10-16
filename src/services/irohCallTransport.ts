@@ -1,13 +1,14 @@
 import type { CallEndpoint } from '#src/types/call.ts';
 import { defaultIrohRelays, normalizeIrohRelayUrl } from '#src/utils/irohRelays.ts';
 import { guardCallRelay } from './callRelayApproval';
+import { adaptCallEndpoint, type RawCallEndpoint } from '#src/services/callTransportLanes.ts';
 
 // Loaded from the same origin. This asset is built from iroh-calls/ and shipped on every target.
 let modulePromise: Promise<{
-  CallEndpoint: { create_with_relays(relayUrls: string[]): Promise<CallEndpoint> };
+  CallEndpoint: { create_with_relays(relayUrls: string[]): Promise<RawCallEndpoint> };
 }> | null = null;
 export async function createIrohCallEndpoint(
-  relayUrls = defaultIrohRelays()
+  relayUrls = defaultIrohRelays(),
 ): Promise<CallEndpoint> {
   const urls = relayUrls.map(normalizeIrohRelayUrl);
   if (!urls.length || urls.length > 21 || urls.some((url) => !url))
@@ -25,5 +26,5 @@ export async function createIrohCallEndpoint(
       });
   }
   const endpoint = await (await modulePromise).CallEndpoint.create_with_relays(urls as string[]);
-  return guardCallRelay(endpoint, urls as string[]);
+  return guardCallRelay(adaptCallEndpoint(endpoint), urls as string[]);
 }

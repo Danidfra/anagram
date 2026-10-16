@@ -725,6 +725,8 @@
   "call.phase.preparing": "正在准备通话…",
   "call.phase.outgoing": "正在响铃…",
   "call.phase.incoming": "来电",
+  "call.error.video": "视频已暂停，音频仍保持连接。",
+  "call.phase.reconnecting": "正在重新连接…",
   "call.phase.connecting": "正在连接…",
   "call.ended.hangup": "通话已结束",
   "call.ended.declined": "通话已拒绝",

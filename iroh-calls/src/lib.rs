@@ -7,6 +7,7 @@ use n0_future::time::{Duration, timeout};
 use wasm_bindgen::prelude::*;
 
 const ALPN: &[u8] = b"anagram/call/1";
+const LANES_ALPN: &[u8] = b"anagram/call/2";
 const MAX_FRAME: usize = 1_048_576;
 
 fn js_error(e: impl std::fmt::Display) -> JsError {
@@ -46,7 +47,7 @@ impl CallEndpoint {
             .map_err(js_error)?;
         // Nostr supplies authenticated addresses; never publish or resolve call IDs publicly.
         let endpoint = Endpoint::builder(presets::Minimal)
-            .alpns(vec![ALPN.to_vec()])
+            .alpns(vec![ALPN.to_vec(), LANES_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(RelayMap::from_iter(relays)))
             .bind()
             .await
@@ -75,28 +76,82 @@ impl CallEndpoint {
         relay_url: String,
         call_id: String,
     ) -> Result<CallConnection, JsError> {
-        let id: EndpointId = peer_id.parse().map_err(js_error)?;
-        let addr = EndpointAddr::new(id).with_relay_url(relay_url.parse().map_err(js_error)?);
-        let conn = self.endpoint.connect(addr, ALPN).await.map_err(js_error)?;
-        let (mut send, mut recv) = conn.open_bi().await.map_err(js_error)?;
-        send.write_all(call_id.as_bytes()).await.map_err(js_error)?;
-        let mut confirmation = vec![0; call_id.len()];
-        recv.read_exact(&mut confirmation).await.map_err(js_error)?;
-        if confirmation != call_id.as_bytes() {
-            conn.close(1u8.into(), b"wrong call");
-            return Err(JsError::new("Call confirmation failed"));
-        }
-        Ok(CallConnection {
-            conn,
-            send: Mutex::new(send),
-            recv: Mutex::new(recv),
-        })
+        self.connect_inner(peer_id, relay_url, call_id, false).await
     }
-
+    pub async fn connect_lanes(
+        &self,
+        peer_id: String,
+        relay_url: String,
+        call_id: String,
+    ) -> Result<CallConnection, JsError> {
+        self.connect_inner(peer_id, relay_url, call_id, true).await
+    }
     pub async fn accept(
         &self,
         peer_id: String,
         call_id: String,
+    ) -> Result<CallConnection, JsError> {
+        self.accept_inner(peer_id, call_id, false).await
+    }
+    pub async fn accept_lanes(
+        &self,
+        peer_id: String,
+        call_id: String,
+    ) -> Result<CallConnection, JsError> {
+        self.accept_inner(peer_id, call_id, true).await
+    }
+
+    pub async fn close(&self) {
+        self.endpoint.close().await;
+    }
+}
+
+impl CallEndpoint {
+    async fn connect_inner(
+        &self,
+        peer_id: String,
+        relay_url: String,
+        call_id: String,
+        lanes: bool,
+    ) -> Result<CallConnection, JsError> {
+        let id: EndpointId = peer_id.parse().map_err(js_error)?;
+        let addr = EndpointAddr::new(id).with_relay_url(relay_url.parse().map_err(js_error)?);
+        let conn = self
+            .endpoint
+            .connect(addr, if lanes { LANES_ALPN } else { ALPN })
+            .await
+            .map_err(js_error)?;
+        let result = timeout(Duration::from_secs(10), async {
+            let mut sends = Vec::new();
+            let mut recvs = Vec::new();
+            for lane in 0..if lanes { 4 } else { 1 } {
+                let (mut send, mut recv) = conn.open_bi().await.map_err(js_error)?;
+                send.set_priority(4 - lane).map_err(js_error)?;
+                send.write_all(call_id.as_bytes()).await.map_err(js_error)?;
+                let mut confirmation = vec![0; call_id.len()];
+                recv.read_exact(&mut confirmation).await.map_err(js_error)?;
+                if confirmation != call_id.as_bytes() {
+                    return Err(JsError::new("Call confirmation failed"));
+                }
+                sends.push(Mutex::new(send));
+                recvs.push(Mutex::new(recv));
+            }
+            Ok((sends, recvs))
+        })
+        .await;
+        match result {
+            Ok(Ok((send, recv))) => Ok(CallConnection { conn, send, recv }),
+            _ => {
+                conn.close(1u8.into(), b"handshake failed");
+                Err(JsError::new("Call handshake failed"))
+            }
+        }
+    }
+    async fn accept_inner(
+        &self,
+        peer_id: String,
+        call_id: String,
+        lanes: bool,
     ) -> Result<CallConnection, JsError> {
         let expected: EndpointId = peer_id.parse().map_err(js_error)?;
         loop {
@@ -108,47 +163,51 @@ impl CallEndpoint {
             let Ok(Ok(conn)) = timeout(Duration::from_secs(5), incoming).await else {
                 continue;
             };
-            if conn.remote_id() != expected {
-                conn.close(1u8.into(), b"unexpected peer");
+            if conn.remote_id() != expected || conn.alpn() != if lanes { LANES_ALPN } else { ALPN }
+            {
+                conn.close(1u8.into(), b"unexpected peer or protocol");
                 continue;
             }
-            let Ok(Ok((mut send, mut recv))) =
-                timeout(Duration::from_secs(5), conn.accept_bi()).await
-            else {
-                conn.close(1u8.into(), b"handshake timeout");
-                continue;
-            };
-            let mut confirmation = vec![0; call_id.len()];
-            if !matches!(
-                timeout(Duration::from_secs(5), recv.read_exact(&mut confirmation)).await,
-                Ok(Ok(()))
-            ) {
-                conn.close(1u8.into(), b"handshake timeout");
-                continue;
+            let result = timeout(Duration::from_secs(10), async {
+                let mut sends = Vec::new();
+                let mut recvs = Vec::new();
+                for lane in 0..if lanes { 4 } else { 1 } {
+                    let (mut send, mut recv) = conn.accept_bi().await.map_err(js_error)?;
+                    send.set_priority(4 - lane).map_err(js_error)?;
+                    let mut confirmation = vec![0; call_id.len()];
+                    recv.read_exact(&mut confirmation).await.map_err(js_error)?;
+                    if confirmation != call_id.as_bytes() {
+                        return Err(JsError::new("Wrong call"));
+                    }
+                    send.write_all(call_id.as_bytes()).await.map_err(js_error)?;
+                    sends.push(Mutex::new(send));
+                    recvs.push(Mutex::new(recv));
+                }
+                Ok((sends, recvs))
+            })
+            .await;
+            if let Ok(Ok((send, recv))) = result {
+                return Ok(CallConnection { conn, send, recv });
             }
-            if confirmation != call_id.as_bytes() {
-                conn.close(1u8.into(), b"wrong call");
-                continue;
-            }
-            send.write_all(call_id.as_bytes()).await.map_err(js_error)?;
-            return Ok(CallConnection {
-                conn,
-                send: Mutex::new(send),
-                recv: Mutex::new(recv),
-            });
+            conn.close(1u8.into(), b"handshake failed");
         }
     }
+}
 
-    pub async fn close(&self) {
-        self.endpoint.close().await;
+fn frame_lane(kind: u8) -> usize {
+    match kind {
+        0 | 4 => 1,
+        3 | 5 => 2,
+        6 | 7 => 3,
+        _ => 0,
     }
 }
 
 #[wasm_bindgen]
 pub struct CallConnection {
     conn: Connection,
-    send: Mutex<SendStream>,
-    recv: Mutex<RecvStream>,
+    send: Vec<Mutex<SendStream>>,
+    recv: Vec<Mutex<RecvStream>>,
 }
 
 #[wasm_bindgen]
@@ -157,7 +216,12 @@ impl CallConnection {
         if data.is_empty() || data.len() > MAX_FRAME {
             return Err(JsError::new("Invalid call frame size"));
         }
-        let mut stream = self.send.lock().await;
+        let lane = if self.send.len() == 1 {
+            0
+        } else {
+            frame_lane(data[0])
+        };
+        let mut stream = self.send[lane].lock().await;
         stream
             .write_all(&(data.len() as u32).to_be_bytes())
             .await
@@ -166,7 +230,15 @@ impl CallConnection {
         Ok(())
     }
     pub async fn recv(&self) -> Result<Vec<u8>, JsError> {
-        let mut stream = self.recv.lock().await;
+        self.recv_lane(0).await
+    }
+    pub async fn recv_lane(&self, lane: usize) -> Result<Vec<u8>, JsError> {
+        let mut stream = self
+            .recv
+            .get(lane)
+            .ok_or_else(|| JsError::new("Invalid lane"))?
+            .lock()
+            .await;
         let mut header = [0; 4];
         stream.read_exact(&mut header).await.map_err(js_error)?;
         let size = u32::from_be_bytes(header) as usize;
@@ -176,6 +248,10 @@ impl CallConnection {
         }
         let mut data = vec![0; size];
         stream.read_exact(&mut data).await.map_err(js_error)?;
+        if self.recv.len() > 1 && frame_lane(data[0]) != lane {
+            self.conn.close(1u8.into(), b"wrong media lane");
+            return Err(JsError::new("Wrong media lane"));
+        }
         Ok(data)
     }
     pub fn close(&self, reason: Option<String>) {
