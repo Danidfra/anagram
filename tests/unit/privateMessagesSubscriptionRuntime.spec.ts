@@ -179,6 +179,36 @@ describe('privateMessagesSubscriptionRuntime', () => {
     vi.useRealTimers();
   });
 
+  it.each(['before login', 'while healthy'])(
+    'keeps the watchdog usable after a synchronous check %s',
+    async (phase) => {
+      vi.useFakeTimers();
+      vi.stubGlobal('window', new EventTarget());
+      const { runtime, ndk, subscribeWithReqLogging, queuePrivateMessageIngestion } =
+        createRuntime();
+      vi.spyOn(ndk.pool, 'getRelay').mockReturnValue({ connected: true } as never);
+      try {
+        if (phase === 'while healthy') await runtime.subscribePrivateMessagesForLoggedInUser();
+        runtime.queuePrivateMessagesWatchdog(0);
+        await vi.advanceTimersByTimeAsync(0);
+        if (phase === 'before login') await runtime.subscribePrivateMessagesForLoggedInUser();
+        expect(subscribeWithReqLogging).toHaveBeenCalledTimes(1);
+        const options = subscribeWithReqLogging.mock.calls[0][3] as SubscriptionOptions;
+        options.onClose?.();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(subscribeWithReqLogging).toHaveBeenCalledTimes(2);
+        const restored = subscribeWithReqLogging.mock.calls[1][3] as SubscriptionOptions;
+        restored.onEvent?.({ id: 'b'.repeat(64), kind: 1059, created_at: 100 } as ClientEvent);
+        expect(queuePrivateMessageIngestion).toHaveBeenCalledTimes(1);
+      } finally {
+        runtime.stopPrivateMessagesLiveSubscription('test');
+        runtime.resetPrivateMessagesSubscriptionRuntimeState();
+        vi.clearAllTimers();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it('listens independently and starts history only when step 16 is requested', async () => {
     const {
       runtime,

@@ -486,11 +486,13 @@ export function createPrivateMessagesSubscriptionRuntime(
         logSubscription('private-messages', 'watchdog-error', {
           error,
         });
-      } finally {
-        privateMessagesWatchdogRunPromise = null;
-        queuePrivateMessagesWatchdog(PRIVATE_MESSAGES_WATCHDOG_INTERVAL_MS);
       }
-    })();
+    })().finally(() => {
+      // Run after assignment even when the check returns before its first await.
+      // Otherwise a completed promise can permanently block future recovery.
+      privateMessagesWatchdogRunPromise = null;
+      queuePrivateMessagesWatchdog(PRIVATE_MESSAGES_WATCHDOG_INTERVAL_MS);
+    });
 
     return privateMessagesWatchdogRunPromise;
   }

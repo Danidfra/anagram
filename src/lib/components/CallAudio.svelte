@@ -89,6 +89,7 @@
   data-testid={testid}
   onloadeddata={play}
   onprogress={() => followCallLive(audio)}
+  ontimeupdate={() => followCallLive(audio)}
 ></audio>
 {#if blocked && url}<button class="call-audio-recovery" data-testid="call-play-audio" onclick={play}
     >{$translate('call.playAudio')}{name ? ` · ${name}` : ''}</button

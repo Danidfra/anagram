@@ -57,4 +57,5 @@
   data-testid={testid}
   onloadeddata={play}
   onprogress={() => followCallLive(element)}
+  ontimeupdate={() => followCallLive(element)}
 ></video>

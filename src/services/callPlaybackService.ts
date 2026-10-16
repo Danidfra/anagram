@@ -20,6 +20,8 @@ export async function setCallSpeaker(element: HTMLMediaElement, deviceId: string
   await element.setSinkId(deviceId);
 }
 
+// Players call this on timeupdate as well as progress: WebKit may append MSE
+// segments without emitting progress, leaving a playing call behind live audio.
 export function followCallLive(element: HTMLMediaElement | null) {
   if (!element?.buffered.length || element.seeking) return;
   const latest = element.buffered.length - 1;
