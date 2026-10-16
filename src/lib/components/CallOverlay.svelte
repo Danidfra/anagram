@@ -63,6 +63,7 @@
   let controlsWindow: CallControlsWindow;
   let controlsTray: CallControlsTray;
   let autoHideControls = false;
+  let moreControls = false;
   let editNames = false;
   $: nameAccount = $state.room?.own.pubkey || '';
   $: namePreferences = groupCallNames(nameAccount);
@@ -186,6 +187,7 @@
     previousId = id;
     minimized = maxFill = speakerView = speakerMuted = playbackBlocked = false;
     outputError = '';
+    moreControls = false;
     invite = false;
     editNames = false;
     levels.clear();
@@ -305,9 +307,9 @@
 </script>
 
 {#snippet controls()}
-  <div class="call-panel__controls" class:room-controls={room}>
+  <div class="call-panel__controls" class:room-controls={room} class:expanded={moreControls}>
     {#if room || hasVideo || screens.length}<button
-        class="call-round"
+        class="call-round call-secondary"
         class:chosen={maxFill}
         title={$translate(maxFill ? 'call.fitMedia' : 'call.maxFill')}
         aria-label={$translate('call.maxFill')}
@@ -316,19 +318,19 @@
         onclick={() => (maxFill = !maxFill)}><Icon name="fill" /></button
       >{/if}
     {#if canMinimize}<button
-        class="call-round flat"
+        class="call-round call-secondary flat"
         aria-label={$translate('call.minimize')}
         data-testid={`${prefix}-minimize`}
         onclick={() => (minimized = true)}><Icon name="minimize" /></button
       >{/if}
     {#if active}<button
-        class="call-round"
+        class="call-round call-desktop"
         aria-label={$translate('call.controlsWindow')}
         title={$translate('call.controlsWindow')}
         data-testid={`${prefix}-open-controls`}
         onclick={() => controlsWindow?.openWindow()}><Icon name="popout" /></button
       ><button
-        class="call-round"
+        class="call-round call-desktop"
         aria-label={$translate(autoHideControls ? 'call.keepControls' : 'call.hideControls')}
         title={$translate(autoHideControls ? 'call.keepControls' : 'call.hideControls')}
         data-testid={`${prefix}-hide-controls`}
@@ -337,7 +339,7 @@
         ><Icon name={autoHideControls ? 'eye' : 'down'} /></button
       >{/if}
     {#if room}<button
-        class="call-round"
+        class="call-round call-secondary"
         aria-label={$translate(speakerView ? 'room.galleryView' : 'room.speakerView')}
         data-testid="room-view-toggle"
         onclick={() => (speakerView = !speakerView)}
@@ -390,6 +392,7 @@
         <button
           class="call-round"
           class:danger={speakerMuted}
+          class:call-secondary={mobileAudio}
           aria-label={$translate(speakerMuted ? 'call.unmuteSpeaker' : 'call.muteSpeaker')}
           aria-pressed={speakerMuted}
           data-testid={`${prefix}-speaker`}
@@ -443,11 +446,12 @@
         />
       </div>
       <button
-        class="call-round"
+        class="call-round call-secondary"
         class:chosen={Boolean($state.localScreen)}
         aria-label={$translate($state.localScreen ? 'call.stopScreen' : 'call.shareScreen')}
         title={$translate(canShareScreen ? 'call.shareScreen' : 'call.screenUnavailable')}
         disabled={!active || !canShareScreen || (!room && !$state.session?.screenAvailable)}
+        class:call-unavailable={!canShareScreen}
         data-testid={`${prefix}-share-screen`}
         onclick={() => {
           window.focus();
@@ -455,7 +459,7 @@
         }}><Icon name={$state.localScreen ? 'screen-off' : 'screen'} /></button
       >
       {#if room}<button
-          class="call-round"
+          class="call-round call-secondary"
           aria-label={$translate('room.namesAndStyling')}
           data-testid="room-edit-names"
           onclick={() => {
@@ -463,12 +467,12 @@
             editNames = true;
           }}><Icon name="edit" /></button
         ><button
-          class="call-round"
+          class="call-round call-desktop"
           aria-label={$translate('call.presentationWindow')}
           data-testid="room-open-window"
           onclick={() => stage?.openWindow()}><Icon name="popout" /></button
         >{#if $state.link}<button
-            class="call-round"
+            class="call-round call-secondary"
             aria-label={$translate('room.invite')}
             data-testid="room-invite"
             onclick={() => {
@@ -477,7 +481,14 @@
             }}><Icon name="invite" /></button
           >{/if}{/if}
       <button
-        class="call-round danger"
+        class="call-round call-more"
+        aria-label={$translate('common.more')}
+        aria-expanded={moreControls}
+        data-testid={`${prefix}-more`}
+        onclick={() => (moreControls = !moreControls)}><Icon name="more" /></button
+      >
+      <button
+        class="call-round danger call-end"
         class:call-hangup={!room}
         data-testid={room ? 'room-leave' : 'call-hangup'}
         aria-label={room ? $translate('room.leave') : hangupLabel}
@@ -1556,6 +1567,57 @@
     }
     .call-peer-npub {
       margin-bottom: 8px;
+    }
+  }
+
+  .call-more {
+    display: none;
+  }
+  @media (max-width: 599px), (max-height: 500px) {
+    .call-panel .call-panel__controls:not(:has(.call-primary-action)) {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      width: min(100%, 320px);
+      margin: 0 auto;
+      padding: 12px 0;
+      align-items: center;
+      justify-items: center;
+    }
+    .call-panel .call-panel__device {
+      display: contents;
+    }
+    .call-panel .call-panel__controls .call-round:not(.call-primary-action) {
+      width: 48px;
+      height: 48px;
+    }
+    .call-panel .call-more {
+      display: flex;
+      order: 1;
+    }
+    .call-panel .call-secondary,
+    .call-panel .call-panel__device :global(.call-device-picker) {
+      display: none;
+      order: 2;
+    }
+    .call-panel .expanded .call-secondary {
+      display: flex;
+    }
+    .call-panel .expanded .call-panel__device :global(.call-device-picker) {
+      display: flex;
+      grid-column: span 2;
+      width: 100%;
+    }
+    .call-panel .call-panel__controls .call-desktop,
+    .call-panel .call-panel__controls .call-unavailable {
+      display: none;
+    }
+    .call-panel .call-panel__controls .call-round.call-end {
+      grid-column: 1 / -1;
+      order: 3;
+      width: 60px;
+      height: 60px;
+      margin-top: 4px;
     }
   }
 </style>

@@ -56,7 +56,7 @@
   function syncSource(element: HTMLAudioElement | undefined, value: string) {
     if (!element) return;
     stopFollowing?.();
-    stopFollowing = value ? watchCallLive(element) : undefined;
+    stopFollowing = value ? watchCallLive(element, 'audio') : undefined;
     attempt++;
     blocked = false;
     // ManagedMediaSource on iPhone requires remote playback to be disabled
@@ -93,8 +93,8 @@
   autoplay
   data-testid={testid}
   onloadeddata={play}
-  onprogress={() => followCallLive(audio)}
-  ontimeupdate={() => followCallLive(audio)}
+  onprogress={() => followCallLive(audio, 'audio')}
+  ontimeupdate={() => followCallLive(audio, 'audio')}
 ></audio>
 {#if blocked && url}<button class="call-audio-recovery" data-testid="call-play-audio" onclick={play}
     >{$translate('call.playAudio')}{name ? ` · ${name}` : ''}</button

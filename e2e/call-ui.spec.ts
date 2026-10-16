@@ -603,6 +603,7 @@ test('group-call shared names use saved local CSS in the call and recording wind
   await page.setViewportSize({ width: 390, height: 844 });
   await popup.setViewportSize({ width: 1000, height: 650 });
   await expectFittedNames();
+  await page.getByTestId('room-more').click();
   await page.getByTestId('room-view-toggle').click();
   await expectFittedNames();
   // A local share exercises the shared screen/camera layout without live capture.

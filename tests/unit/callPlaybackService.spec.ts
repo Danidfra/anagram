@@ -25,6 +25,39 @@ function media(currentTime: number, ranges: number[][], seeking = false) {
 }
 
 describe('live call playback recovery', () => {
+  it('brings audio closer to live without repeatedly seeking or changing video policy', () => {
+    const audio = media(9.5, [[0, 10]]);
+    const video = media(9.5, [[0, 10]]);
+    followCallLive(audio.element, 'audio');
+    followCallLive(video.element);
+    expect(audio.element.currentTime).toBeCloseTo(9.8);
+    expect(video.seek).not.toHaveBeenCalled();
+    for (let i = 0; i < 10; i++) followCallLive(audio.element, 'audio');
+    expect(audio.seek).toHaveBeenCalledOnce();
+    const jitter = media(9.7, [[0, 10]]);
+    followCallLive(jitter.element, 'audio');
+    expect(jitter.seek).not.toHaveBeenCalled();
+  });
+
+  it('uses the audio cushion on stalled-event recovery and preserves seek/gap guards', () => {
+    vi.useFakeTimers();
+    const { element } = media(9.5, [[0, 10]]);
+    const stop = watchCallLive(element, 'audio');
+    vi.advanceTimersByTime(250);
+    expect(element.currentTime).toBeCloseTo(9.8);
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+    const seeking = media(8, [[0, 10]], true);
+    followCallLive(seeking.element, 'audio');
+    expect(seeking.seek).not.toHaveBeenCalled();
+    const gap = media(5, [
+      [0, 6],
+      [9.9, 10],
+    ]);
+    followCallLive(gap.element, 'audio');
+    expect(gap.seek).toHaveBeenCalledWith(9.9);
+  });
+
   it('recovers without browser progress events and stops work when detached', () => {
     vi.useFakeTimers();
     const ranges = [[0, 1]];

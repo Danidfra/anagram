@@ -143,7 +143,7 @@ async function scenario(kind, context) {
           if (video) element.playsInline = true;
           const player = { peer: i, video, element, frames: 0, chunks: 0, audioSamples: 0 };
           players.add(player);
-          const stopFollowing = watchCallLive(element);
+          const stopFollowing = watchCallLive(element, video ? 'video' : 'audio');
           let frameCallback;
           let audioTimer, audioSource, analyser, silent;
           if (video) {

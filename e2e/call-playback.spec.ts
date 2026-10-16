@@ -57,7 +57,7 @@ for (const kind of ['audio', 'video'] as const) {
           element.muted = true;
           document.body.append(element);
           // Recover even if a stalled WebView emits neither progress nor timeupdate.
-          const stopFollowing = watchCallLive(element);
+          const stopFollowing = watchCallLive(element, kind);
           element.onerror = () => errors.push(element.error?.message || 'media error');
           let seeks = 0;
           element.onseeking = () => seeks++;
@@ -221,7 +221,7 @@ for (const kind of ['audio', 'video'] as const) {
       // Browsers may catch up themselves; require low lag and sustained playback,
       // not an unnecessary application seek. Unit tests exercise forced drift.
       expect(result.seeks).toBeLessThanOrEqual(3);
-      expect(result.lag).toBeLessThan(0.75);
+      expect(result.lag).toBeLessThan(kind === 'audio' ? 0.45 : 0.75);
       expect(result.advanced).toBeGreaterThan(1.5);
       if (kind === 'video') expect(result.displayedFrames).toBeGreaterThan(5);
     });

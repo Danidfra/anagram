@@ -311,6 +311,8 @@ it.each([
     );
     await vi.advanceTimersByTimeAsync(4000);
     expect(Recorder.current.start).toHaveBeenCalledTimes(renews ? 2 : 1);
+    for (const args of Recorder.current.start.mock.calls)
+      expect(args).toEqual([mime === 'audio/webm;codecs=opus' ? 50 : 100]);
     // A completed WebM segment must arrive before the next initialization header.
     expect(sent).toEqual(renews ? [1, 2, 1] : [1]);
     expect(vi.getTimerCount()).toBe(renews ? 1 : 0);

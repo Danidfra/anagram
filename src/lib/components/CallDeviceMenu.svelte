@@ -49,7 +49,8 @@
     onclick={() => {
       open = !open;
       if (open) void onrefresh();
-    }}><Icon name="down" /></button
+    }}
+    ><span class="call-device-label">{$translate(`call.${kind}`)}</span><Icon name="down" /></button
   >
   {#if open}
     <div
@@ -85,6 +86,9 @@
 </div>
 
 <style>
+  .call-device-label {
+    display: none;
+  }
   .call-device-picker {
     position: relative;
     display: flex;
@@ -130,5 +134,26 @@
   .call-device-menu button:hover,
   .call-device-menu .chosen {
     background: #315a7b;
+  }
+  @media (max-width: 599px), (max-height: 500px) {
+    :global(.call-panel) .call-device-label {
+      display: inline;
+    }
+    :global(.call-panel) .call-device-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 44px;
+      width: 100%;
+      padding: 8px;
+      border-radius: 12px;
+      background: #ffffff14;
+    }
+    :global(.call-panel) .call-device-menu {
+      position: fixed;
+      bottom: max(96px, var(--app-bottom-inset, env(safe-area-inset-bottom)));
+      left: 50%;
+    }
   }
 </style>

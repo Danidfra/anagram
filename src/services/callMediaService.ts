@@ -189,6 +189,9 @@ export function recordCallMedia(
   onError: () => void,
   options?: CallRecordingOptions,
 ): () => void {
+  // Only the standalone Opus lane uses shorter chunks. Video and legacy
+  // combined audio/video retain their recording cadence.
+  const timeslice = mimeType === CALL_MIME_TYPES[1] ? 50 : 100;
   const recorder = new MediaRecorder(stream, {
     mimeType,
     audioBitsPerSecond: 32_000,
@@ -251,7 +254,7 @@ export function recordCallMedia(
   recorder.onstop = () => {
     if (stopped || !renewVideo) return;
     try {
-      recorder.start(100);
+      recorder.start(timeslice);
       scheduleKeyframe();
     } catch {
       failed(onError);
@@ -282,7 +285,7 @@ export function recordCallMedia(
       );
   };
   try {
-    recorder.start(100);
+    recorder.start(timeslice);
     scheduleKeyframe();
   } catch (cause) {
     stop();
