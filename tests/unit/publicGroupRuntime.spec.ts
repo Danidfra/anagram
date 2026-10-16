@@ -698,7 +698,7 @@ it('re-enables older paging when live traffic overflows a previously empty room'
   await runtime.open(encodeRoomLink(address));
   await vi.waitFor(() => expect(get(runtime.state).more).toBe(false));
   const live = [...listeners].find((l) => l.filters.some((f) => f.kinds?.includes(9)))!;
-  for (let i = 0; i < 201; i++) {
+  for (let i = 0; i < 301; i++) {
     live.options.onEvent?.(
       new ClientEvent(
         undefined,
@@ -715,11 +715,11 @@ it('re-enables older paging when live traffic overflows a previously empty room'
     );
   }
   // The queue persists and hydrates batches of 64. A full display window alone
-  // does not prove the 201st event (which enables older paging) has been handled.
-  await vi.waitFor(() => expect(get(runtime.state).messages.at(-1)?.content).toBe('Live 200'), {
+  // does not prove the 301st event (which enables older paging) has been handled.
+  await vi.waitFor(() => expect(get(runtime.state).messages.at(-1)?.content).toBe('Live 300'), {
     timeout: 5_000,
   });
-  expect(get(runtime.state).messages).toHaveLength(200);
+  expect(get(runtime.state).messages).toHaveLength(300);
   expect(get(runtime.state).more).toBe(true);
   await runtime.older();
   expect(get(runtime.state).messages[0].content).toBe('Live 0');

@@ -3,7 +3,7 @@ import { previewUrl } from '#src/utils/linkPreview.ts';
 
 export const ROOM_KIND = 34550;
 export const ROOM_PAGE = 50;
-export const ROOM_WINDOW = 200;
+export const ROOM_WINDOW = 300;
 export const MAX_ROOM_MEMBERS = 1024;
 export interface RoomAddress {
   address: string;
