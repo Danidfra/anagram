@@ -224,11 +224,20 @@ final class CallNotifications {
         if (expiryTask != null) expiryHandler.removeCallbacks(expiryTask);
         Context app = c.getApplicationContext();
         String token = pending.optString("token");
-        expiryTask = () -> {
-            synchronized (CallNotifications.class) {
-                JSONObject current = read(app, "pending");
-                if (token.equals(current.optString("token")) && current.optLong("expiresAt") <= System.currentTimeMillis())
+        expiryTask = new Runnable() {
+            @Override public void run() {
+                synchronized (CallNotifications.class) {
+                    JSONObject current = read(app, "pending");
+                    if (expiryTask != this || !token.equals(current.optString("token"))) return;
+                    long remaining = current.optLong("expiresAt") - System.currentTimeMillis();
+                    // Handler delays use uptime, while the invitation uses wall time.
+                    // If the clocks diverge, keep the one-shot expiry scheduled.
+                    if (remaining > 0) {
+                        expiryHandler.postDelayed(this, remaining);
+                        return;
+                    }
                     finish(app, current.optString("ownerPubkey"), current.optString("peer"), current.optString("callId"));
+                }
             }
         };
         expiryHandler.postDelayed(expiryTask, Math.max(1, pending.optLong("expiresAt") - System.currentTimeMillis()));

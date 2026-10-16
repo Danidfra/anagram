@@ -130,6 +130,32 @@ public final class CallNotificationsDeviceTest {
         assertEquals(0, pending().length()); assertNull(CallNotifications.action(context, token, true));
         waitForNotifications(0);
     }
+    @Test public void earlyExpiryCallbackStillClearsTheInvitation() throws Exception {
+        invite(); waitForNotifications(1);
+        String token = pending().getString("token");
+        java.lang.reflect.Field taskField = CallNotifications.class.getDeclaredField("expiryTask");
+        java.lang.reflect.Field handlerField = CallNotifications.class.getDeclaredField("expiryHandler");
+        taskField.setAccessible(true); handlerField.setAccessible(true);
+        Runnable task = (Runnable) taskField.get(null);
+        android.os.Handler handler = (android.os.Handler) handlerField.get(null);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            try {
+                // Simulate the timer firing before the wall-clock deadline,
+                // without changing the emulator clock or relying on a race.
+                handler.removeCallbacks(task);
+                JSONObject current = pending().put("expiresAt", System.currentTimeMillis() + 500);
+                context.getSharedPreferences("anagram-call-notifications", Context.MODE_PRIVATE)
+                    .edit().putString("pending", current.toString()).commit();
+                task.run();
+                assertEquals("An early callback must not dismiss a valid invitation", token, pending().getString("token"));
+            } catch (Exception error) { throw new AssertionError(error); }
+        });
+        long deadline = android.os.SystemClock.uptimeMillis() + 3000;
+        while (pending().length() != 0 && android.os.SystemClock.uptimeMillis() < deadline) Thread.sleep(20);
+        assertEquals("An early callback must reschedule expiry", 0, pending().length());
+        assertNull(CallNotifications.action(context, token, true));
+        waitForNotifications(0);
+    }
     @Test public void declineActionWorksWithoutAnActivity() throws Exception {
         invite(); waitForNotifications(1);
         Notification notification = calls()[0].getNotification();
