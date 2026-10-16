@@ -59,13 +59,12 @@ function bytesToHex(bytes: Uint8Array): string {
 
 export function generateNip46Secret(): string {
   const crypto = readCrypto();
-  if (crypto?.getRandomValues) {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    return bytesToHex(bytes);
+  if (typeof crypto?.getRandomValues !== 'function') {
+    throw new Error('Secure randomness is required for remote signer pairing.');
   }
-
-  return Array.from({ length: 4 }, () => Math.random().toString(36).slice(2)).join('');
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return bytesToHex(bytes);
 }
 
 function appendOptionalUriParam(params: URLSearchParams, key: string, value?: string): void {

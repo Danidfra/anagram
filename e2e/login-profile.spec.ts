@@ -2,6 +2,56 @@ import { test, expect } from '@playwright/test';
 import { WebSocketServer } from 'ws';
 import { finalizeEvent, generateSecretKey, matchFilters, nip19 } from 'nostr-tools';
 
+for (const account of ['created', 'resumed', 'imported'] as const) {
+  test(`${account} account handles a relay that never completes profile queries`, async ({
+    page,
+  }) => {
+    const relay = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise<void>((resolve) => relay.once('listening', resolve));
+    relay.on('connection', (socket) =>
+      socket.on('message', (data) => {
+        const [verb, id, ...filters] = JSON.parse(String(data));
+        if (verb !== 'REQ') return;
+        if (filters.some((filter: { kinds?: number[] }) => filter.kinds?.includes(0))) return;
+        socket.send(JSON.stringify(['EOSE', id]));
+      }),
+    );
+    try {
+      const url = `ws://127.0.0.1:${(relay.address() as { port: number }).port}/`;
+      await page.addInitScript((url) => {
+        const relays = JSON.stringify([{ url, read: true, write: true }]);
+        localStorage.setItem('relays', relays);
+        localStorage.setItem('nip65_relays', relays);
+      }, url);
+      await page.goto('/');
+      if (account === 'imported') {
+        await page.getByTestId('auth-open-key-button').click();
+        await page
+          .getByTestId('auth-private-key-input')
+          .fill(nip19.nsecEncode(generateSecretKey()));
+        await page.getByTestId('auth-login-button').click();
+      } else {
+        await page.getByTestId('auth-create-account-button').click();
+        await page.getByRole('button', { name: 'Login Now', exact: true }).click();
+      }
+      await expect(page.getByTestId('auth-onboarding-relays-next-button')).toBeEnabled();
+      if (account === 'resumed') await page.reload();
+      await page.getByTestId('auth-onboarding-relays-next-button').click();
+      if (account === 'imported') {
+        // A timed-out lookup must not assert that an existing account has no profile.
+        await expect(page.getByTestId('auth-onboarding-retry-button')).toBeVisible();
+        await expect(page.getByTestId('auth-onboarding-profile-start-button')).toHaveCount(0);
+      } else {
+        await expect(page.getByTestId('auth-onboarding-profile-start-button')).toBeVisible();
+        await expect(page.getByRole('alert')).toHaveCount(0);
+      }
+    } finally {
+      for (const socket of relay.clients) socket.terminate();
+      relay.close();
+    }
+  });
+}
+
 for (const slow of [false, true]) {
   test(`private-key login finds an existing profile${slow ? ' on a slower relay' : ''}`, async ({
     page,

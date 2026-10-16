@@ -27,6 +27,52 @@ test('registration downloads the secret without rendering it and continues throu
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
 });
 
+for (const failure of ['unavailable', 'throws'] as const) {
+  test(`registration fails safely when secure randomness ${failure} and allows retry`, async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto('/');
+    await expect(page.getByTestId('auth-create-account-button')).toBeVisible();
+    await page.evaluate((failure) => {
+      const original = crypto.getRandomValues.bind(crypto);
+      Object.defineProperty(crypto, 'getRandomValues', {
+        configurable: true,
+        value:
+          failure === 'unavailable'
+            ? undefined
+            : () => {
+                throw new Error('ENTROPY_FAILURE_PRIVATE_SENTINEL');
+              },
+      });
+      (window as any).__restoreTestRandomness = () => {
+        Object.defineProperty(crypto, 'getRandomValues', {
+          configurable: true,
+          value: original,
+        });
+      };
+    }, failure);
+    await page.getByTestId('auth-create-account-button').click();
+    await expect(page.getByRole('alert')).toHaveText(
+      'Unable to securely create an account. Please try again.',
+    );
+    await expect(page.getByRole('progressbar')).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: 'Download Account Secret', exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Login Now', exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem('nsec'))).toBeNull();
+    await page.evaluate(() => (window as any).__restoreTestRandomness());
+    await page.getByTestId('auth-create-account-button').click();
+    await expect(
+      page.getByRole('button', { name: 'Download Account Secret', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}
+
 test('signer tabs, pairing QR, cancellation and key warning match the original flow', async ({
   page,
 }) => {

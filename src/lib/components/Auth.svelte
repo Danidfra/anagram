@@ -104,13 +104,20 @@
         return;
       }
       if (attempt !== generation) return;
+      // Bind fresh-account onboarding to its public key so reloads preserve it
+      // without skipping profile discovery for a different/imported account.
+      localStorage.setItem(
+        'anagram-onboarding-pending',
+        kind === 'key' && created && key === created
+          ? `created:${nostr.getLoggedInPublicKeyHex()}`
+          : '1',
+      );
       key = '';
       created = '';
       createdNpub = '';
       pairing = null;
       qr = '';
       authUrl = '';
-      localStorage.setItem('anagram-onboarding-pending', '1');
       step = 'onboarding';
     } catch {
       // Signer and parser errors may embed input. Never echo an nsec/token.
@@ -127,13 +134,22 @@
     error = '';
     step = 'create';
     generating = true;
-    const secret = generateSecretKey();
+    let secret: Uint8Array | undefined;
     try {
+      secret = generateSecretKey();
       created = nip19.nsecEncode(secret);
       createdNpub = nip19.npubEncode(getPublicKey(secret));
       key = created;
+    } catch {
+      key = '';
+      created = '';
+      createdNpub = '';
+      generating = false;
+      step = 'methods';
+      error = 'Unable to securely create an account. Please try again.';
+      return;
     } finally {
-      secret.fill(0);
+      secret?.fill(0);
     }
     createTimer = setTimeout(() => {
       generating = false;
