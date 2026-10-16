@@ -79,12 +79,40 @@ it('rejects non-owners, foreign messages and deleted messages', async () => {
   f.row.chat_public_key = 'f'.repeat(64);
   await expect(f.pins.set(group, id)).rejects.toThrow('this group');
   expect((await f.pins.read(group))?.available).toBe(false);
+  expect((await f.pins.read(group))?.message).toBeNull();
   f.row.chat_public_key = group;
   f.row.meta = { deleted: {} };
   await expect(f.pins.set(group, id)).rejects.toThrow('this group');
   expect((await f.pins.read(group))?.text).toBe('Message deleted');
   expect((await f.pins.read(group))?.deleted).toBe(true);
   expect(f.publish).not.toHaveBeenCalled();
+});
+it('returns the full pin from one indexed lookup without reading surrounding history', async () => {
+  const f = setup();
+  const before = vi.spyOn(chatDataService, 'listMessagesBefore');
+  const after = vi.spyOn(chatDataService, 'listMessagesAfter');
+  f.row.message = 'Full **pinned** text\nwith another line';
+  f.row.meta = { attachments: [{ type: 'media', url: 'https://example.test/image.png' }] };
+  const pin = await f.pins.read(group);
+  expect(pin?.message).toMatchObject({
+    id: '1',
+    chatId: group,
+    eventId: id,
+    sender: 'me',
+    text: f.row.message,
+    meta: f.row.meta,
+  });
+  expect(chatDataService.getMessageByEventIdOrEditReference).toHaveBeenCalledExactlyOnceWith(id);
+  expect(before).not.toHaveBeenCalled();
+  expect(after).not.toHaveBeenCalled();
+});
+it('discards pin content if the account changes during the indexed lookup', async () => {
+  const f = setup();
+  vi.spyOn(chatDataService, 'getMessageByEventIdOrEditReference').mockImplementation(async () => {
+    f.account(null);
+    return f.row;
+  });
+  expect(await f.pins.read(group)).toBeNull();
 });
 it('does not publish if the account changes while reading the target', async () => {
   const f = setup();

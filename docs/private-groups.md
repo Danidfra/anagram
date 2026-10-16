@@ -25,6 +25,8 @@ Private groups use Nostr NIP-171 (currently in draft) over NIP-17, NIP-44 and NI
 
 Anagram adds optional `pinned` (rumor event ID) and `pinned_created_at` (Unix timestamp hint) to the group-signed `kind:0` profile. Owners replace or clear the pin. Only the reference is public; message content remains encrypted. Clients resolve it only within that group and the history they can decrypt.
 
+Opening the pin shows a separate preview, just like public groups, without moving the conversation or replacing its loaded message window. Surrounding history is reached by scrolling up normally. Missing pins use the existing targeted encrypted-message recovery.
+
 The full key derivation, recovery format and validation rules are defined in NIP-171.
 
 ## History paging

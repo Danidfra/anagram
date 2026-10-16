@@ -13,6 +13,7 @@
   import { messagePresentation, messageMenuPosition } from '#src/utils/messagePresentation.ts';
   import ThreadHeader from '../ThreadHeader.svelte';
   import PinnedMessage from '../PinnedMessage.svelte';
+  import PinnedMessagePreview from '../PinnedMessagePreview.svelte';
   import ThreadSearch from '../ThreadSearch.svelte';
   import ThreadTimeline from '../ThreadTimeline.svelte';
   import MessageRow from '../MessageRow.svelte';
@@ -658,21 +659,18 @@
     onclose={closeActions}
   />{/if}
 {#if pinPreview && room?.pinned && !$state.history}
-  <ModalFrame title="Pinned message" onclose={() => (pinPreview = false)}>
-    <div class="pin-preview">
-      {#if pinned?.nostrEvent}
-        <PublicMessage
-          event={pinned.nostrEvent.event}
-          displayMessage={pinned}
-          trusted={roomPolicy(room, pinned.authorPublicKey) === 'trusted'}
-          oncontact={onauthor}
-        />
-      {:else}
-        <p role="status">{pinLoading ? 'Loading pinned message…' : 'Message unavailable'}</p>
-      {/if}
-      <p class="pin-preview-hint">Scroll up in the conversation to read surrounding messages.</p>
-    </div>
-  </ModalFrame>
+  <PinnedMessagePreview onclose={() => (pinPreview = false)}>
+    {#if pinned?.nostrEvent}
+      <PublicMessage
+        event={pinned.nostrEvent.event}
+        displayMessage={pinned}
+        trusted={roomPolicy(room, pinned.authorPublicKey) === 'trusted'}
+        oncontact={onauthor}
+      />
+    {:else}
+      <p role="status">{pinLoading ? 'Loading pinned message…' : 'Message unavailable'}</p>
+    {/if}
+  </PinnedMessagePreview>
 {/if}
 
 {#if inspectedMessage}<ModalFrame
@@ -688,15 +686,6 @@
   </ModalFrame>{/if}
 
 <style>
-  .pin-preview {
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .pin-preview-hint {
-    margin: 16px 0 0;
-    color: var(--nc-text-secondary);
-    font-size: 12px;
-  }
   .thread-feedback {
     position: relative;
     flex: 0 0 0;

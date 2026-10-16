@@ -11,6 +11,21 @@ for (const kind of ['private', 'public'] as const) {
       b = member.page;
     const rows = (page: Page) =>
       page.getByTestId(kind === 'private' ? 'message-bubble' : 'public-message');
+    const previewPin = async (text: string) => {
+      const thread = a.getByTestId('chat-thread');
+      const ids = () =>
+        rows(a).evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-event-id')));
+      const before = await ids();
+      const top = await thread.evaluate((node) => node.scrollTop);
+      await a.getByRole('button', { name: 'View pinned message' }).click();
+      const preview = a.getByRole('dialog', { name: 'Pinned message', exact: true });
+      await expect(preview).toContainText(text);
+      expect(await ids()).toEqual(before);
+      await a.screenshot({ path: info.outputPath(`${kind}-pin-preview.png`) });
+      await preview.getByRole('button', { name: 'Close dialog' }).click();
+      expect(await ids()).toEqual(before);
+      expect(await thread.evaluate((node) => node.scrollTop)).toBe(top);
+    };
     const send = async (text: string) => {
       await a
         .getByRole('textbox', {
@@ -70,10 +85,33 @@ for (const kind of ['private', 'public'] as const) {
         await expect(a.getByTestId('group-details').getByRole('status')).toHaveText('Saved');
         await a.getByRole('button', { name: 'Close dialog', exact: true }).click();
       } else await expect(a.getByRole('dialog')).toBeHidden();
+      if (kind === 'private') {
+        // Cached history places the pin outside the initial bounded window.
+        // Previewing it must not page the thread back to that old message.
+        await a.evaluate(async () => {
+          const { useChatStore } = await import('/src/stores/chatStore.svelte.ts');
+          const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
+          const { chatDataService } = await import('/src/services/chatDataService.ts');
+          const group = useChatStore().selectedChat!.publicKey;
+          const pin = await useNostrStore().privateGroupPins.read(group);
+          const message = pin!.message!;
+          for (let index = 0; index < 150; index++)
+            await chatDataService.createMessage({
+              chat_public_key: group,
+              author_public_key: message.authorPublicKey,
+              message: `Cached history ${index}`,
+              created_at: new Date(Date.parse(message.sentAt) + index + 1).toISOString(),
+            });
+        });
+      }
       await a.reload();
       await b.reload();
       await expect(a.getByTestId('pinned-message')).toContainText('A useful group announcement');
       await expect(b.getByTestId('pinned-message')).toContainText('A useful group announcement');
+      if (kind === 'private') {
+        await expect(rows(a).filter({ hasText: 'Cached history 149' })).toBeVisible();
+        await expect(rows(a).filter({ hasText: 'A useful group announcement' })).toHaveCount(0);
+      }
       for (const width of [1280, 390]) {
         await a.setViewportSize({ width, height: 844 });
         for (const dark of [false, true]) {
@@ -82,18 +120,17 @@ for (const kind of ['private', 'public'] as const) {
           await expect(card).toBeInViewport();
           expect(await card.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
         }
+        await previewPin('A useful group announcement');
       }
-      if (kind === 'public') {
-        await a.getByRole('button', { name: 'View pinned message' }).click();
-        const preview = a.getByRole('dialog', { name: 'Pinned message', exact: true });
-        await expect(preview).toContainText('A useful group announcement');
-        await a.screenshot({ path: info.outputPath('public-pin-preview-mobile.png') });
-        await preview.getByRole('button', { name: 'Close dialog' }).click();
-      } else {
-        await a.getByRole('button', { name: 'Go to pinned message' }).click();
-        await expect(rows(a).filter({ hasText: 'A useful group announcement' })).toHaveClass(
-          /highlighted/,
-        );
+      if (kind === 'private') {
+        await expect(rows(a).filter({ hasText: 'A useful group announcement' })).toHaveCount(0);
+        await expect(async () => {
+          if (await rows(a).filter({ hasText: 'A useful group announcement' }).count()) return;
+          await a.getByTestId('thread-load-older').click();
+          await expect(rows(a).filter({ hasText: 'A useful group announcement' })).toHaveCount(1);
+        }).toPass();
+        await expect(rows(a)).toHaveCount(151);
+        await previewPin('A useful group announcement');
       }
       await a.screenshot({ path: info.outputPath(`${kind}-pin-mobile.png`) });
       // Editing and deleting the target update the card via the same message state.
@@ -105,7 +142,7 @@ for (const kind of ['private', 'public'] as const) {
       await send('Updated group announcement');
       await expect(a.getByTestId('pinned-message')).toContainText('Updated group announcement');
       await expect(b.getByTestId('pinned-message')).toContainText('Updated group announcement');
-      if (kind === 'public') {
+      {
         await a.getByRole('button', { name: 'View pinned message' }).click();
         const preview = a.getByRole('dialog', { name: 'Pinned message', exact: true });
         await expect(preview).toContainText('Updated group announcement');
@@ -120,7 +157,7 @@ for (const kind of ['private', 'public'] as const) {
       await a.getByRole('menuitem', { name: 'Delete', exact: true }).click();
       await expect(a.getByTestId('pinned-message')).toContainText('Message deleted');
       await expect(b.getByTestId('pinned-message')).toContainText('Message deleted');
-      if (kind === 'public') {
+      {
         await a.getByRole('button', { name: 'View pinned message' }).click();
         const preview = a.getByRole('dialog', { name: 'Pinned message', exact: true });
         await expect(preview).toContainText('Message deleted');

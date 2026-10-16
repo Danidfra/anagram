@@ -13,6 +13,7 @@
   import MessageInfo from './MessageInfo.svelte';
   import ThreadHeader from './ThreadHeader.svelte';
   import PinnedMessage from './PinnedMessage.svelte';
+  import PinnedMessagePreview from './PinnedMessagePreview.svelte';
   import type { PrivateGroupPin } from '#src/stores/nostr/privateGroupPins.ts';
   import ThreadSearch from './ThreadSearch.svelte';
   import ComposerContext from './ComposerContext.svelte';
@@ -288,9 +289,21 @@
   let groupPin: PrivateGroupPin | null = null;
   let pinBusy = false;
   let pinRevision = 0;
+  let pinPreview: { group: string; eventId: string; account: string | null } | null = null;
+  let pinLoading = false;
+  let pinLoadRevision = 0;
+  let pinError = '';
   $: pinGroup = $state.selected?.type === 'group' ? $state.selected.publicKey : '';
   $: void refreshGroupPin(pinGroup, $state.contactVersion, $state.thread.items);
   $: canPin = Boolean(groupPin?.group === pinGroup && groupPin?.canPin);
+  $: if (pinPreview && (pinPreview.group !== pinGroup || pinPreview.eventId !== groupPin?.eventId))
+    closePinPreview();
+  function closePinPreview() {
+    pinPreview = null;
+    pinLoadRevision++;
+    pinLoading = false;
+    pinError = '';
+  }
   async function refreshGroupPin(group: string, _version: number, _items: Message[]) {
     const revision = ++pinRevision;
     if (groupPin?.group !== group) groupPin = null;
@@ -313,22 +326,40 @@
   }
   async function openPinnedMessage() {
     const pin = groupPin;
-    if (!pin?.eventId || pin.group !== $state.selected?.publicKey) return;
-    await act(async () => {
-      let target = await messages.ensureMessageLoadedByEventId(pin.group, pin.eventId);
-      if (!target) {
+    if (!pin?.eventId || pin.group !== pinGroup || pinLoading) return;
+    const preview = {
+      group: pin.group,
+      eventId: pin.eventId,
+      account: nostr.getLoggedInPublicKeyHex(),
+    };
+    pinPreview = preview;
+    pinError = '';
+    if (pin.message) return;
+    const revision = ++pinLoadRevision;
+    const active = () =>
+      pinPreview === preview && preview.account === nostr.getLoggedInPublicKeyHex();
+    pinLoading = true;
+    try {
+      const current = await nostr.privateGroupPins.read(pin.group);
+      if (!active()) return;
+      if (current?.eventId !== pin.eventId) {
+        closePinPreview();
+        return;
+      }
+      if (!current.message) {
         await nostr.repairMissingMessageDependency(pin.group, pin.eventId, {
           reason: 'reply-open',
           immediate: true,
           force: true,
           referenceCreatedAt: pin.createdAt,
         });
-        target = await messages.ensureMessageLoadedByEventId(pin.group, pin.eventId);
       }
-      if (pin.group !== $state.selected?.publicKey) return;
-      if (!target) throw new Error('Pinned message is not available in your group history.');
-      await jump(target.id);
-    });
+      if (active()) await refreshGroupPin(pinGroup, $state.contactVersion, $state.thread.items);
+    } catch (error) {
+      if (active()) pinError = (error as Error).message;
+    } finally {
+      if (revision === pinLoadRevision) pinLoading = false;
+    }
   }
   async function messageAction(action: string, message: Message) {
     contextMessage = '';
@@ -1408,9 +1439,10 @@
         {#if groupPin?.group === pinGroup && groupPin?.eventId}
           <PinnedMessage
             text={groupPin.text}
+            openLabel="View pinned message"
             onopen={() => void openPinnedMessage()}
             onunpin={canPin ? () => void setGroupPin(null) : undefined}
-            busy={pinBusy}
+            busy={pinBusy || pinLoading}
           />
         {/if}
         {#if searching}
@@ -1808,6 +1840,32 @@
       {#if modalError}<p role="alert" class="error">{modalError}</p>{/if}
     </ModalFrame>
   {/if}
+{/if}
+{#if pinPreview && groupPin?.group === pinPreview.group && groupPin.eventId === pinPreview.eventId}
+  <PinnedMessagePreview onclose={closePinPreview}>
+    {#if groupPin.message}
+      <MessageBody
+        message={groupPin.message}
+        {mentionProfiles}
+        oncontact={(pubkey) => {
+          closePinPreview();
+          void openAuthor(pubkey);
+        }}
+        onroom={(link) => {
+          closePinPreview();
+          identifier = link;
+          modal = 'room';
+        }}
+      />
+    {:else}
+      <p role="status">
+        {pinLoading
+          ? 'Loading pinned message…'
+          : 'Pinned message is not available in your group history.'}
+      </p>
+    {/if}
+    {#if pinError}<p role="alert" class="error">{pinError}</p>{/if}
+  </PinnedMessagePreview>
 {/if}
 {#if chatConfirmation}
   <ModalFrame

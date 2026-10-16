@@ -2,6 +2,7 @@ import { contactsService } from '#src/services/contactsService.ts';
 import { chatDataService } from '#src/services/chatDataService.ts';
 import { buildMessageReplyPreviewContent } from '#src/utils/messageAttachments.ts';
 import type { PublishUserMetadataInput } from './types.ts';
+import type { Message } from '#src/types/chat.ts';
 
 export interface PrivateGroupPin {
   group: string;
@@ -11,6 +12,7 @@ export interface PrivateGroupPin {
   text: string;
   available: boolean;
   deleted: boolean;
+  message: Message | null;
 }
 
 export function createPrivateGroupPins(deps: {
@@ -37,6 +39,21 @@ export function createPrivateGroupPins(deps: {
       available: Boolean(message),
       deleted: Boolean(message?.meta.deleted),
       createdAt: contact.meta.pinned_created_at,
+      // Reuse this indexed lookup for the standalone preview, without loading
+      // a timeline window around the pin or reading neighboring messages.
+      message: message
+        ? {
+            id: String(message.id),
+            chatId: group,
+            eventId: message.event_id,
+            nostrEvent: null,
+            authorPublicKey: message.author_public_key,
+            sender: message.author_public_key === account ? 'me' : 'them',
+            sentAt: message.created_at,
+            text: message.message,
+            meta: { ...message.meta },
+          }
+        : null,
       text: message
         ? message.meta.deleted
           ? 'Message deleted'
