@@ -57,6 +57,48 @@ async function create(page: Page, name = 'Public lounge') {
     slug: decoded.data.identifier,
   };
 }
+for (const width of [1280, 390]) {
+  test(`opening public groups preserves sidebar order at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await login(page);
+    const first = await create(page, 'First joined group');
+    await navigateInApp(page, '/chats');
+    await create(page, 'Second joined group');
+    await navigateInApp(page, '/chats');
+    const rows = page.getByTestId('public-chat-item');
+    const order = () =>
+      rows.evaluateAll((items) => items.map((item) => item.getAttribute('data-chat-id')));
+    const initial = await order();
+    expect(initial.indexOf(first.address)).toBe(1);
+    await rows.filter({ hasText: 'First joined group' }).click();
+    await expect(page.getByRole('button', { name: 'Public group settings' })).toContainText(
+      'First joined group',
+    );
+    await expect(page.getByRole('button', { name: 'Refresh public group' })).toBeEnabled();
+    // Wait for the open/refresh save to finish before checking the order.
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
+          let refreshing = true;
+          const unsubscribe = useNostrStore().publicGroups.state.subscribe((state) => {
+            refreshing = state.refreshing;
+          });
+          unsubscribe();
+          return refreshing;
+        }),
+      )
+      .toBe(false);
+    expect(await order()).toEqual(initial);
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Public group settings' })).toContainText(
+      'First joined group',
+    );
+    await navigateInApp(page, '/chats');
+    expect(await order()).toEqual(initial);
+  });
+}
+
 test('create, share, edit and moderate public groups without rich hydration for strangers', async ({
   page,
 }, info) => {

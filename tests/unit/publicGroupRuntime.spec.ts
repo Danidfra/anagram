@@ -128,6 +128,45 @@ function room(key: Uint8Array, slug: string, extra: string[][] = [], created_at 
     key,
   );
 }
+it('keeps joined rooms in place through opens, metadata refreshes and reloads, but promotes a rejoin', async () => {
+  const key = generateSecretKey();
+  const first = room(key, 'first'),
+    second = room(key, 'second');
+  const { runtime, events } = setup([first, second], key);
+  const firstRoom = parsePublicRoom(first);
+  const firstLink = encodeRoomLink(firstRoom);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+  await runtime.open(firstLink);
+  now.mockReturnValue(2000);
+  await runtime.open(encodeRoomLink(parsePublicRoom(second)));
+  const order = () => get(runtime.state).rooms.map((row) => [row.room.slug, row.updated]);
+  const expected = order();
+  expect(expected).toEqual([
+    ['second', 2000],
+    ['first', 1000],
+  ]);
+
+  now.mockReturnValue(3000);
+  await runtime.open(firstLink);
+  expect(order()).toEqual(expected);
+  const refreshed = room(key, 'first', [['trusted', getPublicKey(generateSecretKey())]], 11);
+  events.push(refreshed);
+  await runtime.open(firstLink);
+  expect(get(runtime.state).room?.event.id).toBe(refreshed.id);
+  expect(order()).toEqual(expected);
+
+  runtime.stop();
+  await runtime.init();
+  expect(order()).toEqual(expected);
+  await runtime.leave(firstRoom.address);
+  now.mockReturnValue(4000);
+  await runtime.open(firstLink);
+  expect(order()).toEqual([
+    ['first', 4000],
+    ['second', 2000],
+  ]);
+});
+
 it('requires signed two-sided handover, switches policy, and pins accepted transfers', async () => {
   const old = generateSecretKey(),
     next = generateSecretKey(),

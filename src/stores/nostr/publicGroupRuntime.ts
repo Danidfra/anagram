@@ -354,7 +354,8 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       room,
       joined,
       successor: successor || previous?.successor,
-      updated: Date.now(),
+      // Opening or refreshing an existing membership must not move its sidebar row.
+      updated: previous?.joined ? previous.updated : Date.now(),
     });
     assertSession(owner);
     state.update((s) => ({
