@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "اختيار مكبر الصوت",
   "call.speaker": "مكبر الصوت",
   "call.systemDefault": "افتراضي النظام",
+  "call.useEarpiece": "استخدم سماعة الأذن أو سماعة الرأس المتصلة",
+  "call.useLoudspeaker": "استخدم مكبر الصوت",
   "call.muteSpeaker": "كتم مكبر الصوت",
   "call.unmuteSpeaker": "إلغاء كتم مكبر الصوت",
   "call.speakerUnavailable": "المتصفح ده بيستخدم سماعة النظام. اختار جهاز إخراج الصوت من إعدادات النظام.",

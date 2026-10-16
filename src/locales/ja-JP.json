@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "スピーカーを選択",
   "call.speaker": "スピーカー",
   "call.systemDefault": "システムの既定値",
+  "call.useEarpiece": "受話口または接続中のヘッドセットを使う",
+  "call.useLoudspeaker": "スピーカーを使う",
   "call.muteSpeaker": "スピーカーをミュート",
   "call.unmuteSpeaker": "スピーカーのミュートを解除",
   "call.speakerUnavailable": "このブラウザーはシステムのスピーカーを使用します。出力機器はシステム設定で選択してください。",

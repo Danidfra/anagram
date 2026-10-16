@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "Elegir altavoz",
   "call.speaker": "Altavoz",
   "call.systemDefault": "Predeterminado del sistema",
+  "call.useEarpiece": "Usar el auricular o los auriculares conectados",
+  "call.useLoudspeaker": "Usar el altavoz",
   "call.muteSpeaker": "Silenciar altavoz",
   "call.unmuteSpeaker": "Activar altavoz",
   "call.speakerUnavailable": "Este navegador usa el altavoz del sistema. Elige el dispositivo de salida en los ajustes del sistema.",

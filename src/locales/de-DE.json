@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "Lautsprecher auswählen",
   "call.speaker": "Lautsprecher",
   "call.systemDefault": "Systemstandard",
+  "call.useEarpiece": "Hörer oder verbundenes Headset verwenden",
+  "call.useLoudspeaker": "Lautsprecher verwenden",
   "call.muteSpeaker": "Lautsprecher stummschalten",
   "call.unmuteSpeaker": "Lautsprecher einschalten",
   "call.speakerUnavailable": "Dieser Browser verwendet den Systemlautsprecher. Wähle dein Ausgabegerät in den Systemeinstellungen.",

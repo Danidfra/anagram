@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "స్పీకర్ ఎంచుకో",
   "call.speaker": "స్పీకర్",
   "call.systemDefault": "సిస్టమ్ డిఫాల్ట్",
+  "call.useEarpiece": "ఇయర్‌పీస్ లేదా కనెక్ట్ చేసిన హెడ్‌సెట్‌ను ఉపయోగించండి",
+  "call.useLoudspeaker": "లౌడ్‌స్పీకర్‌ను ఉపయోగించండి",
   "call.muteSpeaker": "స్పీకర్ మ్యూట్ చేయి",
   "call.unmuteSpeaker": "స్పీకర్ మ్యూట్ తొలగించు",
   "call.speakerUnavailable": "ఈ బ్రౌజర్ సిస్టమ్ స్పీకర్ వాడుతుంది. సిస్టమ్ సెట్టింగ్‌లలో అవుట్‌పుట్ పరికరాన్ని ఎంచుకోండి.",

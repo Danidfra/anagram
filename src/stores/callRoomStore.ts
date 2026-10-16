@@ -11,6 +11,7 @@ import {
   recordCallMedia,
 } from '#src/services/callMediaService.ts';
 import { primeCallAudio } from '#src/services/callPlaybackService.ts';
+import { acquireMobileCallAudio, hasMobileCallAudio } from '#src/services/mobileCallAudio.ts';
 import { contactsService } from '#src/services/contactsService.ts';
 import { createIrohCallEndpoint } from '#src/services/irohCallTransport.ts';
 import { useCallStore } from './callStore';
@@ -50,6 +51,7 @@ export const useCallRoomStore = createStore('callRooms', () =>
       createReceiver: createCallMediaReceiver,
       record: recordCallMedia,
       unlockPlayback: primeCallAudio,
+      ...(hasMobileCallAudio() ? { acquireAudioRoute: acquireMobileCallAudio } : {}),
     },
   }),
 );

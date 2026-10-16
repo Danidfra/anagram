@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "اسپیکر منتخب کریں",
   "call.speaker": "اسپیکر",
   "call.systemDefault": "نظام کا طے شدہ",
+  "call.useEarpiece": "ایئرپیس یا منسلک ہیڈسیٹ استعمال کریں",
+  "call.useLoudspeaker": "لاؤڈ اسپیکر استعمال کریں",
   "call.muteSpeaker": "اسپیکر خاموش کریں",
   "call.unmuteSpeaker": "اسپیکر کی خاموشی ختم کریں",
   "call.speakerUnavailable": "یہ براؤزر نظام کا اسپیکر استعمال کرتا ہے۔ نظام کی ترتیبات میں آؤٹ پٹ آلہ منتخب کریں۔",

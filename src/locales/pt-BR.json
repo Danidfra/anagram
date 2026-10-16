@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "Escolher alto-falante",
   "call.speaker": "Alto-falante",
   "call.systemDefault": "Padrão do sistema",
+  "call.useEarpiece": "Usar o fone do telefone ou o headset conectado",
+  "call.useLoudspeaker": "Usar o viva-voz",
   "call.muteSpeaker": "Silenciar alto-falante",
   "call.unmuteSpeaker": "Ativar alto-falante",
   "call.speakerUnavailable": "Este navegador usa o alto-falante do sistema. Escolha o dispositivo de saída nas configurações do sistema.",

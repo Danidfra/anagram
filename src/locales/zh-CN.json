@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "选择扬声器",
   "call.speaker": "扬声器",
   "call.systemDefault": "系统默认",
+  "call.useEarpiece": "使用听筒或已连接的耳机",
+  "call.useLoudspeaker": "使用扬声器",
   "call.muteSpeaker": "静音扬声器",
   "call.unmuteSpeaker": "取消扬声器静音",
   "call.speakerUnavailable": "此浏览器使用系统扬声器。请在系统设置中选择输出设备。",

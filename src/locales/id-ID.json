@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "Pilih pengeras suara",
   "call.speaker": "Pengeras suara",
   "call.systemDefault": "Bawaan sistem",
+  "call.useEarpiece": "Gunakan earpiece atau headset yang terhubung",
+  "call.useLoudspeaker": "Gunakan pengeras suara",
   "call.muteSpeaker": "Bisukan pengeras suara",
   "call.unmuteSpeaker": "Bunyikan pengeras suara",
   "call.speakerUnavailable": "Peramban ini memakai pengeras suara sistem. Pilih perangkat keluaran dalam pengaturan sistem.",

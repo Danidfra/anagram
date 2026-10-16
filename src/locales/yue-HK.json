@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "選擇喇叭",
   "call.speaker": "喇叭",
   "call.systemDefault": "系統預設",
+  "call.useEarpiece": "使用聽筒或已連接嘅耳機",
+  "call.useLoudspeaker": "使用擴音器",
   "call.muteSpeaker": "將喇叭靜音",
   "call.unmuteSpeaker": "取消喇叭靜音",
   "call.speakerUnavailable": "呢個瀏覽器使用系統喇叭。請喺系統設定揀選輸出裝置。",

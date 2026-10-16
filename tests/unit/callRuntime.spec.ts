@@ -91,6 +91,7 @@ function harness() {
       .fn()
       .mockResolvedValue(new MediaStream([camera] as unknown as MediaStreamTrack[])),
     unlockPlayback: vi.fn(),
+    acquireAudioRoute: vi.fn<() => Promise<() => void>>().mockResolvedValue(vi.fn()),
     createReceiver: vi.fn(() => receiver),
     record: vi.fn(() => stopRecording),
   };
@@ -121,6 +122,39 @@ afterEach(() => {
 });
 
 describe('call negotiation and lifetime', () => {
+  it('releases mobile routing on hangup and cancellation during route setup', async () => {
+    const h = setup(),
+      release = vi.fn();
+    h.deps.acquireAudioRoute.mockResolvedValueOnce(release);
+    await h.runtime.start(peer, 'audio');
+    expect(h.deps.acquireAudioRoute).toHaveBeenCalledTimes(1);
+    h.runtime.end();
+    h.runtime.reset();
+    expect(release).toHaveBeenCalledTimes(1);
+    let finish!: (release: () => void) => void;
+    h.deps.acquireAudioRoute.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const starting = h.runtime.start(peer, 'audio');
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    h.runtime.end();
+    const lateRelease = vi.fn();
+    finish(lateRelease);
+    await starting;
+    expect(lateRelease).toHaveBeenCalledTimes(1);
+    expect(h.runtime.localStream).toBeNull();
+  });
+  it('stops captured media if native routing fails', async () => {
+    const h = setup();
+    h.deps.acquireAudioRoute.mockRejectedValueOnce(new Error('route failed'));
+    await h.runtime.start(peer, 'audio');
+    expect(h.microphone.stop).toHaveBeenCalled();
+    expect(h.runtime.error).toBe('call.error.speaker');
+    expect(h.deps.createEndpoint).not.toHaveBeenCalled();
+  });
   it('records only the caller after an invitation, including declined calls', async () => {
     const caller = setup();
     await caller.runtime.start(peer, 'audio');

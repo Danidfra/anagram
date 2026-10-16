@@ -30,3 +30,10 @@ export function followCallLive(element: HTMLMediaElement | null) {
   if (end - element.currentTime > 0.6)
     element.currentTime = Math.max(element.buffered.start(latest), end - 0.35);
 }
+
+// A stalled WebView can stop emitting both progress and timeupdate. Keep the
+// live cursor moving independently, only for the lifetime of a remote player.
+export function watchCallLive(element: HTMLMediaElement): () => void {
+  const timer = setInterval(() => followCallLive(element), 250);
+  return () => clearInterval(timer);
+}

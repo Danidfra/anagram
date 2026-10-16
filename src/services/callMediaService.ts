@@ -1,6 +1,7 @@
 import type { CallMode } from '#src/types/call.ts';
 import { CALL_MIME_TYPES, CALL_VIDEO_MIME_TYPE } from '#src/utils/callSignal.ts';
 import { isIosNative } from '#src/lib/platform/ios.ts';
+import { isTauri } from '@tauri-apps/api/core';
 
 // The native iPhone app exposes ManagedMediaSource instead of MediaSource.
 // Other clients retain their existing playback path and capability checks.
@@ -194,6 +195,7 @@ export function recordCallMedia(
     videoBitsPerSecond: options?.videoBitsPerSecond ?? 600_000,
   });
   let stopped = false;
+  let keyframeTimer: ReturnType<typeof setTimeout> | undefined;
   let queuedBytes = 0;
   let queue = Promise.resolve();
   let sequence = 0;
@@ -201,10 +203,12 @@ export function recordCallMedia(
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    clearTimeout(keyframeTimer);
     clearInterval(watchdog);
     queuedAt.clear();
     recorder.ondataavailable = null;
     recorder.onerror = null;
+    recorder.onstop = null;
     if (recorder.state !== 'inactive') recorder.stop();
   };
   const failed = (callback: () => void) => {
@@ -223,6 +227,36 @@ export function recordCallMedia(
       }, 250)
     : undefined;
   recorder.onerror = () => failed(onError);
+  // WebKitGTK's VP8 recorder disables periodic keyframes. Renew its video-only
+  // recording before the receiver's eight-second buffer discards the first one.
+  // GStreamer keeps monotonic timestamps across recordings; ordered WebM init
+  // segments can reuse the same MSE player without interrupting the audio track.
+  const renewVideo =
+    mimeType === CALL_VIDEO_MIME_TYPE &&
+    isTauri() &&
+    /Linux/.test(navigator.userAgent) &&
+    !/Android/.test(navigator.userAgent);
+  const scheduleKeyframe = () => {
+    if (renewVideo)
+      keyframeTimer = setTimeout(() => {
+        if (!stopped && recorder.state === 'recording') {
+          try {
+            recorder.stop();
+          } catch {
+            failed(onError);
+          }
+        }
+      }, 4000);
+  };
+  recorder.onstop = () => {
+    if (stopped || !renewVideo) return;
+    try {
+      recorder.start(100);
+      scheduleKeyframe();
+    } catch {
+      failed(onError);
+    }
+  };
   recorder.ondataavailable = (event) => {
     if (stopped || !event.data.size) return;
     queuedBytes += event.data.size;
@@ -249,6 +283,7 @@ export function recordCallMedia(
   };
   try {
     recorder.start(100);
+    scheduleKeyframe();
   } catch (cause) {
     stop();
     throw cause;

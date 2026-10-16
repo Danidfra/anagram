@@ -46,6 +46,7 @@ export interface CallRuntimeDeps {
   getCamera?(deviceId?: string): Promise<MediaStream>;
   getScreen?(): Promise<MediaStream>;
   unlockPlayback?(): void;
+  acquireAudioRoute?(): Promise<() => void>;
   createReceiver(mime: string, onError: () => void): CallMediaReceiver;
   record(
     stream: MediaStream,
@@ -56,6 +57,7 @@ export interface CallRuntimeDeps {
   ): () => void;
 }
 interface Context {
+  releaseAudioRoute?: () => void;
   id: string;
   peer: string;
   mode: CallMode;
@@ -183,6 +185,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     ctx.receiver?.close();
     ctx.videoReceiver?.close();
     ctx.screenReceiver?.close();
+    ctx.releaseAudioRoute?.();
     localScreenStream = null;
     remoteScreenUrl = '';
     localStream = null;
@@ -291,6 +294,22 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       return false;
     }
     ctx.stream = stream;
+    if (deps.acquireAudioRoute) {
+      try {
+        const release = await deps.acquireAudioRoute();
+        if (!alive(ctx)) {
+          release();
+          return false;
+        }
+        ctx.releaseAudioRoute = release;
+      } catch (cause) {
+        if (alive(ctx)) {
+          fail(ctx, cause);
+          error = 'call.error.speaker';
+        }
+        return false;
+      }
+    }
     localStream = stream;
     microphoneDeviceId = stream.getAudioTracks()[0]?.getSettings?.().deviceId ?? '';
     if (stream.getVideoTracks().length)

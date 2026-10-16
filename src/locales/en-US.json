@@ -754,6 +754,8 @@
   "call.chooseSpeaker": "Choose speaker",
   "call.speaker": "Speaker",
   "call.systemDefault": "System default",
+  "call.useEarpiece": "Use earpiece or connected headset",
+  "call.useLoudspeaker": "Use loudspeaker",
   "call.muteSpeaker": "Mute speaker",
   "call.unmuteSpeaker": "Unmute speaker",
   "call.speakerUnavailable": "This browser uses the system speaker. Choose your output device in system settings.",

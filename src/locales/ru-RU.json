@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "Выбрать динамик",
   "call.speaker": "Динамик",
   "call.systemDefault": "Системный по умолчанию",
+  "call.useEarpiece": "Использовать разговорный динамик или подключённую гарнитуру",
+  "call.useLoudspeaker": "Использовать громкую связь",
   "call.muteSpeaker": "Выключить динамик",
   "call.unmuteSpeaker": "Включить динамик",
   "call.speakerUnavailable": "Этот браузер использует системный динамик. Выберите устройство вывода в настройках системы.",

@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { isIosNative } from '#src/lib/platform/ios.ts';
-  import { followCallLive, setCallSpeaker } from '#src/services/callPlaybackService.ts';
+  import {
+    followCallLive,
+    setCallSpeaker,
+    watchCallLive,
+  } from '#src/services/callPlaybackService.ts';
   export let url = '';
   export let stream: MediaStream | null = null;
   export let muted = true;
@@ -12,6 +16,7 @@
   export let onoutputerror: () => void = () => {};
   let element: HTMLVideoElement;
   let attempt = 0;
+  let stopFollowing: (() => void) | undefined;
   export async function play() {
     if (!element || (!url && !stream)) return;
     const current = ++attempt;
@@ -29,6 +34,8 @@
     value: string,
   ) {
     if (!node) return;
+    stopFollowing?.();
+    stopFollowing = !source && value ? watchCallLive(node) : undefined;
     if (isIosNative()) node.disableRemotePlayback = true;
     node.srcObject = source;
     if (!source && value) node.src = value;
@@ -38,6 +45,7 @@
   $: if (element) void setCallSpeaker(element, sink).catch(onoutputerror);
   onDestroy(() => {
     attempt++;
+    stopFollowing?.();
     if (element) {
       element.pause();
       element.srcObject = null;

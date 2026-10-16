@@ -1,0 +1,7 @@
+{
+  "identifier": "mobile-call-audio",
+  "description": "Main phone window can route audio for its active call",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": ["allow-set-mobile-call-audio"]
+}

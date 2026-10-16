@@ -7,32 +7,36 @@ const os = require('node:os');
 const path = require('node:path');
 
 // Local tests use the actual Iroh relay behind TLS, matching production browser networking.
-async function startIrohTestProxy() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'anagram-iroh-test-'));
+async function startIrohTestProxy({ certificateDirectory } = {}) {
+  // Native desktop probes trust their own short-lived certificate on disposable
+  // runners. Browser tests continue generating an isolated certificate here.
+  const directory =
+    certificateDirectory || fs.mkdtempSync(path.join(os.tmpdir(), 'anagram-iroh-test-'));
   const key = path.join(directory, 'key.pem');
   const cert = path.join(directory, 'cert.pem');
   try {
-    execFileSync(
-      process.env.OPENSSL || 'openssl',
-      [
-        'req',
-        '-x509',
-        '-newkey',
-        'rsa:2048',
-        '-nodes',
-        '-days',
-        '1',
-        '-subj',
-        '/CN=localhost',
-        '-addext',
-        'subjectAltName=DNS:localhost,IP:127.0.0.1',
-        '-keyout',
-        key,
-        '-out',
-        cert,
-      ],
-      { stdio: 'ignore' },
-    );
+    if (!certificateDirectory)
+      execFileSync(
+        process.env.OPENSSL || 'openssl',
+        [
+          'req',
+          '-x509',
+          '-newkey',
+          'rsa:2048',
+          '-nodes',
+          '-days',
+          '1',
+          '-subj',
+          '/CN=localhost',
+          '-addext',
+          'subjectAltName=DNS:localhost,IP:127.0.0.1',
+          '-keyout',
+          key,
+          '-out',
+          cert,
+        ],
+        { stdio: 'ignore' },
+      );
     const sockets = new Set();
     const server = https.createServer(
       { key: fs.readFileSync(key), cert: fs.readFileSync(cert) },
@@ -90,10 +94,10 @@ async function startIrohTestProxy() {
     return async () => {
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));
-      fs.rmSync(directory, { recursive: true, force: true });
+      if (!certificateDirectory) fs.rmSync(directory, { recursive: true, force: true });
     };
   } catch (error) {
-    fs.rmSync(directory, { recursive: true, force: true });
+    if (!certificateDirectory) fs.rmSync(directory, { recursive: true, force: true });
     throw error;
   }
 }

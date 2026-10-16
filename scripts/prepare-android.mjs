@@ -48,7 +48,7 @@ export function prepareAndroid(root = new URL('../', import.meta.url)) {
   );
   writeFileSync(
     new URL('src-tauri/gen/android/app/secure-keys.pro', root),
-    '-keep class com.nostr.anagram.SecureKeysPlugin { *; }\n-keep class com.nostr.anagram.PrivateKeyArgs { *; }\n-keep class com.nostr.anagram.AndroidRelayNotificationsPlugin { *; }\n-keep class com.nostr.anagram.CallSignalNative { *; }\n',
+    '-keep class com.nostr.anagram.SecureKeysPlugin { *; }\n-keep class com.nostr.anagram.PrivateKeyArgs { *; }\n-keep class com.nostr.anagram.AndroidRelayNotificationsPlugin { *; }\n-keep class com.nostr.anagram.CallSignalNative { *; }\n-keep class com.nostr.anagram.CallAudioPlugin { *; }\n-keep class com.nostr.anagram.CallAudioArgs { *; }\n',
   );
   const wrapper = new URL('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', root);
   writeFileSync(
@@ -77,6 +77,12 @@ export function prepareAndroid(root = new URL('../', import.meta.url)) {
         `<uses-permission android:name="android.permission.${name}" />\n    <application`,
       );
   }
+  // Older Android versions need the normal Bluetooth permission for call headsets.
+  if (!xml.includes('android.permission.BLUETOOTH"'))
+    xml = xml.replace(
+      '<application',
+      '<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n    <application',
+    );
   // Camera/microphone are optional: messaging must install on devices without them.
   for (const name of ['android.hardware.camera', 'android.hardware.microphone']) {
     if (!xml.includes(`android:name="${name}"`))

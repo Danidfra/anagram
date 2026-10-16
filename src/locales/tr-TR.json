@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "Hoparlör seç",
   "call.speaker": "Hoparlör",
   "call.systemDefault": "Sistem varsayılanı",
+  "call.useEarpiece": "Ahizeyi veya bağlı kulaklığı kullan",
+  "call.useLoudspeaker": "Hoparlörü kullan",
   "call.muteSpeaker": "Hoparlörü sessize al",
   "call.unmuteSpeaker": "Hoparlörün sesini aç",
   "call.speakerUnavailable": "Bu tarayıcı sistem hoparlörünü kullanır. Çıkış cihazını sistem ayarlarından seçin.",

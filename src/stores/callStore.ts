@@ -11,6 +11,7 @@ import {
   recordCallMedia,
 } from '#src/services/callMediaService.ts';
 import { primeCallAudio } from '#src/services/callPlaybackService.ts';
+import { acquireMobileCallAudio, hasMobileCallAudio } from '#src/services/mobileCallAudio.ts';
 import { hasSeenCallControl, rememberCallControl } from '#src/services/callReplayCache.ts';
 import { chatDataService } from '#src/services/chatDataService.ts';
 import { contactsService } from '#src/services/contactsService.ts';
@@ -67,6 +68,7 @@ export const useCallStore = createStore('calls', () => {
     getCamera: getCallCamera,
     getScreen: getCallScreen,
     unlockPlayback: primeCallAudio,
+    ...(hasMobileCallAudio() ? { acquireAudioRoute: acquireMobileCallAudio } : {}),
     createReceiver: createCallMediaReceiver,
     record: recordCallMedia,
   });

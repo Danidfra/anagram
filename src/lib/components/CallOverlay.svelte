@@ -1,6 +1,11 @@
 <script lang="ts">
   import { callVideoAspect } from '#src/lib/actions/callVideoAspect.ts';
   import { syncAndroidCallActivity } from '#src/services/androidCallNotificationService.ts';
+  import {
+    hasMobileCallAudio,
+    mobileCallSpeaker,
+    selectMobileCallSpeaker,
+  } from '#src/services/mobileCallAudio.ts';
   import { dismissOnBackdrop } from '#src/lib/actions/dismissOnBackdrop.ts';
   import { onMount, onDestroy } from 'svelte';
   import { useCallStore } from '#src/stores/callStore.ts';
@@ -87,6 +92,7 @@
   let stopActivity: (() => void) | undefined;
   const canShareScreen = canShareCallScreen();
   const canSelectSpeaker = typeof HTMLMediaElement.prototype.setSinkId === 'function';
+  const mobileAudio = hasMobileCallAudio();
   const outputs = navigator.mediaDevices as MediaDevices & {
     selectAudioOutput?: () => Promise<MediaDeviceInfo>;
   };
@@ -389,20 +395,31 @@
           data-testid={`${prefix}-speaker`}
           onclick={() => (speakerMuted = !speakerMuted)}
           ><Icon name={speakerMuted ? 'speaker-off' : 'speaker'} /></button
-        ><CallDeviceMenu
-          kind="speaker"
-          {prefix}
-          devices={devices.filter((d) => d.kind === 'audiooutput')}
-          selected={speaker}
-          supported={canSelectSpeaker}
-          canRequest={Boolean(outputs?.selectAudioOutput)}
-          onrefresh={refreshDevices}
-          onselect={(id) => {
-            outputError = '';
-            speaker = id;
-          }}
-          onrequest={requestSpeaker}
-        />
+        >{#if mobileAudio}
+          <button
+            class="call-round"
+            class:chosen={$mobileCallSpeaker}
+            disabled={!$state.local}
+            aria-label={$translate($mobileCallSpeaker ? 'call.useEarpiece' : 'call.useLoudspeaker')}
+            aria-pressed={$mobileCallSpeaker}
+            data-testid={`${prefix}-loudspeaker`}
+            onclick={() => act(() => selectMobileCallSpeaker(!$mobileCallSpeaker))}
+            ><Icon name={$mobileCallSpeaker ? 'speaker' : 'phone'} /></button
+          >
+        {:else}<CallDeviceMenu
+            kind="speaker"
+            {prefix}
+            devices={devices.filter((d) => d.kind === 'audiooutput')}
+            selected={speaker}
+            supported={canSelectSpeaker}
+            canRequest={Boolean(outputs?.selectAudioOutput)}
+            onrefresh={refreshDevices}
+            onselect={(id) => {
+              outputError = '';
+              speaker = id;
+            }}
+            onrequest={requestSpeaker}
+          />{/if}
       </div>
       <div class="call-panel__device">
         <button

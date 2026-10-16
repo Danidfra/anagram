@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "স্পিকার বেছে নিন",
   "call.speaker": "স্পিকার",
   "call.systemDefault": "সিস্টেমের ডিফল্ট",
+  "call.useEarpiece": "ইয়ারপিস বা সংযুক্ত হেডসেট ব্যবহার করুন",
+  "call.useLoudspeaker": "লাউডস্পিকার ব্যবহার করুন",
   "call.muteSpeaker": "স্পিকার মিউট করুন",
   "call.unmuteSpeaker": "স্পিকারের মিউট সরান",
   "call.speakerUnavailable": "এই ব্রাউজার সিস্টেমের স্পিকার ব্যবহার করে। সিস্টেম সেটিংসে আউটপুট ডিভাইস বেছে নিন।",

@@ -12,14 +12,17 @@ import {
   setCallSpeaker,
 } from '#src/services/callPlaybackService.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-const platform = vi.hoisted(() => ({ ios: false }));
+const platform = vi.hoisted(() => ({ ios: false, native: false }));
 vi.mock('#src/lib/platform/ios.ts', () => ({ isIosNative: () => platform.ios }));
+vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => platform.native }));
 
 afterEach(() => {
   platform.ios = false;
+  platform.native = false;
   registerCallAudio(null);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 describe('call devices and playback', () => {
   it('checks browser capabilities, not cached microphone permission state', () => {
@@ -262,4 +265,96 @@ it('stops a congested video recorder by queue age without dropping chunks or end
     stop();
     vi.useRealTimers();
   }
+});
+
+it.each([
+  { native: true, agent: 'Linux x86_64', mime: 'video/webm;codecs=vp8', renews: true },
+  { native: true, agent: 'Linux; Android 15', mime: 'video/webm;codecs=vp8', renews: false },
+  { native: false, agent: 'Linux x86_64', mime: 'video/webm;codecs=vp8', renews: false },
+  { native: true, agent: 'Linux x86_64', mime: 'audio/webm;codecs=opus', renews: false },
+  { native: true, agent: 'Linux x86_64', mime: 'video/webm;codecs=vp8,opus', renews: false },
+])(
+  'renews only native Linux video-only recordings: $native $agent $mime',
+  async ({ native, agent, mime, renews }) => {
+    vi.useFakeTimers();
+    platform.native = native;
+    vi.stubGlobal('navigator', { userAgent: agent });
+    class Recorder {
+      static current: Recorder;
+      state = 'inactive';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onstop: (() => void) | null = null;
+      start = vi.fn(() => {
+        this.state = 'recording';
+        this.ondataavailable?.({ data: new Blob([new Uint8Array([1])]) });
+      });
+      stop = vi.fn(() => {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob([new Uint8Array([2])]) });
+        this.onstop?.();
+      });
+      constructor() {
+        Recorder.current = this;
+      }
+    }
+    vi.stubGlobal('MediaRecorder', Recorder);
+    const sent: number[] = [];
+    const failure = vi.fn();
+    const stop = recordCallMedia(
+      {} as MediaStream,
+      mime,
+      async (bytes) => {
+        sent.push(bytes[1]);
+      },
+      failure,
+    );
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(Recorder.current.start).toHaveBeenCalledTimes(renews ? 2 : 1);
+    // A completed WebM segment must arrive before the next initialization header.
+    expect(sent).toEqual(renews ? [1, 2, 1] : [1]);
+    expect(vi.getTimerCount()).toBe(renews ? 1 : 0);
+    stop();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(Recorder.current.start).toHaveBeenCalledTimes(renews ? 2 : 1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(failure).not.toHaveBeenCalled();
+  },
+);
+
+it('stops renewal and congestion timers if the native video encoder cannot restart', async () => {
+  vi.useFakeTimers();
+  platform.native = true;
+  vi.stubGlobal('navigator', { userAgent: 'Linux x86_64' });
+  class Recorder {
+    state = 'inactive';
+    onstop: (() => void) | null = null;
+    start = vi.fn(() => {
+      if (this.start.mock.calls.length > 1) throw new Error('Encoder unavailable');
+      this.state = 'recording';
+    });
+    stop() {
+      this.state = 'inactive';
+      this.onstop?.();
+    }
+  }
+  vi.stubGlobal('MediaRecorder', Recorder);
+  const failure = vi.fn();
+  const congestion = vi.fn();
+  const stop = recordCallMedia(
+    {} as MediaStream,
+    'video/webm;codecs=vp8',
+    async () => {},
+    failure,
+    {
+      onCongestion: congestion,
+    },
+  );
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(failure).toHaveBeenCalledOnce();
+  expect(congestion).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+  stop();
+  await vi.advanceTimersByTimeAsync(8000);
+  expect(failure).toHaveBeenCalledOnce();
 });

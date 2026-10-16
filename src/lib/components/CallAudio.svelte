@@ -6,6 +6,7 @@
     followCallLive,
     registerCallAudio,
     setCallSpeaker,
+    watchCallLive,
   } from '#src/services/callPlaybackService.ts';
   import { translate } from '#src/i18n.ts';
   export let url = '';
@@ -21,6 +22,7 @@
   let blocked = false,
     attempt = 0;
   let stopActivity: (() => void) | undefined;
+  let stopFollowing: (() => void) | undefined;
   function meter(enabled: boolean, currentUrl: string) {
     stopActivity?.();
     stopActivity = undefined;
@@ -53,6 +55,8 @@
   }
   function syncSource(element: HTMLAudioElement | undefined, value: string) {
     if (!element) return;
+    stopFollowing?.();
+    stopFollowing = value ? watchCallLive(element) : undefined;
     attempt++;
     blocked = false;
     // ManagedMediaSource on iPhone requires remote playback to be disabled
@@ -76,6 +80,7 @@
   onDestroy(() => {
     attempt++;
     stopActivity?.();
+    stopFollowing?.();
     onlevel(0);
     if (primary) registerCallAudio(null);
     audio?.pause();

@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "स्पीकर चुनें",
   "call.speaker": "स्पीकर",
   "call.systemDefault": "सिस्टम डिफ़ॉल्ट",
+  "call.useEarpiece": "ईयरपीस या कनेक्टेड हेडसेट इस्तेमाल करें",
+  "call.useLoudspeaker": "लाउडस्पीकर इस्तेमाल करें",
   "call.muteSpeaker": "स्पीकर म्यूट करें",
   "call.unmuteSpeaker": "स्पीकर का म्यूट हटाएँ",
   "call.speakerUnavailable": "यह ब्राउज़र सिस्टम स्पीकर इस्तेमाल करता है। सिस्टम सेटिंग में आउटपुट डिवाइस चुनें।",

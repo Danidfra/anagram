@@ -1,5 +1,7 @@
-import { followCallLive } from '#src/services/callPlaybackService.ts';
-import { describe, expect, it, vi } from 'vitest';
+import { followCallLive, watchCallLive } from '#src/services/callPlaybackService.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+afterEach(() => vi.useRealTimers());
 
 function media(currentTime: number, ranges: number[][], seeking = false) {
   const seek = vi.fn((time: number) => {
@@ -23,6 +25,25 @@ function media(currentTime: number, ranges: number[][], seeking = false) {
 }
 
 describe('live call playback recovery', () => {
+  it('recovers without browser progress events and stops work when detached', () => {
+    vi.useFakeTimers();
+    const ranges = [[0, 1]];
+    const { element, seek } = media(0.8, ranges);
+    const stop = watchCallLive(element);
+    vi.advanceTimersByTime(1000);
+    expect(seek).not.toHaveBeenCalled();
+    ranges[0][1] = 3;
+    vi.advanceTimersByTime(250);
+    expect(element.currentTime).toBeCloseTo(2.65);
+    vi.advanceTimersByTime(1000);
+    expect(seek).toHaveBeenCalledTimes(1);
+    stop();
+    ranges[0][1] = 5;
+    vi.advanceTimersByTime(1000);
+    expect(seek).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('waits for buffered media, including streams that have not started', () => {
     const { element, seek } = media(0, []);
     followCallLive(null);

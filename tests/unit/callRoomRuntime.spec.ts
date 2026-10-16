@@ -54,6 +54,7 @@ function setup(own = 'a'.repeat(64)) {
       supported: () => true,
       getScreen: vi.fn<() => Promise<MediaStream>>(),
       getMedia: vi.fn().mockResolvedValue(stream),
+      acquireAudioRoute: vi.fn<() => Promise<() => void>>().mockResolvedValue(vi.fn()),
       getMicrophone: vi.fn().mockResolvedValue(stream),
       getCamera: vi
         .fn()
@@ -106,6 +107,32 @@ afterEach(() => {
 });
 
 describe('link-based Iroh call rooms', () => {
+  it('owns one audio route for the room and releases a late setup after leave', async () => {
+    const h = setup(),
+      release = vi.fn();
+    h.deps.media.acquireAudioRoute.mockResolvedValueOnce(release);
+    await h.runtime.create();
+    await h.runtime.receive('b'.repeat(64), join(h.runtime.session!.link));
+    expect(h.deps.media.acquireAudioRoute).toHaveBeenCalledTimes(1);
+    h.runtime.leave();
+    h.runtime.reset();
+    expect(release).toHaveBeenCalledTimes(1);
+    let finish!: (release: () => void) => void;
+    h.deps.media.acquireAudioRoute.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const starting = h.runtime.create();
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    h.runtime.leave();
+    const lateRelease = vi.fn();
+    finish(lateRelease);
+    await starting;
+    expect(lateRelease).toHaveBeenCalledTimes(1);
+    expect(h.runtime.localStream).toBeNull();
+  });
   it.each(['stop', 'leave'])(
     'discards a pending screen picker after %s and allows another share',
     async (action) => {

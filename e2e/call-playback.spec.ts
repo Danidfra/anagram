@@ -46,7 +46,7 @@ for (const kind of ['audio', 'video'] as const) {
           }
           const { createCallMediaReceiver, recordCallMedia } =
             await import('/src/services/callMediaService.ts');
-          const { followCallLive } = await import('/src/services/callPlaybackService.ts');
+          const { watchCallLive } = await import('/src/services/callPlaybackService.ts');
           const { CALL_VIDEO_MIME_TYPE } = await import('/src/utils/callSignal.ts');
           const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
           const errors: string[] = [];
@@ -56,11 +56,20 @@ for (const kind of ['audio', 'video'] as const) {
           if (element instanceof HTMLVideoElement) element.playsInline = true;
           element.muted = true;
           document.body.append(element);
-          // Exercise the fallback used when WebKit emits no MSE progress events.
-          element.ontimeupdate = () => followCallLive(element);
+          // Recover even if a stalled WebView emits neither progress nor timeupdate.
+          const stopFollowing = watchCallLive(element);
           element.onerror = () => errors.push(element.error?.message || 'media error');
           let seeks = 0;
           element.onseeking = () => seeks++;
+          let displayedFrames = 0;
+          let frameCallback = 0;
+          if (element instanceof HTMLVideoElement) {
+            const displayed = () => {
+              displayedFrames++;
+              frameCallback = element.requestVideoFrameCallback(displayed);
+            };
+            frameCallback = element.requestVideoFrameCallback(displayed);
+          }
           let context: AudioContext | undefined;
           let oscillator: OscillatorNode | undefined;
           let draw: ReturnType<typeof setInterval> | undefined;
@@ -151,6 +160,7 @@ for (const kind of ['audio', 'video'] as const) {
             stage('playback resumed');
             await delay(1000);
             const start = element.currentTime;
+            const framesBefore = displayedFrames;
             const lags: number[] = [];
             for (let i = 0; i < 20; i++) {
               await delay(100);
@@ -162,8 +172,12 @@ for (const kind of ['audio', 'video'] as const) {
               seeks: seeks - before,
               lag: lags[10],
               advanced: element.currentTime - start,
+              displayedFrames: displayedFrames - framesBefore,
             };
           } finally {
+            stopFollowing();
+            if (element instanceof HTMLVideoElement)
+              element.cancelVideoFrameCallback(frameCallback);
             stage(`stop recorder: ${JSON.stringify(snapshot())}`);
             stop();
             stage('stop capture');
@@ -209,6 +223,7 @@ for (const kind of ['audio', 'video'] as const) {
       expect(result.seeks).toBeLessThanOrEqual(3);
       expect(result.lag).toBeLessThan(0.75);
       expect(result.advanced).toBeGreaterThan(1.5);
+      if (kind === 'video') expect(result.displayedFrames).toBeGreaterThan(5);
     });
   }
 }

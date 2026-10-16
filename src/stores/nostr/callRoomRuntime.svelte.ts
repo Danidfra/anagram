@@ -39,9 +39,11 @@ interface Deps {
     | 'createReceiver'
     | 'record'
     | 'unlockPlayback'
+    | 'acquireAudioRoute'
   >;
 }
 export function createCallRoomRuntime(deps: Deps) {
+  let releaseAudioRoute: (() => void) | undefined;
   let session = $state.raw<CallRoomSession | null>(null);
   let localStream = $state.raw<MediaStream | null>(null);
   let localScreenStream = $state.raw<MediaStream | null>(null);
@@ -129,6 +131,8 @@ export function createCallRoomRuntime(deps: Deps) {
     stopStream(localStream);
     stopStream(localScreenStream);
     localStream = localScreenStream = null;
+    releaseAudioRoute?.();
+    releaseAudioRoute = undefined;
     changingMedia = false;
     if (notify) {
       if (s.own.pubkey === s.link.host)
@@ -209,6 +213,8 @@ export function createCallRoomRuntime(deps: Deps) {
         continue;
       const runtime = createCallRuntime({
         ...deps.media,
+        // The room owns routing once; peer reconnects must not acquire/reset it.
+        acquireAudioRoute: undefined,
         videoProfile: () =>
           session && session.members.length >= 4
             ? {
@@ -356,6 +362,14 @@ export function createCallRoomRuntime(deps: Deps) {
         return;
       }
       localStream = media;
+      if (deps.media.acquireAudioRoute) {
+        const release = await deps.media.acquireAudioRoute();
+        if (generation !== version || !busy) {
+          release();
+          return;
+        }
+        releaseAudioRoute = release;
+      }
       microphoneDeviceId = media.getAudioTracks()[0]?.getSettings().deviceId ?? '';
       if (media.getVideoTracks().length)
         cameraDeviceId = media.getVideoTracks()[0]?.getSettings().deviceId ?? '';

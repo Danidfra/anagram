@@ -751,6 +751,8 @@
   "call.chooseSpeaker": "Choisir un haut-parleur",
   "call.speaker": "Haut-parleur",
   "call.systemDefault": "Par défaut du système",
+  "call.useEarpiece": "Utiliser l’écouteur ou le casque connecté",
+  "call.useLoudspeaker": "Utiliser le haut-parleur",
   "call.muteSpeaker": "Couper le haut-parleur",
   "call.unmuteSpeaker": "Réactiver le haut-parleur",
   "call.speakerUnavailable": "Ce navigateur utilise le haut-parleur du système. Choisissez la sortie audio dans les paramètres du système.",

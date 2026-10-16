@@ -9,6 +9,8 @@ mod android_notifications;
 #[cfg(any(target_os = "android", test))]
 mod call_notifications;
 mod clipboard;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+mod mobile_call_audio;
 mod secure_storage;
 use tauri::Manager;
 #[cfg(desktop)]
@@ -44,7 +46,9 @@ fn authorize_key_access(window: &tauri::WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn read_clipboard_image(window: tauri::WebviewWindow) -> Result<tauri::ipc::Response, String> {
+async fn read_clipboard_image(
+    window: tauri::WebviewWindow,
+) -> Result<tauri::ipc::Response, String> {
     // Reuse the main-window/origin guard; presentation windows cannot read it.
     authorize_key_access(&window)?;
     #[cfg(target_os = "linux")]
@@ -109,13 +113,34 @@ async fn android_notification_command(
         Err("Android notifications are unavailable on this platform".into())
     }
 }
+#[tauri::command]
+async fn set_mobile_call_audio(
+    window: tauri::WebviewWindow,
+    active: bool,
+    speaker: bool,
+) -> Result<(), String> {
+    authorize_key_access(&window)?;
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let app = window.app_handle().clone();
+        tauri::async_runtime::spawn_blocking(move || mobile_call_audio::set(&app, active, speaker))
+            .await
+            .map_err(|_| "Call audio routing unavailable".to_string())?
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (active, speaker);
+        Err("Mobile call audio is unavailable".into())
+    }
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(target_os = "android")]
     let builder = builder
         .plugin(secure_storage::android_plugin())
-        .plugin(android_notifications::plugin());
+        .plugin(android_notifications::plugin())
+        .plugin(mobile_call_audio::plugin());
     builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -208,7 +233,8 @@ pub fn run() {
             read_private_key,
             write_private_key,
             remove_private_key,
-            android_notification_command
+            android_notification_command,
+            set_mobile_call_audio
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Anagram");
