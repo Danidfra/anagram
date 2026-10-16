@@ -452,14 +452,11 @@
     loading={paging || $state.loading}
     bind:nearBottom
     onolder={() => void pageHistory()}
-    onnewer={() => void pageHistory(false)}
+    onnewer={() => pageHistory(false)}
     onlatest={() => void latest()}
     onscroll={() => {
       if (log.scrollTop !== lastScrollTop) actionMessage = undefined;
       lastScrollTop = log.scrollTop;
-      if (paging || jumping) return;
-      if ($state.hasNewer && log.scrollHeight - log.clientHeight - log.scrollTop <= 1)
-        void pageHistory(false);
     }}
   >
     {#each displayed as message, index (message.id)}

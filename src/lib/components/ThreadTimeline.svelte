@@ -2,6 +2,7 @@
   import { onDestroy, tick, type Snippet } from 'svelte';
   import { threadPosition } from '#src/lib/actions/threadPosition.ts';
   import { threadHistoryPull } from '#src/lib/actions/threadHistoryPull.ts';
+  import { threadNewerScroll } from '#src/lib/actions/threadNewerScroll.ts';
   import { translate } from '#src/i18n.ts';
   import Icon from './Icon.svelte';
   export let element: HTMLDivElement;
@@ -15,7 +16,7 @@
   export let loading = false;
   export let nearBottom = true;
   export let onolder: () => void;
-  export let onnewer: () => void;
+  export let onnewer: () => Promise<void>;
   export let onlatest: () => void;
   export let onscroll: () => void = () => {};
   export let onmount: (node: HTMLDivElement) => void = () => {};
@@ -24,6 +25,16 @@
   let frame = 0;
   let dayTimer: ReturnType<typeof setTimeout> | undefined;
   let active = true;
+  let loadingNewer = false;
+  async function newer() {
+    loadingNewer = true;
+    try {
+      await onnewer();
+      await tick();
+    } finally {
+      loadingNewer = false;
+    }
+  }
   function updateDay() {
     if (!element) return;
     const top = element.getBoundingClientRect().top + 38;
@@ -65,13 +76,18 @@
   class="messages"
   class:loading-history={loading}
   bind:this={element}
-  use:threadPosition={{ chatId, onchange: (value) => (nearBottom = value) }}
+  use:threadPosition={{ chatId, hasNewer, onchange: (value) => (nearBottom = value) }}
   use:mount
   use:threadHistoryPull={{
     chatId,
-    canLoad: () => hasOlder && !loading,
-    loading: () => loading,
+    canLoad: () => hasOlder && !loading && !loadingNewer,
+    loading: () => loading || loadingNewer,
     load: onolder,
+  }}
+  use:threadNewerScroll={{
+    chatId,
+    canLoad: () => hasNewer && !loading && !loadingNewer,
+    load: newer,
   }}
   tabindex="-1"
   role="log"
@@ -83,24 +99,30 @@
   {#if firstDay}<div class="thread-day-sticky" aria-hidden="true">
       <span>{stickyDay || firstDay}</span>
     </div>{/if}
-  {#if hasOlder || loading}<div class="thread-more thread-more--top">
+  {#if hasOlder || (loading && !loadingNewer)}<div class="thread-more thread-more--top">
       <button
         class="thread-more__button"
         data-testid="thread-load-older"
         aria-label="Load earlier messages"
-        aria-busy={loading}
+        aria-busy={loading && !loadingNewer}
         title={historyStatus || undefined}
-        disabled={loading}
+        disabled={loading || loadingNewer}
         onmousedown={(event) => event.preventDefault()}
         onclick={onolder}
-        >{#if loading}<span class="thread-history-spinner" aria-hidden="true"></span>{:else}<Icon
+        >{#if loading && !loadingNewer}<span class="thread-history-spinner" aria-hidden="true"></span>{:else}<Icon
             name="up"
           />{/if}{$translate('common.more')}</button
       >
     </div>{/if}
   {#if historyStatus}<span class="thread-history-status" role="status">{historyStatus}</span>{/if}
   {@render children()}
-  {#if hasNewer}<button class="load-older" onclick={onnewer}>Load newer messages</button>{/if}
+  {#if loadingNewer}<div
+      class="thread-more thread-more--bottom"
+      role="status"
+      aria-label="Loading newer messages"
+    >
+      <span class="thread-history-spinner" aria-hidden="true"></span>
+    </div>{/if}
 </div>
 {#if !nearBottom}<button class="jump-latest" aria-label="Jump to latest messages" onclick={onlatest}
     ><Icon name="down" /></button

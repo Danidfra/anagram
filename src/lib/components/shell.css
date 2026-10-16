@@ -684,6 +684,10 @@ p {
 .thread-more--top {
   top: 44px;
 }
+.thread-more--bottom {
+  position: static;
+  min-height: 12px;
+}
 .thread-more__button {
   pointer-events: auto;
   display: inline-flex;

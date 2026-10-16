@@ -1474,7 +1474,7 @@
             loading={loadingOlder}
             bind:nearBottom
             onolder={() => void act(older)}
-            onnewer={() => void act(() => messages.loadNewerMessages($state.selected!.id))}
+            onnewer={() => act(() => messages.loadNewerMessages($state.selected!.id))}
             onlatest={() =>
               void act(async () => {
                 if ($state.selected) await messages.loadMessages($state.selected.id);

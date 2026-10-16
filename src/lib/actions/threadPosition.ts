@@ -2,6 +2,7 @@ import { onLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 
 interface PositionOptions {
   chatId: string;
+  hasNewer?: boolean;
   onchange: (atBottom: boolean) => void;
 }
 interface Controller {
@@ -20,6 +21,7 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
   let positioned = false;
   let pendingLatest: { messageId?: string } | undefined;
   let atBottom: boolean | undefined;
+  let atLatest = false;
   let disposed = false;
   const observed = new Set<Element>();
   const rows = () => [...node.querySelectorAll<HTMLElement>('.message-row')];
@@ -62,6 +64,7 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
       .map((index) => ({ id: currentRows[index].id, offset: rect(index).top - top }));
     lastTop = node.scrollTop;
     const nextBottom = maxTop() - lastTop <= 1;
+    atLatest = nextBottom && !options.hasNewer;
     if (nextBottom !== atBottom) {
       atBottom = nextBottom;
       options.onchange(nextBottom);
@@ -88,7 +91,7 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
         ));
     // At the latest message, preserve the bottom edge when hydration or media
     // changes row heights. A user scroll takes precedence over that attachment.
-    const keepBottom = atBottom && Math.abs(movement) <= 0.5;
+    const keepBottom = atLatest && Math.abs(movement) <= 0.5;
     if (currentRows.length && ((!positioned && !pendingLatest) || canNavigate || keepBottom)) {
       node.scrollTop = node.scrollHeight;
       positioned = true;
@@ -121,7 +124,7 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
   const resize = new ResizeObserver(restore);
   const mutation = new MutationObserver(restore);
   const stopLiveMessages = onLiveThreadMessage(({ chatId, id }) => {
-    if (chatId !== options.chatId || !atBottom) return;
+    if (chatId !== options.chatId || !atLatest) return;
     // Account for a user scroll whose DOM event has not been dispatched yet.
     if (Math.abs(node.scrollTop - lastTop) > 0.5) return;
     pendingLatest = { messageId: id };
@@ -161,8 +164,10 @@ export function threadPosition(node: HTMLElement, options: PositionOptions) {
         anchors = [];
         positioned = false;
         pendingLatest = undefined;
+        atLatest = false;
         lastTop = node.scrollTop;
       }
+      if (next.hasNewer) atLatest = false;
       options = next;
       // Content and size observers handle changes within the same chat. Svelte
       // can update the action's options while typing without any layout change.
