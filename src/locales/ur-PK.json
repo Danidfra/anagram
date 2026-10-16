@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "اس ایپ ماحول میں ڈیسک ٹاپ اطلاعات تعاون یافتہ نہیں ہیں۔",
   "notifications.enableBrowserNotifications": "براؤزر اطلاعات کو فعال کریں۔",
   "notifications.enableNotifications": "اطلاعات کو فعال کریں۔",
+  "notifications.ios.foregroundOnly": "پیغامات اور کالیں وصول کرنے کے لیے Anagram کھلا رکھیں۔ ایپ پس منظر میں ہونے یا اسکرین مقفل ہونے پر اطلاعات اور آنے والی کالوں کے انتباہات دستیاب نہیں ہوتے۔",
   "notifications.manageLaterHint": "آپ بعد میں اطلاعات کے تحت ترتیبات سے بھی اس کا نظم کر سکتے ہیں۔",
   "notifications.notifications": "اطلاعات",
   "notifications.showAndroidPushNotifications": "Android پش اطلاعات دکھائیں۔",

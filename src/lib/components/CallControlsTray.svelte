@@ -102,9 +102,9 @@
   .call-controls-edge {
     position: fixed;
     z-index: 1;
-    bottom: 0;
-    left: 0;
-    width: 100%;
+    bottom: var(--app-safe-bottom, 0px);
+    left: var(--app-safe-left, 0px);
+    width: calc(100% - var(--app-safe-left, 0px) - var(--app-safe-right, 0px));
     height: max(16px, env(safe-area-inset-bottom));
     padding: 0;
     border: 0;

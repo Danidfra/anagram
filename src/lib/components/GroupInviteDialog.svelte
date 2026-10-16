@@ -227,7 +227,7 @@
 <style>
   dialog {
     width: min(480px, calc(100vw - 24px));
-    max-height: calc(100dvh - 24px);
+    max-height: calc(var(--app-viewport-height, 100dvh) - 24px);
     margin: auto;
     padding: 20px;
     border: 1px solid var(--nc-border);

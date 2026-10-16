@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "या ॲप वातावरणात डेस्कटॉप सूचना समर्थित नाहीत.",
   "notifications.enableBrowserNotifications": "ब्राउझर सूचना सक्षम करा",
   "notifications.enableNotifications": "सूचना सक्षम करा",
+  "notifications.ios.foregroundOnly": "संदेश आणि कॉल मिळवण्यासाठी Anagram उघडे ठेवा. ॲप पार्श्वभूमीत असताना किंवा स्क्रीन लॉक असताना सूचना आणि येणाऱ्या कॉलच्या सूचना उपलब्ध नसतात.",
   "notifications.manageLaterHint": "तुम्ही हे नंतर सूचना अंतर्गत सेटिंग्जमधून व्यवस्थापित देखील करू शकता.",
   "notifications.notifications": "सूचना",
   "notifications.showAndroidPushNotifications": "Android पुश सूचना दाखवा",

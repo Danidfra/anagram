@@ -65,6 +65,14 @@ npm run tauri -- ios build --ci --target aarch64 --no-sign --config src-tauri/mo
 
 IPAs appear under `src-tauri/gen/apple/build/`. See [signing setup](releases.md) for installable builds.
 
+The iOS app uses the shared Nostr/IndexedDB implementation and Apple Keychain for the saved signing key. Its viewport follows keyboard changes and consumes safe-area insets once, including portalled dialogs and call controls. Android retains its native inset handling.
+
+Only the native iOS app uses the `ManagedMediaSource` fallback where `MediaSource` is absent and disables remote playback on call elements. Desktop, Android and browser clients retain their existing playback behavior. The WebM Opus/VP8 recorder used by the call protocol requires iOS/iPadOS 18.4 or newer; capability checks still determine whether audio/video is available. See [WebKit's recording support](https://webkit.org/blog/16574/webkit-features-in-safari-18-4/) and [managed playback requirements](https://webkit.org/blog/14735/webkit-features-in-safari-17-1/). Older systems can still use chat.
+
+The iPhone workflow runs WebKit playback tests and simulated native viewport tests before packaging. Run the same checks on macOS with `npx playwright install webkit` followed by `npm run test:e2e:local -- --browser webkit e2e/ios-layout.spec.ts e2e/call-playback.spec.ts`. The viewport tests mock the OS Keychain and keyboard boundaries; they do not validate the installed app. On a signed iPhone build, verify saved login after restart/logout, camera/microphone grant and denial, keyboard/rotation, headset routing, and calls between iPhone and Android.
+
+**iPhone scope:** messaging and calls run while the app is open, using the existing Nostr and Iroh relays. No additional hosted service is required. Background message notifications, lock-screen answering and closed-app incoming calls are deliberately excluded; background/locked-screen call continuity is not established either. iOS skips notification permission onboarding and explains this limit in Settings → Notifications. These restrictions apply only to the native iOS app; Android's background listener and desktop/browser notification behavior remain unchanged. APNs, notification extensions and PushKit/CallKit are not included in this release.
+
 ## Extra checks
 
 ```sh

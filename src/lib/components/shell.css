@@ -97,7 +97,7 @@ p {
 }
 .app-shell {
   display: flex;
-  height: 100dvh;
+  height: var(--app-viewport-height, 100dvh);
   overflow: hidden;
   background: var(--nc-panel-thread-bg);
 }
@@ -242,7 +242,7 @@ p {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 2px;
-  padding: 6px 8px max(8px, env(safe-area-inset-bottom));
+  padding: 6px 8px max(8px, var(--app-bottom-inset, env(safe-area-inset-bottom)));
   border-top: 1px solid var(--nc-border);
 }
 .nav-rail__btn {
@@ -643,7 +643,7 @@ p {
 .notices {
   color: var(--nc-text);
   position: fixed;
-  bottom: 24px;
+  bottom: calc(var(--app-safe-bottom, 0px) + 24px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
@@ -806,7 +806,7 @@ input[type='range'] {
     padding-left: 12px;
   }
   .composer {
-    padding: 8px 8px max(8px, env(safe-area-inset-bottom));
+    padding: 8px 8px max(8px, var(--app-bottom-inset, env(safe-area-inset-bottom)));
   }
   .settings-detail {
     padding: 24px 16px;

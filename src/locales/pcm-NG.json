@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "Desktop notifications no get support in dis app environment.",
   "notifications.enableBrowserNotifications": "Enable browser notifications",
   "notifications.enableNotifications": "Enable notifications",
+  "notifications.ios.foregroundOnly": "Keep Anagram open to receive messages and calls. Notifications and incoming-call alerts no dey available when the app dey background or the screen dey locked.",
   "notifications.manageLaterHint": "You fit also manage dis later from Settings under Notifications.",
   "notifications.notifications": "Notifications",
   "notifications.showAndroidPushNotifications": "Show android push notifications",

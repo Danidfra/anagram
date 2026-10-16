@@ -206,7 +206,7 @@
   }
   .relay-dialog {
     width: min(460px, calc(100vw - 24px));
-    max-height: calc(100dvh - 24px);
+    max-height: calc(var(--app-viewport-height, 100dvh) - 24px);
     margin: auto;
     padding: 18px;
     border-radius: 14px;

@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "このアプリ環境ではデスクトップ通知はサポートされていません。",
   "notifications.enableBrowserNotifications": "ブラウザ通知を有効にする",
   "notifications.enableNotifications": "通知を有効にする",
+  "notifications.ios.foregroundOnly": "メッセージや通話を受信するには、Anagramを開いたままにしてください。アプリがバックグラウンドにあるときや画面がロックされているときは、通知や着信のお知らせを受け取れません。",
   "notifications.manageLaterHint": "これは、後で [通知] の [設定] から管理することもできます。",
   "notifications.notifications": "通知",
   "notifications.showAndroidPushNotifications": "Android プッシュ通知を表示する",

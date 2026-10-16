@@ -35,7 +35,7 @@ npm run test:e2e:local
 
 ## Releases
 
-Version tags build Windows, macOS, Linux, Android, and web assets. **RC tags such as `v0.1.0-rc1` stay as drafts.** iPhone builds are paused.
+Version tags build Windows, macOS, Linux, Android, and web assets. **RC tags such as `v0.1.0-rc1` stay as drafts.** iPhone builds are available through the standalone **iPhone app** action; installation requires iOS signing credentials.
 
 - [Release and signing setup](docs/releases.md)
 - [Development, hosting, and mobile builds](docs/development.md)

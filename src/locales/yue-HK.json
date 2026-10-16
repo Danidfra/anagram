@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "呢個應用程式環境唔支援桌面通知。",
   "notifications.enableBrowserNotifications": "啟用瀏覽器通知",
   "notifications.enableNotifications": "啟用通知",
+  "notifications.ios.foregroundOnly": "請保持 Anagram 開啟，以接收訊息同來電。當應用程式喺背景運作或螢幕鎖定時，將唔會提供通知同來電提示。",
   "notifications.manageLaterHint": "你遲啲亦可以喺通知下面嘅「設定」度管理呢個功能。",
   "notifications.notifications": "通知",
   "notifications.showAndroidPushNotifications": "顯示 Android 推送通知",

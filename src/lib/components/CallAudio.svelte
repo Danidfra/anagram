@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { isIosNative } from '#src/lib/platform/ios.ts';
   import { observeCallActivity } from '#src/services/callActivityService.ts';
   import {
     followCallLive,
@@ -54,6 +55,9 @@
     if (!element) return;
     attempt++;
     blocked = false;
+    // ManagedMediaSource on iPhone requires remote playback to be disabled
+    // before attaching the stream. Calls have no alternative AirPlay URL.
+    if (isIosNative()) element.disableRemotePlayback = true;
     if (value) {
       element.src = value;
       void play();

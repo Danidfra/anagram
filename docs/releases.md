@@ -22,7 +22,7 @@ Configure repository **Actions secrets**. Never commit signing keys or certifica
 
 **Android:** encode the existing keystore as base64 and keep the same key for updates. Tagged releases require signing. Manual builds without secrets produce an unsigned APK. Signatures and 16 KB alignment are checked before upload.
 
-**iPhone builds are paused** and are not required for releases. To resume, configure signing and set the `IOS_BUILDS_ENABLED` repository variable to `true`. Use a base64 Apple Distribution `.p12` and provisioning profile for `com.nostr.anagram`. Without signing credentials, the asset is explicitly named `-ios-unsigned.ipa` and needs signing before installation. Partial signing configuration fails the build.
+**iPhone:** run the standalone **iPhone app** action with the `IOS_BUILDS_ENABLED` repository variable set to `true`. It is separate from the tagged release workflow and does not block other platforms. Use a base64 Apple Distribution `.p12` and provisioning profile for `com.nostr.anagram`. The existing `APPLE_TEAM_ID` can be reused, but the macOS Developer ID Application certificate cannot sign an iOS app. Configure `IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, and `IOS_MOBILE_PROVISION` separately. Without signing credentials, the asset is explicitly named `-ios-unsigned.ipa` and needs signing before installation. Partial signing configuration fails the build.
 
 The `IOS_EXPORT_METHOD` repository variable defaults to `app-store-connect` for App Store/TestFlight. Use `release-testing` for an ad hoc profile covering registered devices, or `debugging` with development credentials. The workflow builds the IPA; it does not submit it to Apple.
 
@@ -34,7 +34,7 @@ See Tauri’s [Android](https://v2.tauri.app/distribute/sign/android/), [iOS](ht
 
 Run **Release** from the Actions tab to validate all active platforms without publishing. Pushes to `build-validation/**` branches also validate using the package version. Only version-tag pushes can publish a release. Download the `complete-release` artifact to inspect the installers before tagging.
 
-Run **Android APK** for an Android-only build. Native projects are generated from committed sources. Mobile versions omit RC suffixes, retain the full tag in asset names, and use the workflow run number as the build number. Reruns reuse that number.
+Run **Android APK** for an Android-only build or **iPhone app** for an iOS-only build. The iPhone workflow uploads a `mobile-ios` artifact containing the IPA. Native projects are generated from committed sources. Mobile versions omit RC suffixes, retain the full tag in asset names, and use the workflow run number as the build number. Reruns reuse that number.
 
 ## Packaged-app validation
 
@@ -44,7 +44,9 @@ Release publication waits for these checks on the actual packages:
 - **Android:** install the release APK on a fresh Android 15 emulator, require rendered login controls, log in with a disposable key, connect to at least one default WSS relay, and verify login/connectivity after restarting. This is read-only on public relays; no test profile or messages are published. A total public-relay outage can fail the Android and desktop WSS checks.
 - **macOS:** verify and mount each architecture's DMG, copy the app, verify its signature, and require a surviving process and rendered Login/Create Account controls, recognized from the native window screenshot. This does not validate relay traffic on macOS.
 
-Failed checks block publication. Logs, screenshots and result files are retained as `smoke-*` / `android-startup-diagnostics` workflow artifacts. Tests use disposable accounts and never require a developer's saved keys. iOS remains paused; physical-device, call and notification behavior still need platform testing. Local web tests alone do not validate installers.
+Failed checks block publication. Logs, screenshots and result files are retained as `smoke-*` / `android-startup-diagnostics` workflow artifacts. Tests use disposable accounts and never require a developer's saved keys. The standalone iOS build checks the IPA's camera and microphone permission descriptions; physical-device, call and notification behavior still need platform testing. Local web tests alone do not validate installers.
+
+The standalone iPhone action also gates packaging on WebKit streaming playback and simulated iPhone/iPad viewport tests. These mock native key storage and keyboard events; they do not establish device permission or locked-screen call support. The iPhone release uses no extra push service and supports messaging/calls while the app is open; background notifications and lock-screen answering are excluded. See the [iPhone scope and device checks](development.md#native-development).
 
 Use a fresh RC tag for each candidate. A failed release run does not replace existing assets, even if the same tag was moved to a newer commit. Check the successful release run before downloading again.
 

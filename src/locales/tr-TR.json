@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "Bu uygulama ortamında masaüstü bildirimleri desteklenmiyor.",
   "notifications.enableBrowserNotifications": "Tarayıcı Bildirimlerini Etkinleştir",
   "notifications.enableNotifications": "Bildirimleri Etkinleştir",
+  "notifications.ios.foregroundOnly": "Mesaj ve arama almak için Anagram’ı açık tutun. Uygulama arka plandayken veya ekran kilitliyken bildirimler ve gelen arama uyarıları kullanılamaz.",
   "notifications.manageLaterHint": "Bunu daha sonra Bildirimler altındaki Ayarlar'dan da yönetebilirsiniz.",
   "notifications.notifications": "Bildirimler",
   "notifications.showAndroidPushNotifications": "Android anlık bildirimlerini göster",

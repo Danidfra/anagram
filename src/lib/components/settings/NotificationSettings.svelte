@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { translate } from '#src/i18n.ts';
+  import { isIosNative } from '#src/lib/platform/ios.ts';
   import {
     getBrowserNotificationPermission,
     areBrowserNotificationsEnabled,
@@ -22,6 +23,7 @@
     type AndroidNotificationRelayChoices,
   } from '#src/services/androidNotificationRelaySelectionService.ts';
   const android = isAndroidRelayNotificationSupported();
+  const ios = isIosNative();
   let permission = getBrowserNotificationPermission(),
     enabled = areBrowserNotificationsEnabled(),
     busy = false,
@@ -103,7 +105,11 @@
 </script>
 
 <svelte:window onfocus={() => void refresh()} />
-{#if android}
+{#if ios}
+  <div class="settings-card" data-testid="ios-notifications-info">
+    <p>{$translate('notifications.ios.foregroundOnly')}</p>
+  </div>
+{:else if android}
   <div class="settings-card">
     <label class="settings-switch"
       ><input

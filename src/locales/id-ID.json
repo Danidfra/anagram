@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "Notifikasi desktop tidak didukung di lingkungan aplikasi ini.",
   "notifications.enableBrowserNotifications": "Aktifkan Pemberitahuan Peramban",
   "notifications.enableNotifications": "Aktifkan Notifikasi",
+  "notifications.ios.foregroundOnly": "Biarkan Anagram terbuka untuk menerima pesan dan panggilan. Notifikasi dan pemberitahuan panggilan masuk tidak tersedia saat aplikasi berada di latar belakang atau layar terkunci.",
   "notifications.manageLaterHint": "Anda juga dapat mengaturnya nanti dari Pengaturan di bawah Pemberitahuan.",
   "notifications.notifications": "Pemberitahuan",
   "notifications.showAndroidPushNotifications": "Tampilkan pemberitahuan push Android",

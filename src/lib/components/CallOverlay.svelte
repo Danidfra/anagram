@@ -763,9 +763,9 @@
   }
   .call-panel {
     width: 100%;
-    height: 100dvh;
+    height: var(--app-viewport-height, 100dvh);
     max-width: 100%;
-    max-height: 100dvh;
+    max-height: var(--app-viewport-height, 100dvh);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -837,7 +837,7 @@
   .call-compact {
     position: fixed;
     z-index: 6000;
-    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    top: calc(var(--app-safe-top, env(safe-area-inset-top, 0px)) + 12px);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
@@ -851,8 +851,8 @@
   @media (max-width: 599px), (max-height: 500px) {
     .call-panel {
       padding: 8px;
-      padding-top: max(8px, env(safe-area-inset-top));
-      padding-bottom: max(8px, env(safe-area-inset-bottom));
+      padding-top: max(8px, var(--app-top-inset, env(safe-area-inset-top)));
+      padding-bottom: max(8px, var(--app-bottom-inset, env(safe-area-inset-bottom)));
     }
     .call-panel__identity > :global(svg) {
       display: none;
@@ -874,14 +874,14 @@
   }
   .room-panel {
     width: 100%;
-    height: 100dvh;
+    height: var(--app-viewport-height, 100dvh);
     max-width: 100%;
-    max-height: 100dvh;
+    max-height: var(--app-viewport-height, 100dvh);
     display: flex;
     flex-direction: column;
     overflow: hidden;
     padding: clamp(8px, 2vw, 20px);
-    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    padding-bottom: max(8px, var(--app-bottom-inset, env(safe-area-inset-bottom)));
     background: #000;
     color: #fff;
   }
@@ -1041,7 +1041,7 @@
     padding: 0;
   }
   .call-panel--fill .room-controls {
-    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    padding-bottom: max(8px, var(--app-bottom-inset, env(safe-area-inset-bottom)));
   }
   .room-grid--fill {
     gap: 0;
@@ -1179,7 +1179,7 @@
     z-index: 1100;
     left: 50%;
     transform: translateX(-50%);
-    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    top: calc(var(--app-safe-top, env(safe-area-inset-top, 0px)) + 12px);
     background: var(--nc-panel-header-bg);
     border-radius: 24px;
     box-shadow: var(--nc-shadow-md);
@@ -1201,7 +1201,7 @@
   .call-audio-recovery-container {
     position: fixed;
     z-index: 1200;
-    bottom: 12px;
+    bottom: calc(var(--app-safe-bottom, 0px) + 12px);
     left: 50%;
     transform: translateX(-50%);
   }
@@ -1282,7 +1282,8 @@
   .call-panel:not(.room-panel) {
     isolation: isolate;
     --call-stage-background: transparent;
-    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    padding: max(16px, var(--app-top-inset, env(safe-area-inset-top))) 16px
+      max(24px, var(--app-bottom-inset, env(safe-area-inset-bottom)));
     background: #101820;
     overflow-y: auto;
   }

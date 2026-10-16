@@ -15,6 +15,7 @@
   import { readCallHistory, callHistoryDuration } from '#src/utils/callHistory.ts';
   import { useTrustedMediaStore } from '#src/stores/trustedMediaStore.svelte.ts';
   import { portal } from '#src/lib/actions/portal.ts';
+  import { appViewportBounds } from '#src/lib/platform/viewportBounds.ts';
   import { toStore } from 'svelte/store';
   import { Notify } from '#src/lib/platform/ui.ts';
   import { translate } from '#src/i18n.ts';
@@ -90,11 +91,12 @@
     }
     menuTrigger = button;
     const rect = button.getBoundingClientRect();
+    const viewport = appViewportBounds();
     linkMenu = {
       href,
       media: true,
-      x: Math.max(8, Math.min(rect.right - 160, innerWidth - 168)),
-      y: Math.max(8, Math.min(rect.bottom + 4, innerHeight - 100)),
+      x: Math.max(viewport.left + 8, Math.min(rect.right - 160, viewport.right - 168)),
+      y: Math.max(viewport.top + 8, Math.min(rect.bottom + 4, viewport.bottom - 100)),
     };
   }
   function focusMenu(node: HTMLElement) {
@@ -224,10 +226,11 @@
           onlinkmenu={(event, href) => {
             event.preventDefault();
             event.stopPropagation();
+            const viewport = appViewportBounds();
             linkMenu = {
               href,
-              x: Math.max(8, Math.min(event.clientX, innerWidth - 160)),
-              y: Math.max(8, Math.min(event.clientY, innerHeight - 55)),
+              x: Math.max(viewport.left + 8, Math.min(event.clientX, viewport.right - 160)),
+              y: Math.max(viewport.top + 8, Math.min(event.clientY, viewport.bottom - 55)),
             };
           }}
         /></span

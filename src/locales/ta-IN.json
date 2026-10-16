@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "இந்தப் பயன்பாட்டுச் சூழலில் டெஸ்க்டாப் அறிவிப்புகள் ஆதரிக்கப்படாது.",
   "notifications.enableBrowserNotifications": "உலாவி அறிவிப்புகளை இயக்கவும்",
   "notifications.enableNotifications": "அறிவிப்புகளை இயக்கு",
+  "notifications.ios.foregroundOnly": "செய்திகளையும் அழைப்புகளையும் பெற Anagram-ஐத் திறந்து வைத்திருக்கவும். செயலி பின்னணியில் இருக்கும்போதோ திரை பூட்டப்பட்டிருக்கும்போதோ அறிவிப்புகளும் உள்வரும் அழைப்பு எச்சரிக்கைகளும் கிடைக்காது.",
   "notifications.manageLaterHint": "அறிவிப்புகளின் கீழ் உள்ள அமைப்புகளிலிருந்தும் இதை நீங்கள் பின்னர் நிர்வகிக்கலாம்.",
   "notifications.notifications": "அறிவிப்புகள்",
   "notifications.showAndroidPushNotifications": "Android புஷ் அறிவிப்புகளைக் காட்டு",

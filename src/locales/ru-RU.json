@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "Уведомления на рабочем столе не поддерживаются в этой среде приложения.",
   "notifications.enableBrowserNotifications": "Включить уведомления браузера",
   "notifications.enableNotifications": "Включить уведомления",
+  "notifications.ios.foregroundOnly": "Держите Anagram открытым, чтобы получать сообщения и звонки. Уведомления и оповещения о входящих звонках недоступны, когда приложение работает в фоне или экран заблокирован.",
   "notifications.manageLaterHint": "Вы также можете управлять этим позже в настройках в разделе «Уведомления».",
   "notifications.notifications": "Уведомления",
   "notifications.showAndroidPushNotifications": "Показывать push-уведомления Android",

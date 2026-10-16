@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "Desktop-Benachrichtigungen werden in dieser App-Umgebung nicht unterstützt.",
   "notifications.enableBrowserNotifications": "Aktivieren Sie Browser-Benachrichtigungen",
   "notifications.enableNotifications": "Benachrichtigungen aktivieren",
+  "notifications.ios.foregroundOnly": "Lass Anagram geöffnet, um Nachrichten und Anrufe zu empfangen. Benachrichtigungen und Hinweise auf eingehende Anrufe sind nicht verfügbar, wenn die App im Hintergrund läuft oder der Bildschirm gesperrt ist.",
   "notifications.manageLaterHint": "Sie können dies auch später in den Einstellungen unter Benachrichtigungen verwalten.",
   "notifications.notifications": "Benachrichtigungen",
   "notifications.showAndroidPushNotifications": "Android Push-Benachrichtigungen anzeigen",

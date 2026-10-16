@@ -1,0 +1,49 @@
+/* Android consumes system insets natively. Only the iOS WebView needs this. */
+html.ios-app {
+  --app-safe-top: calc(var(--ios-viewport-top, 0px) + env(safe-area-inset-top));
+  --app-safe-bottom: calc(
+    var(--ios-layout-height, 100dvh) - var(--ios-viewport-height, 100dvh) -
+      var(--ios-viewport-top, 0px) + var(--ios-bottom-inset, env(safe-area-inset-bottom))
+  );
+  --app-safe-left: env(safe-area-inset-left);
+  --app-safe-right: env(safe-area-inset-right);
+  --app-viewport-height: max(
+    0px,
+    calc(var(--ios-layout-height, 100dvh) - var(--app-safe-top) - var(--app-safe-bottom))
+  );
+  /* The whole screen is inset; children must not add the same inset again. */
+  --app-top-inset: 0px;
+  --app-bottom-inset: 0px;
+  overflow: hidden;
+}
+html.ios-app .app-viewport.ios-viewport {
+  display: block;
+  position: fixed;
+  inset: var(--app-safe-top) var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+  overflow: auto;
+  overscroll-behavior: none;
+}
+/* Keep viewport coordinates unchanged for menus anchored to message rectangles.
+   Portalled and top-layer dialogs inherit the variables from html as well. */
+html.ios-app
+  :is(
+    .modal-backdrop,
+    dialog.modal,
+    .call-panel,
+    .call-invite-backdrop,
+    .call-relay-backdrop,
+    .image-viewer
+  ) {
+  inset: var(--app-safe-top) var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+}
+html.ios-app .modal {
+  max-height: calc(var(--app-viewport-height) - 40px);
+  max-width: calc(100vw - var(--app-safe-left) - var(--app-safe-right) - 24px);
+}
+html.ios-app .call-panel {
+  width: auto;
+}
+html.ios-app :is(input, textarea, select) {
+  /* Avoid focus-triggered page zoom while retaining user-controlled zoom. */
+  font-size: max(16px, 1em);
+}

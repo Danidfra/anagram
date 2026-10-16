@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "ఈ యాప్ వాతావరణంలో డెస్క్‌టాప్ నోటిఫికేషన్‌లకు మద్దతు లేదు.",
   "notifications.enableBrowserNotifications": "బ్రౌజర్ నోటిఫికేషన్‌లను ప్రారంభించండి",
   "notifications.enableNotifications": "నోటిఫికేషన్‌లను ప్రారంభించండి",
+  "notifications.ios.foregroundOnly": "సందేశాలు, కాల్‌లు అందుకోవడానికి Anagram తెరిచి ఉంచండి. యాప్ నేపథ్యంలో ఉన్నప్పుడు లేదా స్క్రీన్ లాక్ అయినప్పుడు నోటిఫికేషన్‌లు, ఇన్‌కమింగ్ కాల్ హెచ్చరికలు అందుబాటులో ఉండవు.",
   "notifications.manageLaterHint": "మీరు దీన్ని తర్వాత నోటిఫికేషన్‌ల క్రింద సెట్టింగ్‌ల నుండి కూడా నిర్వహించవచ్చు.",
   "notifications.notifications": "నోటిఫికేషన్‌లు",
   "notifications.showAndroidPushNotifications": "Android పుష్ నోటిఫికేషన్‌లను చూపించు",

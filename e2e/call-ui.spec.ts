@@ -95,6 +95,10 @@ test('original incoming choices, compact call, controls tray, devices and presen
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await setup(page);
+  await expect(page.getByTestId('call-remote-audio')).toHaveJSProperty(
+    'disableRemotePlayback',
+    false,
+  );
   await expect(page.getByTestId('call-accept')).toHaveText(/Answer with audio/);
   await expect(page.getByTestId('call-accept-video')).toBeVisible();
   await expect(page.getByTestId('call-decline')).toBeVisible();
@@ -800,9 +804,12 @@ test('duplicate controls stay live while the main tray is hidden and close witho
   await page.getByTestId('call-hide-controls').click();
   popup = await open();
   // Ending the call closes this window during the click itself.
-  await popup.getByTestId('call-hangup').click({ noWaitAfter: true }).catch((error) => {
-    if (!popup.isClosed() || !String(error).includes('has been closed')) throw error;
-  });
+  await popup
+    .getByTestId('call-hangup')
+    .click({ noWaitAfter: true })
+    .catch((error) => {
+      if (!popup.isClosed() || !String(error).includes('has been closed')) throw error;
+    });
   await expect.poll(() => popup.isClosed()).toBe(true);
   await expect(page.getByTestId('call-dismiss')).toBeVisible();
   expect(errors).toEqual([]);

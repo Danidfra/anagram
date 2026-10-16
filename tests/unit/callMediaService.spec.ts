@@ -12,8 +12,11 @@ import {
   setCallSpeaker,
 } from '#src/services/callPlaybackService.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+const platform = vi.hoisted(() => ({ ios: false }));
+vi.mock('#src/lib/platform/ios.ts', () => ({ isIosNative: () => platform.ios }));
 
 afterEach(() => {
+  platform.ios = false;
   registerCallAudio(null);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -36,15 +39,51 @@ describe('call devices and playback', () => {
   });
   it('does not imply permission denial when the device is busy or absent', () => {
     expect(callCaptureErrorKey(new DOMException('Denied', 'NotAllowedError'))).toBe(
-      'call.error.permission'
+      'call.error.permission',
     );
     expect(callCaptureErrorKey(new DOMException('Busy', 'NotReadableError'))).toBe(
-      'call.error.deviceBusy'
+      'call.error.deviceBusy',
     );
     expect(callCaptureErrorKey(new DOMException('Missing', 'NotFoundError'))).toBe(
-      'call.error.deviceMissing'
+      'call.error.deviceMissing',
     );
     expect(callCaptureErrorKey(new Error('Unexpected'))).toBe('call.error.capture');
+  });
+  it('supports iPhone managed playback only when recording and playback codecs both exist', () => {
+    platform.ios = true;
+    vi.stubGlobal('isSecureContext', true);
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn() } });
+    vi.stubGlobal('MediaSource', undefined);
+    const recorder = vi.fn(() => true);
+    const player = vi.fn(() => true);
+    vi.stubGlobal('MediaRecorder', { isTypeSupported: recorder });
+    vi.stubGlobal('ManagedMediaSource', { isTypeSupported: player });
+    expect(callMediaSupported('audio')).toBe(true);
+    expect(callMediaSupported('video')).toBe(true);
+    platform.ios = false;
+    expect(callMediaSupported('audio')).toBe(false);
+    expect(() => createCallMediaReceiver('audio/webm;codecs=opus', vi.fn())).toThrow('unavailable');
+    platform.ios = true;
+    player.mockImplementation((mime?: string) => !mime?.startsWith('video/'));
+    expect(callMediaSupported('audio')).toBe(true);
+    expect(callMediaSupported('video')).toBe(false);
+    // Older iOS can have managed playback without the required WebM encoder.
+    recorder.mockReturnValue(false);
+    expect(callMediaSupported('audio')).toBe(false);
+    recorder.mockReturnValue(true);
+    vi.stubGlobal('ManagedMediaSource', undefined);
+    expect(callMediaSupported('audio')).toBe(false);
+    expect(() => createCallMediaReceiver('audio/webm;codecs=opus', vi.fn())).toThrow('unavailable');
+  });
+  it('keeps the standard playback path on browsers exposing both APIs', () => {
+    vi.stubGlobal('isSecureContext', true);
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn() } });
+    vi.stubGlobal('MediaRecorder', { isTypeSupported: () => true });
+    vi.stubGlobal('MediaSource', { isTypeSupported: () => true });
+    const managed = vi.fn();
+    vi.stubGlobal('ManagedMediaSource', { isTypeSupported: managed });
+    expect(callMediaSupported('video')).toBe(true);
+    expect(managed).not.toHaveBeenCalled();
   });
   it('selects an exact microphone without requesting camera access', async () => {
     const getUserMedia = vi.fn().mockResolvedValue({});
@@ -101,7 +140,7 @@ describe('call devices and playback', () => {
 });
 
 describe('continuous media buffering', () => {
-  it('does not repeatedly prune the same buffered range when the browser keeps a keyframe', () => {
+  it.each(['MediaSource', 'ManagedMediaSource'])('bounds buffering and cleans up %s', (api) => {
     class Buffer extends EventTarget {
       updating = false;
       buffered = { length: 1, start: () => 0, end: () => 20 };
@@ -122,7 +161,9 @@ describe('continuous media buffering', () => {
         return buffer;
       }
     }
-    vi.stubGlobal('MediaSource', Source);
+    vi.stubGlobal('MediaSource', undefined);
+    vi.stubGlobal(api, Source);
+    platform.ios = api === 'ManagedMediaSource';
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:media');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     const failure = vi.fn();
@@ -142,8 +183,8 @@ describe('continuous media buffering', () => {
       static current: Recorder;
       state = 'inactive';
       ondataavailable:
-        | ((event: { data: { size: number; arrayBuffer(): Promise<ArrayBuffer> } }) => void)
-        | null = null;
+        ((event: { data: { size: number; arrayBuffer(): Promise<ArrayBuffer> } }) => void) | null =
+        null;
       onerror: (() => void) | null = null;
       constructor() {
         Recorder.current = this;

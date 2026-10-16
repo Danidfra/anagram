@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "Les notifications de bureau ne sont pas prises en charge dans cet environnement d'application.",
   "notifications.enableBrowserNotifications": "Activer les notifications du navigateur",
   "notifications.enableNotifications": "Activer les notifications",
+  "notifications.ios.foregroundOnly": "Gardez Anagram ouvert pour recevoir des messages et des appels. Les notifications et les alertes d’appels entrants ne sont pas disponibles lorsque l’application est en arrière-plan ou que l’écran est verrouillé.",
   "notifications.manageLaterHint": "Vous pouvez également gérer cela plus tard à partir des paramètres sous Notifications.",
   "notifications.notifications": "Notifications",
   "notifications.showAndroidPushNotifications": "Afficher les notifications push Android",

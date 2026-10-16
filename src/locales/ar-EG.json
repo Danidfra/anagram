@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "إشعارات سطح المكتب غير مدعومة في بيئة التطبيق هذه.",
   "notifications.enableBrowserNotifications": "تمكين إشعارات المتصفح",
   "notifications.enableNotifications": "تمكين الإخطارات",
+  "notifications.ios.foregroundOnly": "خلّي Anagram مفتوح عشان تستقبل الرسايل والمكالمات. الإشعارات وتنبيهات المكالمات الواردة مش متاحة لما التطبيق يكون في الخلفية أو الشاشة مقفولة.",
   "notifications.manageLaterHint": "يمكنك أيضًا إدارة هذا لاحقًا من الإعدادات ضمن الإشعارات.",
   "notifications.notifications": "إشعارات",
   "notifications.showAndroidPushNotifications": "إظهار Android دفع الإخطارات",

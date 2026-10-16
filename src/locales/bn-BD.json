@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "এই অ্যাপ পরিবেশে ডেস্কটপ বিজ্ঞপ্তি সমর্থিত নয়।",
   "notifications.enableBrowserNotifications": "ব্রাউজার বিজ্ঞপ্তি সক্রিয় করুন",
   "notifications.enableNotifications": "বিজ্ঞপ্তি সক্রিয় করুন",
+  "notifications.ios.foregroundOnly": "বার্তা ও কল পেতে Anagram খোলা রাখুন। অ্যাপটি ব্যাকগ্রাউন্ডে থাকলে বা স্ক্রিন লক করা থাকলে বিজ্ঞপ্তি ও ইনকামিং কলের সতর্কতা পাওয়া যাবে না।",
   "notifications.manageLaterHint": "এছাড়াও আপনি বিজ্ঞপ্তির অধীনে সেটিংস থেকে পরে এটি পরিচালনা করতে পারেন।",
   "notifications.notifications": "বিজ্ঞপ্তি",
   "notifications.showAndroidPushNotifications": "Android পুশ বিজ্ঞপ্তি দেখান",

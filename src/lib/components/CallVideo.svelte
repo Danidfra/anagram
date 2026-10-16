@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { isIosNative } from '#src/lib/platform/ios.ts';
   import { followCallLive, setCallSpeaker } from '#src/services/callPlaybackService.ts';
   export let url = '';
   export let stream: MediaStream | null = null;
@@ -28,6 +29,7 @@
     value: string,
   ) {
     if (!node) return;
+    if (isIosNative()) node.disableRemotePlayback = true;
     node.srcObject = source;
     if (!source && value) node.src = value;
     void play();

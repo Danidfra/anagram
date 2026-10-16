@@ -11,7 +11,7 @@
 
 {#if $callRelayPrompts[0]}
   {@const prompt = $callRelayPrompts[0]}
-  <div class="backdrop" use:dismissOnBackdrop={() => prompt.finish(false)}>
+  <div class="backdrop call-relay-backdrop" use:dismissOnBackdrop={() => prompt.finish(false)}>
     <div
       class="relay-prompt"
       role="dialog"

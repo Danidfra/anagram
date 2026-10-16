@@ -1,4 +1,4 @@
-name: iPhone app (paused)
+name: iPhone app
 on:
   workflow_call:
     inputs:
@@ -10,9 +10,32 @@ on:
 permissions:
   contents: read
 jobs:
-  ios:
-    # Paused until iOS distribution signing is configured and verified.
+  webkit:
     if: vars.IOS_BUILDS_ENABLED == 'true'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install webkit
+      - name: Test iPhone layout and WebKit streaming media
+        # Browser tests cover viewport/codec behavior, not native permissions,
+        # Keychain, audio routing or delivery while the device is locked.
+        run: npm run test:e2e:local -- --browser webkit e2e/ios-layout.spec.ts e2e/call-playback.spec.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ios-webkit-diagnostics
+          path: test-results/
+          retention-days: 14
+  ios:
+    # Repository switch for standalone and reusable iPhone builds.
+    if: vars.IOS_BUILDS_ENABLED == 'true'
+    needs: webkit
     runs-on: macos-15
     timeout-minutes: 60
     env:

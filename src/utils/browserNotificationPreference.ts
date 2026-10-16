@@ -1,3 +1,5 @@
+import { isIosNative } from '#src/lib/platform/ios.ts';
+
 const BROWSER_NOTIFICATIONS_STORAGE_KEY = 'ui-browser-notifications';
 
 export type BrowserNotificationPermissionState = NotificationPermission | 'unsupported' | 'native';
@@ -15,12 +17,14 @@ function isDesktopNotificationEnvironment(): boolean {
     canUseWindow() &&
     Boolean(
       window.desktopRuntime?.isElectron &&
-        typeof window.desktopRuntime.showIncomingMessageNotification === 'function'
+      typeof window.desktopRuntime.showIncomingMessageNotification === 'function',
     )
   );
 }
 
 export function isBrowserNotificationSupported(): boolean {
+  // Native iOS deliberately has no push service or background notification path.
+  if (isIosNative()) return false;
   return (
     isDesktopNotificationEnvironment() ||
     (canUseWindow() && typeof window.Notification !== 'undefined')
@@ -28,6 +32,7 @@ export function isBrowserNotificationSupported(): boolean {
 }
 
 export function getBrowserNotificationPermission(): BrowserNotificationPermissionState {
+  if (isIosNative()) return 'unsupported';
   if (isDesktopNotificationEnvironment()) {
     return 'native';
   }
@@ -85,6 +90,7 @@ export function clearBrowserNotificationsPreference(): void {
 }
 
 export async function requestBrowserNotificationPermission(): Promise<BrowserNotificationPermissionState> {
+  if (isIosNative()) return 'unsupported';
   if (isDesktopNotificationEnvironment()) {
     return 'native';
   }

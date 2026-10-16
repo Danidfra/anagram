@@ -1,22 +1,35 @@
 import type { CallMode } from '#src/types/call.ts';
 import { CALL_MIME_TYPES, CALL_VIDEO_MIME_TYPE } from '#src/utils/callSignal.ts';
+import { isIosNative } from '#src/lib/platform/ios.ts';
+
+// The native iPhone app exposes ManagedMediaSource instead of MediaSource.
+// Other clients retain their existing playback path and capability checks.
+function callMediaSource(): typeof MediaSource | undefined {
+  return typeof MediaSource !== 'undefined'
+    ? MediaSource
+    : isIosNative()
+      ? (globalThis as typeof globalThis & { ManagedMediaSource?: typeof MediaSource })
+          .ManagedMediaSource
+      : undefined;
+}
 
 export function callMediaSupported(mode: CallMode): boolean {
   const mime = CALL_MIME_TYPES[1];
+  const Source = callMediaSource();
   return (
     globalThis.isSecureContext === true &&
     typeof WebAssembly !== 'undefined' &&
     typeof WebSocket !== 'undefined' &&
     typeof crypto.randomUUID === 'function' &&
     typeof MediaRecorder !== 'undefined' &&
-    typeof MediaSource !== 'undefined' &&
+    Source !== undefined &&
     Boolean(navigator.mediaDevices?.getUserMedia) &&
     Boolean(mime) &&
     MediaRecorder.isTypeSupported(mime) &&
-    MediaSource.isTypeSupported(mime) &&
+    Source.isTypeSupported(mime) &&
     (mode === 'audio' ||
       (MediaRecorder.isTypeSupported(CALL_VIDEO_MIME_TYPE) &&
-        MediaSource.isTypeSupported(CALL_VIDEO_MIME_TYPE)))
+        Source.isTypeSupported(CALL_VIDEO_MIME_TYPE)))
   );
 }
 
@@ -97,7 +110,9 @@ export interface CallMediaReceiver {
 
 // Each peer produces a continuous WebM stream; preserve every segment and bound buffering.
 export function createCallMediaReceiver(mimeType: string, onError: () => void): CallMediaReceiver {
-  const source = new MediaSource();
+  const Source = callMediaSource();
+  if (!Source) throw new Error('Streaming call playback is unavailable');
+  const source = new Source();
   const url = URL.createObjectURL(source);
   let buffer: SourceBuffer | null = null;
   const pending: Uint8Array<ArrayBuffer>[] = [];
@@ -165,7 +180,7 @@ export function recordCallMedia(
   mimeType: string,
   send: (bytes: Uint8Array) => Promise<void>,
   onError: () => void,
-  options?: { videoBitsPerSecond?: number }
+  options?: { videoBitsPerSecond?: number },
 ): () => void {
   const recorder = new MediaRecorder(stream, {
     mimeType,

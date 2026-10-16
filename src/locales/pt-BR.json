@@ -517,6 +517,7 @@
   "notifications.desktop.unsupportedEnvironment": "Notificações na área de trabalho não são suportadas neste ambiente de aplicativo.",
   "notifications.enableBrowserNotifications": "Habilitar notificações do navegador",
   "notifications.enableNotifications": "Habilitar notificações",
+  "notifications.ios.foregroundOnly": "Mantenha o Anagram aberto para receber mensagens e chamadas. Notificações e alertas de chamadas recebidas não estão disponíveis quando o aplicativo está em segundo plano ou a tela está bloqueada.",
   "notifications.manageLaterHint": "Você também pode gerenciar isso posteriormente em Configurações em Notificações.",
   "notifications.notifications": "Notificações",
   "notifications.showAndroidPushNotifications": "Mostrar notificações push Android",

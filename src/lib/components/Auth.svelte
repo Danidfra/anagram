@@ -421,7 +421,7 @@
 
 <style>
   .auth-page {
-    min-height: 100dvh;
+    min-height: var(--app-viewport-height, 100dvh);
     display: grid;
     place-items: center;
     padding: 20px;

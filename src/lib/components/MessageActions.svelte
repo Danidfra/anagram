@@ -4,6 +4,8 @@
   import type { Message } from '#src/types/chat.ts';
   import Icon from './Icon.svelte';
   import EmojiPicker from './EmojiPicker.svelte';
+  import { appViewportBounds } from '#src/lib/platform/viewportBounds.ts';
+  import { isIosNative } from '#src/lib/platform/ios.ts';
   export let message: Message;
   export let x: number;
   export let y: number;
@@ -31,8 +33,9 @@
   function position() {
     if (!menu) return;
     const bounds = menu.getBoundingClientRect();
-    left = Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8));
-    top = Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8));
+    const viewport = appViewportBounds();
+    left = Math.max(viewport.left + 8, Math.min(x, viewport.right - bounds.width - 8));
+    top = Math.max(viewport.top + 8, Math.min(y, viewport.bottom - bounds.height - 8));
     ready = true;
   }
   async function moreEmoji() {
@@ -69,7 +72,23 @@
     });
     const observer = new ResizeObserver(position);
     observer.observe(menu);
-    return () => observer.disconnect();
+    let frame = 0;
+    const schedule = () => {
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          position();
+        });
+    };
+    const viewport = isIosNative() ? window.visualViewport : null;
+    viewport?.addEventListener('resize', schedule);
+    viewport?.addEventListener('scroll', schedule);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      viewport?.removeEventListener('resize', schedule);
+      viewport?.removeEventListener('scroll', schedule);
+    };
   });
 </script>
 
@@ -123,7 +142,7 @@
     width: max-content;
     min-width: 224px;
     max-width: calc(100vw - 16px);
-    max-height: calc(100dvh - 16px);
+    max-height: calc(var(--app-viewport-height, 100dvh) - 16px);
     overflow: auto;
     border: 1px solid var(--nc-border);
     border-radius: 12px;
