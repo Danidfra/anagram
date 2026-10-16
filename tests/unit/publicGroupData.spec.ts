@@ -59,6 +59,27 @@ it('keeps account stores isolated and pages equal-timestamp messages without ove
   await b.close();
 });
 
+it('retains older fetched history beyond 2000 rows while keeping reads bounded', async () => {
+  const key = generateSecretKey();
+  const db = new PublicGroupData(getPublicKey(key));
+  const template = finalizeEvent(
+    { kind: 9, created_at: 1, content: 'Stored history', tags: [] },
+    key,
+  );
+  // This test exercises storage retention and paging, not signature validation.
+  const events = Array.from({ length: 2010 }, (_, i) => ({
+    ...template,
+    id: i.toString(16).padStart(64, '0'),
+    created_at: i + 1,
+  }));
+  await db.putMany('retained', events);
+  expect((await db.message('retained', events[0].id))?.id).toBe(events[0].id);
+  expect(await db.page('retained')).toHaveLength(50);
+  const oldest = await db.page('retained', { created_at: 11, id: events[10].id });
+  expect(oldest.map((event) => event.id)).toEqual(events.slice(0, 10).map((event) => event.id));
+  await db.close();
+});
+
 it('merges batched duplicate receipts without erasing publish evidence on replay', async () => {
   const key = generateSecretKey(),
     account = getPublicKey(key);

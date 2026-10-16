@@ -18,6 +18,8 @@ Public groups use signed, unencrypted events on ordinary Nostr relays.
 
 The owner can add one `["pinned", "<kind:9 event ID>"]` tag to the signed room definition, replace it, or remove it to unpin. Clients resolve the message in that room and apply the usual edits, deletion and trust rules. This is an Anagram extension.
 
+The pin loads early and opens in a separate preview. Opening it preserves the thread's scroll position and loaded message window; surrounding history is reached by scrolling up normally.
+
 ## Relays and ownership
 
 - Reads and writes use preferred room relays plus app relays. One responding relay is enough for reads, and one publish acknowledgement is enough for writes. Clients retain the newest verified room definition when a relay returns older or empty metadata; signatures prove authorship, not that a relay returned the latest policy.
@@ -30,3 +32,7 @@ Trust, blocking and transfer tags are tags used by anagram specifically. NIP-72 
 Verified public events are journaled in the account's public-group IndexedDB before processing. Duplicate deliveries merge relay receipts, and messages and actions drain in batches of at most 64 with a yield between batches. Entries are acknowledged only after processing succeeds; a receipt arriving during processing remains pending. Reopening a room resumes its unfinished inbox without requiring the relay to resend those events. Replay does not generate live-message scroll signals.
 
 The journal is independent of history pagination: opening a room still requests a bounded recent page, and older messages load on demand. Background connection/storage failures are indicated in the existing header rather than overlays over the thread. Disk failures still require recovery or a refresh; a committed inbox does not protect against clearing browser storage.
+
+History follows the private-group paging approach without key discovery or decryption: independent per-relay cursors use the shared exhaustive `HistoryPager`, advance only after real EOSE and a successful storage commit, and retain unfinished reads for retry. Each paging action schedules at most four history page requests; healthy replicas can finish without waiting for a stalled one. There is no background archive scan. Fetched messages remain in IndexedDB, with batches of at most 64 writes and at most 200 displayed messages.
+
+The pinned message is fetched separately as soon as the room is available. A pin, reply lookup, search jump, or sparse local cache never establishes history coverage or moves a relay cursor. Paging reconciles gaps inside the visible interval as well as loading its next edge, so caches made by earlier versions can recover without clearing account data. Private-group fetching is unchanged.

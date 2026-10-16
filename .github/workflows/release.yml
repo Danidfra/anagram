@@ -202,13 +202,28 @@ jobs:
     with:
       release_tag: ${{ needs.verify.outputs.tag }}
     secrets: inherit
+  ios:
+    needs: verify
+    if: vars.IOS_BUILDS_ENABLED == 'true'
+    uses: ./.github/workflows/ios.yml
+    with:
+      release_tag: ${{ needs.verify.outputs.tag }}
+    secrets: inherit
   publish:
-    needs: [verify, desktop, android]
+    needs: [verify, desktop, android, ios]
+    # iPhone validation is optional while device/signing support is being set up.
+    # Preserve every existing release gate, including cancellation handling.
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.desktop.result == 'success' && needs.android.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Report unavailable iPhone package
+        if: vars.IOS_BUILDS_ENABLED == 'true' && needs.ios.result != 'success'
+        run: |
+          echo '::warning::iPhone build did not succeed; this release will omit the IPA. See the iOS jobs for diagnostics.'
+          echo 'iPhone build did not succeed. Other platforms passed their required checks; this release omits the IPA.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
@@ -224,13 +239,21 @@ jobs:
           name: web-app
           path: web-app
       - name: Package web app and checksums
+        env:
+          IOS_BUILD_RESULT: ${{ needs.ios.result }}
         run: |
           shopt -s nullglob
           exes=(release-assets/*.exe)
           dmgs=(release-assets/*.dmg)
           appimages=(release-assets/*.AppImage)
           apks=(release-assets/*.apk)
+          ipas=(release-assets/*.ipa)
           [[ ${#exes[@]} -eq 1 && ${#dmgs[@]} -eq 2 && ${#appimages[@]} -eq 1 && ${#apks[@]} -eq 1 ]]
+          if [[ "$IOS_BUILD_RESULT" == success ]]; then
+            [[ ${#ipas[@]} -eq 1 ]]
+          else
+            [[ ${#ipas[@]} -eq 0 ]]
+          fi
           cd web-app
           zip -qr ../release-assets/anagram-web.zip .
           cd ../release-assets

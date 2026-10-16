@@ -271,7 +271,6 @@ export class PublicGroupData {
         });
       const batch = [...merged.values()];
       await this.transaction<void>('messages', 'readwrite', (s) => {
-        let remaining = batch.length;
         for (const event of batch) {
           const request = s.get([room, event.id!]);
           request.onsuccess = () => {
@@ -282,29 +281,10 @@ export class PublicGroupData {
             const value = { ...event, ...(relay_statuses.length ? { relay_statuses } : {}) };
             saved.push(value);
             s.put({ ...value, room });
-            if (--remaining === 0) prune();
           };
         }
-        function prune() {
-          let positioned = false;
-          const request = s
-            .index('timeline')
-            .openCursor(
-              IDBKeyRange.bound([room, 0, ''], [room, Number.MAX_SAFE_INTEGER, '\uffff']),
-              'prev',
-            );
-          request.onsuccess = () => {
-            const cursor = request.result;
-            if (!cursor) return;
-            if (!positioned) {
-              positioned = true;
-              cursor.advance(2000);
-              return;
-            }
-            cursor.delete();
-            cursor.continue();
-          };
-        }
+        // Retain fetched history, as private groups do. Reads and writes remain
+        // bounded; deleting older rows here would invalidate completed cursors.
       });
     }
     return saved;

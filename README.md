@@ -35,7 +35,7 @@ npm run test:e2e:local
 
 ## Releases
 
-Version tags build Windows, macOS, Linux, Android, and web assets. **RC tags such as `v0.1.0-rc1` stay as drafts.** iPhone builds are available through the standalone **iPhone app** action; installation requires iOS signing credentials.
+Version tags build Windows, macOS, Linux, Android, and web assets. **RC tags such as `v0.1.0-rc1` stay as drafts.** When `IOS_BUILDS_ENABLED=true`, releases also attempt an iPhone build and include its IPA if successful. iPhone failures do not block other platforms. The standalone **iPhone app** action remains available; unsigned IPAs require signing before installation.
 
 - [Release and signing setup](docs/releases.md)
 - [Development, hosting, and mobile builds](docs/development.md)

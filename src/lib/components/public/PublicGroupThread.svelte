@@ -74,20 +74,30 @@
   let pinKey = '';
   let pinRevision = 0;
   let pinBusy = false;
+  let pinPreview = false;
+  let pinLoading = false;
   $: canPin = Boolean(room && room.owner === own && writable);
   $: void refreshPin(room?.event.id ?? '', $state.history, $state.messages);
-  async function refreshPin(key: string, history: string, _messages: unknown[]) {
+  async function refreshPin(
+    key: string,
+    history: string,
+    _messages: unknown[],
+    fetchMissing = false,
+  ) {
     const revision = ++pinRevision;
     const changed = key !== pinKey;
-    if (changed || history) pinned = null;
+    if (changed || history) {
+      pinned = null;
+      pinPreview = false;
+    }
     pinKey = key;
     if (!room?.pinned || history) {
       pinned = null;
       return;
     }
-    const value = await runtime.pinnedMessage(changed).catch(() => null);
+    const value = await runtime.pinnedMessage(changed || fetchMissing).catch(() => null);
     if (revision === pinRevision) pinned = value;
-    else if (changed && key === pinKey && !history && room?.event.id === key)
+    else if ((changed || fetchMissing) && key === pinKey && !history && room?.event.id === key)
       void refreshPin(key, history, []);
   }
   async function setPin(id: string | null) {
@@ -102,11 +112,16 @@
       pinBusy = false;
     }
   }
-  function openPin() {
-    if (room?.pinned)
-      void jump(room.pinned, new AbortController().signal).catch(
-        (cause) => (error = cause.message),
-      );
+  async function openPin() {
+    if (!room?.pinned || pinLoading) return;
+    pinPreview = true;
+    if (pinned) return;
+    pinLoading = true;
+    try {
+      await refreshPin(room.event.id!, $state.history, $state.messages, true);
+    } finally {
+      pinLoading = false;
+    }
   }
   let reply: MessageReplyPreview | null = null;
   let editing: Message | null = null;
@@ -400,8 +415,9 @@
           : buildMessageReplyPreviewContent(pinned.text, pinned.meta).text
         : 'Message unavailable · Click to load'}
       onopen={openPin}
+      openLabel="View pinned message"
       onunpin={canPin ? () => void setPin(null) : undefined}
-      busy={pinBusy}
+      busy={pinBusy || pinLoading}
     />
   {/if}
   {#if $state.ancestors.length}<label class="history"
@@ -641,6 +657,24 @@
     onaction={messageAction}
     onclose={closeActions}
   />{/if}
+{#if pinPreview && room?.pinned && !$state.history}
+  <ModalFrame title="Pinned message" onclose={() => (pinPreview = false)}>
+    <div class="pin-preview">
+      {#if pinned?.nostrEvent}
+        <PublicMessage
+          event={pinned.nostrEvent.event}
+          displayMessage={pinned}
+          trusted={roomPolicy(room, pinned.authorPublicKey) === 'trusted'}
+          oncontact={onauthor}
+        />
+      {:else}
+        <p role="status">{pinLoading ? 'Loading pinned message…' : 'Message unavailable'}</p>
+      {/if}
+      <p class="pin-preview-hint">Scroll up in the conversation to read surrounding messages.</p>
+    </div>
+  </ModalFrame>
+{/if}
+
 {#if inspectedMessage}<ModalFrame
     title={$translate('common.nostrInfo')}
     label="info"
@@ -654,6 +688,15 @@
   </ModalFrame>{/if}
 
 <style>
+  .pin-preview {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .pin-preview-hint {
+    margin: 16px 0 0;
+    color: var(--nc-text-secondary);
+    font-size: 12px;
+  }
   .thread-feedback {
     position: relative;
     flex: 0 0 0;

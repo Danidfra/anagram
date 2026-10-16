@@ -4,15 +4,11 @@
   export let onopen: () => void;
   export let onunpin: (() => void) | undefined = undefined;
   export let busy = false;
+  export let openLabel = 'Go to pinned message';
 </script>
 
 <div class="pinned-message" data-testid="pinned-message">
-  <button
-    class="pinned-message__preview"
-    aria-label="Go to pinned message"
-    onclick={onopen}
-    disabled={busy}
-  >
+  <button class="pinned-message__preview" aria-label={openLabel} onclick={onopen} disabled={busy}>
     <span class="pinned-message__label">Pinned message</span>
     <span class="pinned-message__text">{text || 'Message unavailable'}</span>
   </button>

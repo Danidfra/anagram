@@ -57,6 +57,22 @@ async function create(page: Page, name = 'Public lounge') {
     slug: decoded.data.identifier,
   };
 }
+async function viewPin(page: Page, text: string) {
+  const rows = page.getByTestId('public-message');
+  const ids = () =>
+    rows.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-event-id')));
+  const before = await ids();
+  const thread = page.getByTestId('chat-thread');
+  const scrollTop = await thread.evaluate((node) => node.scrollTop);
+  await page.getByRole('button', { name: 'View pinned message' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Pinned message', exact: true });
+  await expect(dialog).toContainText(text);
+  expect(await ids()).toEqual(before);
+  await dialog.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await ids()).toEqual(before);
+  expect(await thread.evaluate((node) => node.scrollTop)).toBe(scrollTop);
+}
 for (const width of [1280, 390]) {
   test(`opening public groups preserves sidebar order at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
@@ -1589,10 +1605,8 @@ test('public chat stays usable with a stalled replica and empty cached-policy lo
   await expect(page.getByTestId('pinned-message')).toContainText('Available message 0', {
     timeout: 5000,
   });
-  await page.getByRole('button', { name: 'Go to pinned message' }).click();
-  await expect(
-    page.getByTestId('public-message').filter({ hasText: 'Available message 0' }),
-  ).toBeVisible();
+  await expect(page.getByTestId('public-message')).toHaveCount(50);
+  await viewPin(page, 'Available message 0');
 
   emptyMetadata = true;
   await page.reload();
@@ -1606,6 +1620,90 @@ test('public chat stays usable with a stalled replica and empty cached-policy lo
     page.getByTestId('public-message').filter({ hasText: 'The healthy app relay is enough' }),
   ).toBeVisible();
   await expect(page.getByText(/Public group relay checks did not complete/)).toHaveCount(0);
+});
+
+test('an early old pin never skips the public history between it and the recent page', async ({
+  page,
+}) => {
+  const owner = await login(page);
+  const slug = `pin-history-${owner.pubkey.slice(0, 12)}`;
+  const address = `34550:${owner.pubkey}:${slug}`;
+  const now = Math.floor(Date.now() / 1000);
+  const pin = finalizeEvent(
+    {
+      kind: 9,
+      created_at: now - 10000,
+      content: 'Early pinned announcement',
+      tags: [['a', address]],
+    },
+    owner.key,
+  );
+  const notes = Array.from({ length: 150 }, (_, n) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: now - 1000 + n,
+        content: `History gap note ${String(n).padStart(3, '0')}`,
+        tags: [['a', address]],
+      },
+      owner.key,
+    ),
+  );
+  await publish(pin);
+  for (let offset = 0; offset < notes.length; offset += 25)
+    await Promise.all(notes.slice(offset, offset + 25).map(publish));
+  await publish(
+    finalizeEvent(
+      {
+        kind: 34550,
+        created_at: now,
+        content: '',
+        tags: [
+          ['d', slug],
+          ['name', 'Pinned history'],
+          ['anagram-room', '1'],
+          ['relay', relay],
+          ['pinned', pin.id],
+        ],
+      },
+      owner.key,
+    ),
+  );
+  const link = nip19.naddrEncode({
+    kind: 34550,
+    pubkey: owner.pubkey,
+    identifier: slug,
+    relays: [relay],
+  });
+  await navigateInApp(page, `/public/${link}`);
+  await expect(page.getByTestId('pinned-message')).toContainText(pin.content);
+  const rows = page.getByTestId('public-message');
+  await expect(rows).toHaveCount(50);
+  // Persisting the pin must neither fetch the archive nor poison paging on reload.
+  await page.reload();
+  await expect(page.getByTestId('pinned-message')).toContainText(pin.content);
+  await expect(rows).toHaveCount(50);
+  // Reading an old pin must not jump the timeline or insert it into the recent page.
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await viewPin(page, pin.content);
+    await expect(rows.filter({ hasText: pin.content })).toHaveCount(0);
+  }
+  const older = page.getByTestId('thread-load-older');
+  for (const count of [100, 150, 151]) {
+    await older.click();
+    await expect(rows).toHaveCount(count);
+  }
+  const text = await rows.allTextContents();
+  for (const note of notes) expect(text.some((value) => value.includes(note.content))).toBe(true);
+  await viewPin(page, pin.content);
+  await expect(rows).toHaveCount(151);
+  expect(await rows.allTextContents()).toEqual(text);
+  // Repeated previews preserve the fully loaded thread too.
+  await viewPin(page, pin.content);
+  await expect(rows).toHaveCount(151);
+  expect(await rows.allTextContents()).toEqual(text);
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
 test('an edited public pin resolves and jumps after the original has disappeared', async ({
@@ -1685,16 +1783,14 @@ test('an edited public pin resolves and jumps after the original has disappeared
   await reply.locator('.reply-preview').click();
   await expect(message).toHaveClass(/highlighted/);
   await expect(card).toContainText('Welcome to Anagram!', { timeout: 5000 });
-  await page.getByRole('button', { name: 'Go to pinned message' }).click();
-  await expect(message).toHaveClass(/highlighted/);
+  await viewPin(page, 'Welcome to Anagram!');
   await message.locator('.message-content').click({ button: 'right' });
   await expect(page.getByRole('menuitem', { name: 'Unpin message', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await page.reload();
   await expect(reply.locator('.reply-preview')).toContainText('Welcome to Anagram!');
   await expect(card).toContainText('Welcome to Anagram!', { timeout: 5000 });
-  await page.getByRole('button', { name: 'Go to pinned message' }).click();
-  await expect(message).toHaveClass(/highlighted/);
+  await viewPin(page, 'Welcome to Anagram!');
 });
 
 test('an old pin with many edits loads from a relay that never completes its lookup', async ({
@@ -1778,10 +1874,8 @@ test('an old pin with many edits loads from a relay that never completes its loo
   const card = page.getByTestId('pinned-message');
   await expect(card).toContainText('Available announcement', { timeout: 5000 });
   expect(received).toBeGreaterThan(0);
-  await page.getByRole('button', { name: 'Go to pinned message' }).click();
-  await expect(
-    page.getByTestId('public-message').filter({ hasText: 'Available announcement' }),
-  ).toHaveClass(/highlighted/);
+  await expect(page.getByTestId('public-message')).toHaveCount(50);
+  await viewPin(page, 'Available announcement');
   await page.reload();
   await expect(card).toContainText('Available announcement', { timeout: 5000 });
   await expect(page.getByText(/Public group relay checks did not complete/)).toHaveCount(0);

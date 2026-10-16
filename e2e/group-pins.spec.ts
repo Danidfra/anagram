@@ -83,10 +83,18 @@ for (const kind of ['private', 'public'] as const) {
           expect(await card.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
         }
       }
-      await a.getByRole('button', { name: 'Go to pinned message' }).click();
-      await expect(rows(a).filter({ hasText: 'A useful group announcement' })).toHaveClass(
-        /highlighted/,
-      );
+      if (kind === 'public') {
+        await a.getByRole('button', { name: 'View pinned message' }).click();
+        const preview = a.getByRole('dialog', { name: 'Pinned message', exact: true });
+        await expect(preview).toContainText('A useful group announcement');
+        await a.screenshot({ path: info.outputPath('public-pin-preview-mobile.png') });
+        await preview.getByRole('button', { name: 'Close dialog' }).click();
+      } else {
+        await a.getByRole('button', { name: 'Go to pinned message' }).click();
+        await expect(rows(a).filter({ hasText: 'A useful group announcement' })).toHaveClass(
+          /highlighted/,
+        );
+      }
       await a.screenshot({ path: info.outputPath(`${kind}-pin-mobile.png`) });
       // Editing and deleting the target update the card via the same message state.
       await rows(a)
@@ -97,6 +105,13 @@ for (const kind of ['private', 'public'] as const) {
       await send('Updated group announcement');
       await expect(a.getByTestId('pinned-message')).toContainText('Updated group announcement');
       await expect(b.getByTestId('pinned-message')).toContainText('Updated group announcement');
+      if (kind === 'public') {
+        await a.getByRole('button', { name: 'View pinned message' }).click();
+        const preview = a.getByRole('dialog', { name: 'Pinned message', exact: true });
+        await expect(preview).toContainText('Updated group announcement');
+        await expect(preview).not.toContainText('A useful group announcement');
+        await preview.getByRole('button', { name: 'Close dialog' }).click();
+      }
       await rows(a)
         .filter({ hasText: 'Updated group announcement' })
         .locator('.message-content')
@@ -105,6 +120,13 @@ for (const kind of ['private', 'public'] as const) {
       await a.getByRole('menuitem', { name: 'Delete', exact: true }).click();
       await expect(a.getByTestId('pinned-message')).toContainText('Message deleted');
       await expect(b.getByTestId('pinned-message')).toContainText('Message deleted');
+      if (kind === 'public') {
+        await a.getByRole('button', { name: 'View pinned message' }).click();
+        const preview = a.getByRole('dialog', { name: 'Pinned message', exact: true });
+        await expect(preview).toContainText('Message deleted');
+        await expect(preview).not.toContainText('Updated group announcement');
+        await preview.getByRole('button', { name: 'Close dialog' }).click();
+      }
       await a.getByRole('button', { name: 'Unpin message', exact: true }).click();
       await expect(a.getByTestId('pinned-message')).toHaveCount(0);
       await expect(b.getByTestId('pinned-message')).toHaveCount(0);

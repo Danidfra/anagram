@@ -1,4 +1,5 @@
 import { yieldToMainThread } from '#src/utils/backgroundTasks.ts';
+import { createPublicGroupHistoryRuntime } from './publicGroupHistoryRuntime.ts';
 import { buildMessageEditTag } from '#src/utils/messageEdits.ts';
 import { notifyLiveThreadMessage } from '#src/lib/state/threadActivity.ts';
 import {
@@ -113,6 +114,46 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     live = undefined;
   }
   const queries = new Set<() => void>();
+  const historyPages = createPublicGroupHistoryRuntime({
+    owner: deps.account,
+    query: async ({ address, relayUrl, pager, signal }) => {
+      const owner = account,
+        db = data!;
+      const active = () => !signal.aborted && owner === deps.account() && data === db;
+      const result = await query(
+        [
+          {
+            kinds: [9],
+            '#a': [address],
+            since: pager.since,
+            until: pager.until,
+            limit: pager.limit,
+          },
+        ],
+        [relayUrl],
+        pager.limit,
+        undefined,
+        false,
+        undefined,
+        signal,
+      );
+      if (!active()) return;
+      await cacheTimelineEvents(
+        address,
+        result.events.map((event) => receivedMessage(event)),
+        [relayUrl],
+        db,
+        active,
+      );
+      if (!active()) return;
+      // Count wire events, including edits, rather than collapsed display rows.
+      // This is the same exhaustive, inclusive-second pager private groups use.
+      pager.advance(
+        result.events.length,
+        Math.min(...result.events.map((event) => event.created_at)),
+      );
+    },
+  });
   let writing = false;
   let requested = '';
   function assertSession(owner: string) {
@@ -123,6 +164,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     view++;
     windowRevision++;
     stopLive();
+    historyPages.stop();
     for (const stop of [...queries]) stop();
   }
   function stop() {
@@ -211,6 +253,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     accept?: (events: ClientEvent[]) => boolean,
     allowPartial = true,
     acceptReceived?: (event: ClientEvent) => boolean,
+    signal?: AbortSignal,
   ): Promise<{ events: ClientEvent[]; complete: boolean }> {
     return new Promise((resolve, reject) => {
       const completed = new Map<string, ClientEvent>();
@@ -233,6 +276,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         clearTimeout(timer);
         clearTimeout(partialTimer);
         queries.delete(cancel);
+        signal?.removeEventListener('abort', cancel);
         subscriptions.forEach((sub) => sub.stop());
         error
           ? reject(error)
@@ -247,6 +291,11 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         10000,
       );
       queries.add(cancel);
+      if (signal?.aborted) {
+        cancel();
+        return;
+      }
+      signal?.addEventListener('abort', cancel, { once: true });
       for (const url of urls) {
         const events = new Map<string, ClientEvent>();
         let ended = false;
@@ -715,6 +764,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       const urls = await relayUrls(room.relays);
       if (token !== view || owner !== account) return;
       startLive(room, urls, token, owner, db);
+      // The live subscription supplies the bounded recent page. History cursors
+      // start independently at the session boundary when the user pages back.
+      historyPages.select(room.address);
     } catch (e) {
       if (token !== view || owner !== account) return;
       // Retain only the joined room reached through the verified cached chain.
@@ -954,126 +1006,81 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     }
   }
 
-  async function older() {
+  async function pageHistory(direction: 'prev' | 'next') {
     const s = get(state);
     if (!s.room || s.loading) return;
     const token = view,
-      revision = windowRevision,
-      owner = account,
-      db = data!,
-      address = s.history || s.room.address;
-    const first = s.messages[0];
-    state.update((s) => ({ ...s, loading: true, error: '' }));
-    try {
-      let complete = false;
-      let events = await db.page(
-        address,
-        first ? { created_at: first.created_at, id: first.id! } : undefined,
-        ROOM_PAGE,
-      );
-      if (!events.length) {
-        const room = s.ancestors.find((r) => r.address === address) || s.room;
-        const result = await query(
-          [
-            {
-              kinds: [9],
-              '#a': [address],
-              ...(first ? { until: first.created_at } : {}),
-              limit: ROOM_WINDOW,
-            },
-          ],
-          await relayUrls(room.relays),
-          ROOM_WINDOW * 8,
-          (events) =>
-            events.filter(
-              (e) =>
-                validRoomMessage(e.rawEvent(), address) &&
-                (!first ||
-                  e.created_at < first.created_at ||
-                  (e.created_at === first.created_at && e.id < first.id!)),
-            ).length >= ROOM_PAGE,
-          true,
-        );
-        const raw = result.events;
-        complete = result.complete;
-        if (
-          first &&
-          raw.length >= ROOM_WINDOW &&
-          raw.every((e) => e.created_at === first.created_at)
-        )
-          throw new Error(
-            'This relay returned a dense message batch. Earlier history could not be fully paged.',
-          );
-        events = raw
-          .map((e) => receivedMessage(e))
-          .filter(
-            (e) =>
-              validRoomMessage(e, address) &&
-              (!first ||
-                e.created_at < first.created_at ||
-                (e.created_at === first.created_at && e.id! < first.id!)),
-          );
-        events.sort((a, b) => a.created_at - b.created_at || a.id!.localeCompare(b.id!));
-        events = events.slice(-ROOM_PAGE);
-        assertSession(owner);
-        if (token !== view || revision !== windowRevision) return;
-        events = await cacheTimelineEvents(
-          address,
-          events,
-          await relayUrls(room.relays),
-          db,
-          () => token === view && revision === windowRevision && owner === deps.account(),
-        );
-      }
-      assertSession(owner);
-      if (token !== view || revision !== windowRevision) return;
-      if ((get(state).history || get(state).room?.address) !== address) return;
-      const hydrated = await hydrate(address, events, db);
-      if (token !== view || revision !== windowRevision) return;
-      append(hydrated, true);
-      state.update((s) => ({ ...s, more: !complete || events.length === ROOM_PAGE }));
-    } catch (e) {
-      if (token === view && revision === windowRevision)
-        state.update((s) => ({ ...s, error: (e as Error).message }));
-    } finally {
-      if (token === view && revision === windowRevision)
-        state.update((s) => ({ ...s, loading: false }));
-    }
-  }
-  async function newer() {
-    const s = get(state);
-    if (!s.room || s.loading || !s.hasNewer) return;
-    const token = view,
-      revision = windowRevision,
+      revision = ++windowRevision,
       owner = account,
       db = data!;
-    const last = s.messages.at(-1);
-    if (!last) return;
-    state.update((s) => ({ ...s, loading: true }));
+    const address = s.history || s.room.address;
+    const room = s.ancestors.find((room) => room.address === address) ?? s.room;
+    const active = () => token === view && revision === windowRevision && owner === deps.account();
+    state.update((s) => ({ ...s, loading: true, error: '' }));
     try {
-      const events = await db.page(
-        s.history || s.room.address,
-        { created_at: last.created_at, id: last.id! },
+      const urls = await relayUrls(room.relays);
+      if (!active()) return;
+      await historyPages.load(address, urls);
+      if (!active()) return;
+      // Cursors belong to relay reads, never to a pin/search result in this window.
+      // Reconcile the visible interval as well as its edge: this repairs gaps in
+      // caches created by older versions without deleting any account data.
+      const current = get(state).messages;
+      const edge = direction === 'prev' ? current[0] : current.at(-1);
+      const cursor = (event: PublicGroupMessage) => ({
+        created_at: event.created_at,
+        id: event.id!,
+      });
+      const order = (a: PublicGroupMessage, b: PublicGroupMessage) =>
+        a.created_at - b.created_at || a.id!.localeCompare(b.id!);
+      const adjacent = await db.page(
+        address,
+        edge ? cursor(edge) : undefined,
         ROOM_PAGE,
-        'next',
+        direction,
       );
-      if (token !== view || revision !== windowRevision || owner !== account) return;
-      const hydrated = await hydrate(
-        s.history || s.room!.address,
-        events.filter((e) => validRoomMessage(e, s.history || s.room!.address)),
+      const candidates = publicMessageRoots([...current, ...adjacent])
+        .filter((event) => validRoomMessage(event, address))
+        .sort(order);
+      const anchors =
+        direction === 'prev' ? candidates.slice(0, ROOM_WINDOW) : candidates.slice(-ROOM_WINDOW);
+      const boundary = direction === 'prev' ? anchors.at(-1) : anchors[0];
+      let filled: PublicGroupMessage[] = [];
+      if (boundary) {
+        const rows = await db.page(address, cursor(boundary), ROOM_WINDOW - 1, direction);
+        filled = [...rows, boundary]
+          .filter((event) => order(event, anchors[0]) >= 0 && order(event, anchors.at(-1)!) <= 0)
+          .sort(order);
+      }
+      const messages = await hydrate(
+        address,
+        filled.filter((event) => validRoomMessage(event, address)),
         db,
       );
-      if (token !== view || revision !== windowRevision || owner !== account) return;
-      append(hydrated);
-      state.update((s) => ({ ...s, hasNewer: events.length === ROOM_PAGE, more: true }));
-    } catch {
-      if (token === view && revision === windowRevision)
-        state.update((s) => ({ ...s, error: 'Could not load newer public messages.' }));
+      const first = messages[0],
+        last = messages.at(-1);
+      const [before, after] = await Promise.all([
+        first ? db.page(address, cursor(first), 1) : Promise.resolve([]),
+        last ? db.page(address, cursor(last), 1, 'next') : Promise.resolve([]),
+      ]);
+      if (!active()) return;
+      state.update((s) => ({
+        ...s,
+        messages,
+        more: before.length > 0 || historyPages.hasOlder(urls),
+        hasNewer: after.length > 0,
+        error: historyPages.error
+          ? 'Some public group history could not be loaded. Retry to continue.'
+          : '',
+      }));
+    } catch (error) {
+      if (active()) state.update((s) => ({ ...s, error: (error as Error).message }));
     } finally {
-      if (token === view && revision === windowRevision)
-        state.update((s) => ({ ...s, loading: false }));
+      if (active()) state.update((s) => ({ ...s, loading: false }));
     }
   }
+  const older = () => pageHistory('prev');
+  const newer = () => pageHistory('next');
   // Searches and jumps are scoped to the signed policy, history and account that
   // started them. A late result must never replace a different thread's window.
   function searchContext(signal?: AbortSignal) {
@@ -1213,6 +1220,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     try {
       const target = await readMessage(id, context);
       if (!active() || !target || context.textFor(target) === null) return null;
+      // Like private groups' ensureMessageLoaded, keep the current window when
+      // the target is already present. The caller only needs to scroll/highlight.
+      if (get(state).messages.some((event) => event.id === target.id)) return target;
       const cursor = { created_at: target.created_at, id: target.id! };
       const [before, after] = await Promise.all([
         context.db.page(context.address, cursor, 25),

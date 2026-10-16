@@ -487,6 +487,45 @@ it('pages history through a healthy replica without a stalled replica blocking a
   expect(get(runtime.state).error).toBe('');
 });
 
+it('does not skip uncached history when an old pin was fetched separately', async () => {
+  const key = generateSecretKey();
+  const address = `34550:${getPublicKey(key)}:pin-history-gap`;
+  const pin = finalizeEvent(
+    { kind: 9, created_at: 20, content: 'Old pinned announcement', tags: [['a', address]] },
+    key,
+  );
+  const metadata = room(key, 'pin-history-gap', [['pinned', pin.id]]);
+  const events = Array.from({ length: 150 }, (_, n) =>
+    finalizeEvent(
+      { kind: 9, created_at: 100 + n, content: `Message ${n}`, tags: [['a', address]] },
+      key,
+    ),
+  );
+  const { runtime } = setup([metadata, pin, ...events], key);
+  await runtime.open(encodeRoomLink(parsePublicRoom(metadata)));
+  await vi.waitFor(() => expect(get(runtime.state).messages).toHaveLength(50));
+  expect((await runtime.pinnedMessage())?.text).toBe('Old pinned announcement');
+  await runtime.older();
+  expect(get(runtime.state).messages[0].content).toBe('Message 50');
+  expect(get(runtime.state).messages).toHaveLength(100);
+  await runtime.older();
+  expect(get(runtime.state).messages[0].content).toBe('Message 0');
+  await runtime.older();
+  expect(get(runtime.state).messages.map((event) => event.id)).toEqual(
+    [pin, ...events].map((event) => event.id),
+  );
+  const loaded = get(runtime.state);
+  const pageSpy = vi.spyOn(PublicGroupData.prototype, 'page');
+  for (let click = 0; click < 2; click++) {
+    expect((await runtime.jumpToMessage(pin.id))?.id).toBe(pin.id);
+    expect(get(runtime.state).messages).toBe(loaded.messages);
+    expect(get(runtime.state).more).toBe(loaded.more);
+    expect(get(runtime.state).hasNewer).toBe(loaded.hasNewer);
+    expect(get(runtime.state).loading).toBe(false);
+  }
+  expect(pageSpy).not.toHaveBeenCalled();
+});
+
 it('bounds pending query events across all replicas, even before EOSE', async () => {
   const key = generateSecretKey();
   const event = room(key, 'bounded', [['relay', 'wss://second.example.org/']]);
@@ -1318,9 +1357,7 @@ it('pins only as owner, keeps the pin across profile edits, and removes it on re
   expect(get(f.runtime.state).room?.pinned).toBeUndefined();
   const member = setup(f.events);
   await member.runtime.open(encodeRoomLink(parsePublicRoom(definition)));
-  await expect(member.runtime.pinMessage(note.id)).rejects.toThrow(
-    'Only the current group owner',
-  );
+  await expect(member.runtime.pinMessage(note.id)).rejects.toThrow('Only the current group owner');
 });
 
 it('loads a remotely pinned old message without changing the message window', async () => {
@@ -1330,7 +1367,12 @@ it('loads a remotely pinned old message without changing the message window', as
   // One message beyond the 50-message page exercises the history boundary.
   const notes = Array.from({ length: 51 }, (_, i) =>
     finalizeEvent(
-      { kind: 9, created_at: 100 + i, tags: [['a', group.address]], content: `Pinned history ${i}` },
+      {
+        kind: 9,
+        created_at: 100 + i,
+        tags: [['a', group.address]],
+        content: `Pinned history ${i}`,
+      },
       key,
     ),
   );
