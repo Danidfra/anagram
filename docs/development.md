@@ -59,11 +59,14 @@ For an unsigned iPhone build on macOS with Xcode:
 
 ```sh
 npm run tauri -- ios init --ci
+node scripts/prepare-ios.mjs
 node scripts/mobile-version.mjs
 npm run tauri -- ios build --ci --target aarch64 --no-sign --config src-tauri/mobile-version.json -- --locked
 ```
 
-IPAs appear under `src-tauri/gen/apple/build/`. See [signing setup](releases.md) for installable builds.
+IPAs appear under `src-tauri/gen/apple/build/`. The preparation script adds the required-reason API privacy manifest and generates opaque App Store icons. Run it again after regenerating the Xcode project. See [signing setup](releases.md) for installable builds.
+
+For an installed simulator launch check, run `node scripts/build-ios-simulator.mjs`, then `python3 scripts/release-smoke/ios.py`. The helper selects the host architecture and explicitly targets the iOS Simulator during archiving. Move any device archive out of `src-tauri/gen/apple/build/` first: the smoke check expects exactly one Anagram application there. Use a simulator with English as its system language and no saved Anagram account. The check requires visible welcome/login controls using macOS Vision text recognition and captures a launch screenshot; it does not validate real-device audio, permissions, or calls.
 
 The iOS app uses the shared Nostr/IndexedDB implementation and Apple Keychain for the saved signing key. Its viewport follows keyboard changes and consumes safe-area insets once, including portalled dialogs and call controls. Android retains its native inset handling.
 

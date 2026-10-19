@@ -26,6 +26,14 @@ Configure repository **Actions secrets**. Never commit signing keys or certifica
 
 The `IOS_EXPORT_METHOD` repository variable defaults to `app-store-connect` for App Store/TestFlight. Use `release-testing` for an ad hoc profile covering registered devices, or `debugging` with development credentials. The workflow builds the IPA; it does not submit it to Apple.
 
+For a local App Store build without a registered device, sign into the team's account in Xcode, generate the iOS project, and run `node scripts/prepare-ios.mjs` and `node scripts/mobile-version.mjs`. Create the archive with:
+
+```sh
+npm run tauri -- ios build --ci --target aarch64 --no-sign --archive-only --config src-tauri/mobile-version.json -- --locked
+```
+
+Open `src-tauri/gen/apple/build/anagram_iOS.xcarchive` in Xcode and distribute it through App Store Connect. Automatic distribution signing uses the account's App Store certificate/profile permissions; it does not require a development device. The same archive can be exported with `xcodebuild -exportArchive -allowProvisioningUpdates`, using an export options plist with `method=app-store-connect`, `destination=export`, `signingStyle=automatic`, and the team's `teamID`. Keep the marketing version aligned with App Store Connect and increment the build number for subsequent uploads. Exporting an IPA does not submit the app for review.
+
 **macOS:** use a base64 Developer ID Application certificate. Existing secrets `BUILD_CERTIFICATE_BASE64`, `P12_PASSWORD`, and `APPLE_APP_SPECIFIC_PASSWORD` are also accepted. The signing identity is derived from the certificate if omitted. Without a certificate, builds use ad hoc signing. Windows installers are currently unsigned.
 
 See Tauri’s [Android](https://v2.tauri.app/distribute/sign/android/), [iOS](https://v2.tauri.app/distribute/sign/ios/), and [macOS](https://v2.tauri.app/distribute/sign/macos/) signing guides.
