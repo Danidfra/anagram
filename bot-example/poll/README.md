@@ -8,9 +8,9 @@ cp .env.example .env
 npm start
 ```
 
-It publishes its own profile and DM inbox on startup, retrying failed publication every 60 seconds. The default avatar is the hosted poll image (400 × 400, about 56 KB); `avatar.webp` is a smaller 256 × 256 copy you can host yourself.
+It publishes its own profile and DM inbox on startup, retrying failed publication every 60 seconds. Set `PICTURE_URL` to override the hosted avatar.
 
-Supports the same `.env` options as Dad Jokes: `NSEC`, `NAME`, `RELAYS`, `DATA_DIR`, `PICTURE_URL`, `NIP05`, `PUBLIC_GROUPS` and `COOLDOWN_SECONDS`. See `.env.example`. `PICTURE_URL` must use HTTPS; NIP-05 requires your domain to map the identifier to the bot's public key. The default reply cooldown is 2 seconds; `0` disables it. Votes are unaffected. Restart to apply settings.
+Configuration: `NSEC`, `NAME`, `RELAYS`, `DATA_DIR`, `PICTURE_URL`, `NIP05`, `PUBLIC_GROUPS` and `COOLDOWN_SECONDS`. See `.env.example`. `PICTURE_URL` must use HTTPS; NIP-05 requires your domain to map the identifier to the bot's public key. The default reply cooldown is 2 seconds; `0` disables it. Votes are unaffected. Restart to apply settings.
 
 The bot prints its public key. Mention it in a group, with the question on the first line and each option on its own line:
 
@@ -25,8 +25,6 @@ Select the actual bot from Anagram's @mention picker. Mention it alone to see th
 For private groups, invite the bot normally. For public groups, trust its public key and DM it the group's link.
 
 Buttons submit private votes. Results appear only to the person clicking; repeat votes return results. Votes are keyed by public key, not person, and are visible to the bot operator. Polls close after seven days. Limits: 8 options, 100 retained polls, 10,000 voters per poll.
-
-Vote and “View results” buttons explicitly use medium size. Each inner array in `inline_keyboard` is one row: normally one button per row; eight-option polls share the first row between the first two options to stay within the eight-row limit. See the [inline keyboard layout](../../docs/bot-keyboards.md#button-layout).
 
 Successful polls collapse the original command in Anagram; use the poll's message menu to show it again. Help replies leave the command visible. Messages are not deleted.
 

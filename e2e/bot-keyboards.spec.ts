@@ -10,14 +10,109 @@ import {
   navigateToChat,
   confirmGroupBackup,
   disposeUsers,
+  logoutFromSettings,
 } from './parity/helpers.ts';
 // The example is the interoperability fixture: real signed events and encrypted callbacks.
 import { PollBot } from '../bot-example/poll/bot.js';
 import { Network, State, sign } from '../bot-example/poll/vendor/runtime.js';
 import { relay } from '../bot-example/poll/test/relay.js';
 import { COMMAND_TAG, keyboardTag } from '../bot-example/poll/vendor/botKeyboardProtocol.ts';
-import { keyboardTag as sizedKeyboardTag } from '../src/stores/nostr/botKeyboardProtocol.ts';
-import { rumor, wrap } from '../bot-example/poll/vendor/runtime.js';
+import {
+  keyboardTag as sizedKeyboardTag,
+  BOT_CONTROL_KIND,
+  controlTag,
+  parseControl,
+} from '../src/stores/nostr/botKeyboardProtocol.ts';
+import { rumor, wrap, unwrap } from '../bot-example/poll/vendor/runtime.js';
+
+test('long personal replies collapse and logout clears them without database enumeration', async ({
+  browser,
+}) => {
+  const local = await relay();
+  const dir = mkdtempSync(join(tmpdir(), 'anagram-personal-reply-'));
+  const bot = new PollBot({ store: new State(dir), net: new Network([local.url]), log() {} });
+  let user;
+  try {
+    await bot.net.publish(
+      sign(bot.key, 0, [], JSON.stringify({ name: 'Private Bot', bot: true })),
+      [local.url],
+      bot.key,
+    );
+    user = await bootstrapUser(browser, TEST_ACCOUNTS.botOwner, { relayUrls: [local.url] });
+    const page = user.page;
+    await openDirectChatFromIdentifier(page, nip19.npubEncode(bot.pubkey), 'Private Bot');
+    await navigateToChat(page, bot.pubkey);
+    const menu = rumor(
+      bot.key,
+      [
+        ['p', user.session.publicKey],
+        sizedKeyboardTag({ inline_keyboard: [[{ text: 'Details', callback_data: 'details' }]] }),
+      ],
+      'Get a private answer',
+    );
+    await bot.net.publish(wrap(menu, bot.key, user.session.publicKey), [local.url], bot.key);
+    const keyboard = page.getByTestId('bot-keyboard');
+    await keyboard.getByRole('button', { name: 'Details', exact: true }).click();
+    const request = () =>
+      [...local.events.values()]
+        .map((event) => unwrap(event, bot.key)?.message)
+        .filter(Boolean)
+        .map((event) => parseControl(event.tags))
+        .find((control) => control?.op === 'request');
+    await expect.poll(request).toBeTruthy();
+    const markup = {
+      inline_keyboard: [
+        [{ text: 'First action', copy_text: { text: 'first' } }],
+        [{ text: 'Second action', copy_text: { text: 'second' } }],
+      ],
+      row_after: [0, 1],
+    };
+    const { sig: _sig, ...answer } = sign(
+      bot.key,
+      BOT_CONTROL_KIND,
+      [
+        ['p', user.session.publicKey],
+        controlTag({ ...request()!, op: 'answer' }),
+        sizedKeyboardTag(markup),
+      ],
+      'First item\n\n' + 'Private details '.repeat(400),
+    );
+    await bot.net.publish(wrap(answer, bot.key, user.session.publicKey), [local.url], bot.key);
+    const personal = keyboard.getByTestId('bot-personal-response');
+    await expect(personal.getByRole('button', { name: 'Show more', exact: true })).toBeVisible();
+    await expect(personal.getByRole('button', { name: 'First action' })).toBeVisible();
+    await expect(personal.getByRole('button', { name: 'Second action' })).toHaveCount(0);
+    expect((await personal.locator('p').allTextContents()).join('\n\n').length).toBeLessThanOrEqual(
+      4099,
+    );
+    await personal.getByRole('button', { name: 'Show more', exact: true }).click();
+    await expect(personal.getByRole('button', { name: 'Second action' })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await personal.getByRole('button', { name: 'Show less', exact: true }).click();
+    await expect(personal.getByRole('button', { name: 'Second action' })).toHaveCount(0);
+    await page.addInitScript(() => {
+      Object.assign(window, { __listDatabases: indexedDB.databases.bind(indexedDB) });
+      Object.defineProperty(indexedDB, 'databases', { value: undefined, configurable: true });
+    });
+    await page.reload();
+    await expect(personal.getByRole('button', { name: 'Show more', exact: true })).toBeVisible();
+    await logoutFromSettings(page);
+    const names = await page.evaluate(async () =>
+      (
+        await (
+          window as unknown as { __listDatabases(): Promise<IDBDatabaseInfo[]> }
+        ).__listDatabases()
+      ).map((db) => db.name),
+    );
+    expect(names.some((name) => name?.startsWith('anagram-bot-interactions-'))).toBe(false);
+    expect(user.browserErrors).toEqual([]);
+  } finally {
+    if (user) await disposeUsers(user);
+    await bot.close();
+    await local.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('copy buttons and three sizes work in desktop and mobile DMs without callbacks', async ({
   browser,
@@ -145,7 +240,7 @@ test('ten results keep their own copy/open buttons directly underneath in one DM
       '*Top listings by seeders*',
       ...magnets.map(
         (_, i) =>
-          `**${i + 1}. Movie edition ${i + 1}**\nSeeders: **${100 - i}**\nSubtitles: Not listed`,
+          `**${i + 1}. Movie edition ${i + 1}**\nSeeders: **${100 - i}**\nSubtitles: Not listed\n${'Details '.repeat(75)}`,
       ),
     ].join('\n\n');
     const card = rumor(bot.key, [['p', user.session.publicKey], sizedKeyboardTag(markup)], text);
@@ -153,6 +248,16 @@ test('ten results keep their own copy/open buttons directly underneath in one DM
     const keyboard = page.getByTestId('bot-keyboard');
     const sections = keyboard.getByTestId('bot-keyboard-section');
     await expect(keyboard).toHaveCount(1);
+    async function expandCard() {
+      await expect(keyboard.getByRole('button', { name: 'Show more', exact: true })).toBeVisible();
+      expect(
+        (await sections.locator('.message-text').allTextContents()).join('\n\n').length,
+      ).toBeLessThanOrEqual(4099);
+      expect(await keyboard.locator('.button-row').count()).toBeLessThan(10);
+      await expect(sections.last().getByRole('button')).toHaveCount(0);
+      await keyboard.getByRole('button', { name: 'Show more', exact: true }).click();
+    }
+    await expandCard();
     await expect(sections).toHaveCount(10);
     async function verifyRows() {
       await page.evaluate(() => {
@@ -199,8 +304,11 @@ test('ten results keep their own copy/open buttons directly underneath in one DM
     }
     await verifyRows();
     await page.setViewportSize({ width: 390, height: 844 });
+    await keyboard.getByRole('button', { name: 'Show less', exact: true }).click();
+    await expandCard();
     await verifyRows();
     await page.reload();
+    await expandCard();
     await expect(sections).toHaveCount(10);
     await verifyRows();
     expect(user.browserErrors).toEqual([]);

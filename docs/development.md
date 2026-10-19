@@ -26,17 +26,11 @@ Keep Settings → Pages → Source set to **GitHub Actions** and the custom doma
 
 ## Social link previews
 
-The client URL includes a branded Open Graph / Twitter card. Copied public-chat and Iroh-call links use `/join/chat.html#/public/<naddr>` and `/join/call.html#/call/<token>`. The static entry pages expose “Join chat” and “Join call” cards without JavaScript, then open the existing app flow in browsers. Call secrets remain in the fragment, outside HTTP requests and preview metadata. Existing direct links still open normally.
+All links use the static card in `static/social/anagram-v2.jpg`. Public-chat and call share links use `/join/chat.html#/public/<naddr>` and `/join/call.html#/call/<token>`. Their entry pages expose preview metadata without JavaScript and redirect browsers into the app. Call secrets stay in the fragment, outside HTTP requests.
 
-While logged out, public-group and profile links show a compact picture/name banner above the login choices without moving the login card. The static client reads signed public metadata in the background using up to four separate, unauthenticated relay connections with a five-second deadline and a bounded five-minute memory cache. Profile discovery includes public metadata indexers so bare public keys work without relay hints. Banners remain hidden until a public name is available; login never waits for discovery. This banner does not require a preview server or change the generic social cards.
+Serve `build/join/*.html` before the SPA fallback and `build/social/*.jpg` as `image/jpeg`. For another domain, update the absolute metadata URLs in `src/app.html` and `static/join/*.html`.
 
-Direct `/chats/<hex|npub|nprofile>` links survive login, signup and onboarding reloads. Once local chats finish loading, the client opens the linked conversation, creating it locally if needed. Profile discovery is optional and does not delay opening the chat. Existing private-group conversations keep their stored type.
-
-Public-group invitation buttons in messages reuse that metadata to display “Join chat”, the group picture and its name in bold. Discovery runs only for visible buttons, shares duplicate lookups, and permits at most three lookups at once with a bounded queue. Unavailable metadata leaves the original generic button usable.
-
-Serve the actual `build/join/*.html` files before the SPA fallback, and serve `build/social/*.jpg` as `image/jpeg`. Include these files when deploying; no preview backend is needed. If hosting on another domain, change the absolute `https://anagram.chat` metadata URLs in `src/app.html` and `static/join/*.html`. Social platforms may cache previously fetched previews.
-
-The three committed 1200×630 cards reuse the app logo and font. Regenerate them with `npm run assets:social` (set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` when using a system Chromium). The layout lives in `scripts/render-social-cards.mjs`. Verify the built HTML, images and offline entry pages with `npm run test:e2e:pwa -- e2e/pwa/social-previews.spec.ts`.
+Regenerate the image with `npm run assets:social`; edit its layout in `scripts/render-social-cards.mjs`. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` for system Chromium. Check the static pages with `npm run test:e2e:pwa -- e2e/pwa/social-previews.spec.ts`.
 
 ## Native development
 
@@ -71,13 +65,13 @@ npm run tauri -- ios build --ci --target aarch64 --no-sign --config src-tauri/mo
 
 IPAs appear under `src-tauri/gen/apple/build/`. See [signing setup](releases.md) for installable builds.
 
-The iOS app uses the shared Nostr/IndexedDB implementation and Apple Keychain for the saved signing key. Its viewport follows keyboard changes and consumes safe-area insets once, including portalled dialogs and call controls. Android retains its native inset handling.
+The iOS app stores messages in IndexedDB and the signing key in Apple Keychain.
 
-Only the native iOS app uses the `ManagedMediaSource` fallback where `MediaSource` is absent and disables remote playback on call elements. Desktop, Android and browser clients retain their existing playback behavior. The WebM Opus/VP8 recorder used by the call protocol requires iOS/iPadOS 18.4 or newer; capability checks still determine whether audio/video is available. See [WebKit's recording support](https://webkit.org/blog/16574/webkit-features-in-safari-18-4/) and [managed playback requirements](https://webkit.org/blog/14735/webkit-features-in-safari-17-1/). Older systems can still use chat.
+The WebM Opus/VP8 recorder used by the call protocol requires iOS/iPadOS 18.4 or newer; capability checks still determine whether audio/video is available. See [WebKit's recording support](https://webkit.org/blog/16574/webkit-features-in-safari-18-4/) and [managed playback requirements](https://webkit.org/blog/14735/webkit-features-in-safari-17-1/). Older systems can still use chat.
 
 The iPhone workflow runs WebKit playback tests and simulated native viewport tests before packaging. Run the same checks on macOS with `npx playwright install webkit` followed by `npm run test:e2e:local -- --browser webkit e2e/ios-layout.spec.ts e2e/call-playback.spec.ts`. The viewport tests mock the OS Keychain and keyboard boundaries; they do not validate the installed app. On a signed iPhone build, verify saved login after restart/logout, camera/microphone grant and denial, keyboard/rotation, headset routing, and calls between iPhone and Android.
 
-**iPhone scope:** messaging and calls run while the app is open, using the existing Nostr and Iroh relays. No additional hosted service is required. Background message notifications, lock-screen answering and closed-app incoming calls are deliberately excluded; background/locked-screen call continuity is not established either. iOS skips notification permission onboarding and explains this limit in Settings → Notifications. These restrictions apply only to the native iOS app; Android's background listener and desktop/browser notification behavior remain unchanged. APNs, notification extensions and PushKit/CallKit are not included in this release.
+The iOS app supports messaging and calls while open. Background notifications, lock-screen answering and closed-app incoming calls are unsupported; background call continuity requires device validation. No APNs or PushKit/CallKit integration is included.
 
 ## Extra checks
 

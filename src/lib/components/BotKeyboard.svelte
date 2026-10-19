@@ -2,7 +2,10 @@
   import { onDestroy, setContext, type Snippet } from 'svelte';
   import { BOT_KEYBOARD_LAYOUT, type BotKeyboardLayout } from '#src/lib/botKeyboardLayout.ts';
   import FormattedMessage from './FormattedMessage.svelte';
-  import { formatMessage } from '#src/utils/messageFormatting.ts';
+  import { formatMessage, collapseFormattedMessage } from '#src/utils/messageFormatting.ts';
+  import { collapseKeyboardSections } from '#src/utils/keyboardTextExpansion.ts';
+  import { shouldCollapseMessageText } from '#src/utils/messageTextExpansion.ts';
+  import { translate } from '#src/i18n.ts';
   import type { Message } from '#src/types/chat.ts';
   import {
     parseKeyboard,
@@ -63,7 +66,15 @@
     generation++;
   });
   const personal = $derived(saved?.answer ?? saved?.previous);
-  const personalParts = $derived(formatMessage(personal?.text ?? ''));
+  let personalExpanded = $state(false);
+  $effect(() => {
+    personal?.eventId;
+    personalExpanded = false;
+  });
+  const personalFormatted = $derived(formatMessage(personal?.text ?? ''));
+  const personalParts = $derived(
+    personalExpanded ? personalFormatted : collapseFormattedMessage(personalFormatted),
+  );
   const visibleKeyboard = $derived(personal?.keyboard ?? keyboard);
   const sections = $derived(
     keyboard &&
@@ -76,6 +87,9 @@
           !message.meta.group_epoch_notice))
       ? keyboardSections(visibleKeyboard, personal?.text ?? message.text)
       : null,
+  );
+  const personalSections = $derived(
+    personalExpanded ? sections : collapseKeyboardSections(sections),
   );
   setContext<BotKeyboardLayout>(BOT_KEYBOARD_LAYOUT, {
     get messageId() {
@@ -133,8 +147,8 @@
   <div class="bot-keyboard" data-testid="bot-keyboard">
     {#if personal}
       <div class="personal" data-testid="bot-personal-response">
-        {#if sections}
-          {#each sections as section}
+        {#if personalSections}
+          {#each personalSections as section}
             <div class="keyboard-section" data-testid="bot-keyboard-section">
               <p><FormattedMessage parts={formatMessage(section.text)} /></p>
               {#if section.row.length}{@render buttons(section.row)}{/if}
@@ -142,6 +156,11 @@
           {/each}
         {:else}
           <p><FormattedMessage parts={personalParts} /></p>
+        {/if}
+        {#if shouldCollapseMessageText(personal.text)}
+          <button class="link" onclick={() => (personalExpanded = !personalExpanded)}
+            >{$translate(personalExpanded ? 'Show less' : 'Show more')}</button
+          >
         {/if}
       </div>
     {:else}

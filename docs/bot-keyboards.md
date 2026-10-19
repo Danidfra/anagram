@@ -1,6 +1,6 @@
 # Anagram inline keyboards (version 1)
 
-This is an Anagram extension, not an assigned NIP or the Telegram Bot API. It uses Telegram's `InlineKeyboardMarkup` shape for **callback, HTTPS/magnet URL and copy buttons**. Existing Nostr message kinds, encryption, signatures and group membership rules stay unchanged.
+This is an Anagram extension, not an assigned NIP or the Telegram Bot API. It uses Telegram's `InlineKeyboardMarkup` shape for **callback, HTTPS/magnet URL and copy buttons**.
 
 ## Send a card
 
@@ -18,13 +18,13 @@ Send an ordinary readable message with this extra event tag (inside the encrypte
 
 Put the question/options or other useful fallback in `content`. Clients unaware of the extension see ordinary text, without keyboard JSON in the message body. Public cards use the normal kind 9 group messages; only the group's owner/trusted authors get interactive keyboards. Private cards use the normal authenticated kind 14 envelopes. Bots must already be admitted to private groups.
 
-Each button needs `text` and exactly one of `callback_data`, `url` or `copy_text: { text: "text to copy" }`. Limits: 1–64 UTF-8 bytes of callback data, 128 bytes of button text, 1–2,048 UTF-8 bytes of copy text, 8 rows, 4 buttons per row, 32 buttons total, 4 KiB per URL and 64 KiB of markup. The copy-text and markup limits are Anagram extensions so complete magnets fit without truncation; callback limits are unchanged. URL buttons allow HTTPS without credentials, or `magnet:?xt=urn:btih:<hash>` with exactly one valid 40-character hex or 32-character base32 BitTorrent topic. Magnet URLs cannot have an authority, path, fragment or control characters; optional query parameters such as display name and trackers are preserved. Other schemes, including arbitrary `intent:` URLs, are rejected. Both URL types open only on an explicit click. HTTPS opens in the browser; magnet links go to the system/browser's registered torrent handler, which may ask for confirmation or require a torrent app. Copy buttons write plain text to the clipboard on an explicit click, show confirmation or an error, and send no callback. Empty `inline_keyboard: []` removes buttons. Unsupported fields or malformed markup invalidate the keyboard, leaving the message text visible. Telegram login, payments, Web Apps, inline-query buttons and arbitrary HTML are not supported.
+Each button needs `text` and exactly one of `callback_data`, `url` or `copy_text: { text: "text to copy" }`. Limits: 1–64 UTF-8 bytes of callback data, 128 bytes of button text, 1–2,048 UTF-8 bytes of copy text, 8 rows, 4 buttons per row, 32 buttons total, 4 KiB per URL and 64 KiB of markup. URL buttons allow HTTPS without credentials, or `magnet:?xt=urn:btih:<hash>` with exactly one valid 40-character hex or 32-character base32 BitTorrent topic. Magnet URLs cannot have an authority, path, fragment or control characters; optional query parameters such as display name and trackers are preserved. Other schemes, including arbitrary `intent:` URLs, are rejected. Both URL types open only on an explicit click. HTTPS opens in the browser; magnet links go to the system/browser's registered torrent handler, which may ask for confirmation or require a torrent app. Copy buttons write plain text to the clipboard on an explicit click, show confirmation or an error, and send no callback. Empty `inline_keyboard: []` removes buttons. Unsupported fields or malformed markup invalidate the keyboard, leaving the message text visible. Telegram login, payments, Web Apps, inline-query buttons and arbitrary HTML are not supported.
 
 Buttons may also set `size: "small" | "medium" | "large"`. This is an Anagram extension; Telegram does not define inline-button sizes. Omitted size uses the existing medium layout. Small buttons fit their text with compact padding; medium and large buttons share the row width. Touch devices keep a minimum 44px tap target. Older clients that do not understand `size` or `copy_text` display only the message text.
 
 ### Button layout
 
-The bot controls the rows, using the same structure as Telegram: **each inner array is one row**, in display order. Buttons in that array appear side by side. Separate arrays stack vertically, and a keyboard can mix both layouts. This applies to cards and personal follow-up keyboards in all chat types.
+**Each inner array is one row**, in display order. Buttons in that array appear side by side; separate arrays stack vertically.
 
 Two buttons on one row:
 
@@ -44,8 +44,6 @@ One button per row:
 ]}
 ```
 
-Rows are limited to four buttons; the keyboard is limited to eight rows and 32 buttons total. Use short labels for narrow phone screens.
-
 For text lists, the optional Anagram `row_after` array places each row after a paragraph in the message. Paragraphs are separated by a blank line (`\n\n`, also accepting CRLF and spaces/tabs on the blank line); indices start at zero. Supply one strictly increasing integer from 0–255 per button row. Positioned keyboards allow up to 16 rows, still limited to 32 buttons and 64 KiB of markup. For example:
 
 ```js
@@ -59,7 +57,7 @@ For text lists, the optional Anagram `row_after` array places each row after a p
 }
 ```
 
-The first button appears below the first item's details, and the second below the second item, all in one message. Text before, between and after positioned rows stays visible. This layout applies to text-only DM/private-group cards and personal responses; public cards and cards with attachments or special message bodies retain the normal body and bottom keyboard. If a paragraph index is outside the message, the whole keyboard falls back to the bottom. Older clients that do not recognize `row_after` show the ordinary message text.
+Positioned rows apply to text-only DM/private-group cards and personal responses; public cards and cards with attachments or special message bodies retain the normal body and bottom keyboard. If a paragraph index is outside the message, the whole keyboard falls back to the bottom. Older clients that do not recognize `row_after` show the ordinary message text.
 
 ## Receive a callback
 
@@ -113,4 +111,4 @@ Anagram stores up to 500 recent interactions per account in IndexedDB, uses targ
 
 Personal results survive reload on the same device. They are not synchronized as personal menus to other devices; clicking there requests fresh results from the bot. Like the existing message cache, locally displayed results are readable in the user's browser storage. On the wire, callbacks/results are encrypted user-to-bot; public card text remains public. Inviting a bot to a private group gives that bot access to the group's messages.
 
-The canonical validators and tag builders are in `src/stores/nostr/botKeyboardProtocol.ts`. Standalone bots must bundle a copy inside their own folder rather than import from the app source; the Node 24 poll example uses `bot-example/poll/vendor/botKeyboardProtocol.ts`. See the [bot example requirements](../bot-example/README.md#building-a-bot-including-ai-agents) and `bot-example/poll` for a working example across all three chat types.
+The canonical validators and tag builders are in `src/stores/nostr/botKeyboardProtocol.ts`. Standalone bots must bundle a copy inside their own folder rather than import from the app source; the Node 24 poll example uses `bot-example/poll/vendor/botKeyboardProtocol.ts`. See the [bot example requirements](../bot-example/README.md#building-a-bot) and `bot-example/poll` for a working example across all three chat types.

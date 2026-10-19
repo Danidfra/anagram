@@ -28,6 +28,7 @@
   import LinkPreview from './LinkPreview.svelte';
   import { previewUrl } from '#src/utils/linkPreview.ts';
   import { shouldCollapseMessageText } from '#src/utils/messageTextExpansion.ts';
+  import { collapseKeyboardSections } from '#src/utils/keyboardTextExpansion.ts';
   import type { CallMode } from '#src/types/call.ts';
 
   interface Props {
@@ -67,6 +68,9 @@
   let imageName = $state('');
   let expanded = $state(false),
     showMedia = $state(false);
+  const visibleKeyboardSections = $derived(
+    expanded ? keyboardSections : collapseKeyboardSections(keyboardSections),
+  );
   async function open(url: string) {
     actionError = '';
     const publicGroup = publicGroupLinkTarget(url);
@@ -240,8 +244,8 @@
           /^(image|video)\//.test(attachment.mimeType) && /^https:\/\//.test(attachment.url),
       )}
   >
-    {#if keyboardSections}
-      {#each keyboardSections as section}
+    {#if visibleKeyboardSections}
+      {#each visibleKeyboardSections as section}
         <div class="keyboard-section" data-testid="bot-keyboard-section">
           <span class="message-text"
             ><FormattedMessage
@@ -273,7 +277,7 @@
         /></span
       >
     {/if}
-    {#if !keyboardSections && shouldCollapseMessageText(message.text)}<button
+    {#if shouldCollapseMessageText(message.text)}<button
         class="link"
         onclick={() => (expanded = !expanded)}
         >{$translate(expanded ? 'Show less' : 'Show more')}</button
