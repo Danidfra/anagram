@@ -28,3 +28,8 @@ nostr = { version = "0.44.8", features = ["nip59"] }
 
 [dev-dependencies]
 nostr = { version = "0.44.8", features = ["nip59"] }
+
+# netdev 0.46.3 uses a libc type no longer exposed on iOS. Remove this pin
+# when the Apple compatibility fix ships: https://github.com/shellrow/netdev/pull/192
+[patch.crates-io]
+netdev = { git = "https://github.com/shellrow/netdev", rev = "1327c36c32027d7252093cc1b58d9abd5a351496" }
