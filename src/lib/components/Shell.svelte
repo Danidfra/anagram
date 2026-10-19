@@ -77,7 +77,13 @@
     removeTopLevelBunkerLoginQueryParam,
     ALREADY_LOGGED_IN_BUNKER_MESSAGE,
   } from '#src/utils/bunkerLoginQuery.ts';
-  import { Notify, Dialog } from '#src/lib/platform/ui.ts';
+  import ActionFeedback from './ActionFeedback.svelte';
+  import {
+    actionFeedback,
+    reportActionFeedback,
+    showIncomingMessageBanner,
+    Dialog,
+  } from '#src/lib/platform/ui.ts';
   import type { SavedPublicRoom } from '#src/services/publicGroupData.ts';
   import { notificationConversationPath } from '#src/utils/notificationConversation.ts';
   import { requestBrowserNotificationsAfterLogin } from '#src/utils/browserNotificationPreference.ts';
@@ -108,6 +114,7 @@
   import CallOverlay from './CallOverlay.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageActions from './MessageActions.svelte';
+  import { botCommandVisibility } from '#src/utils/botCommandVisibility.ts';
   import {
     readDesktopSidebarWidthPreference,
     saveDesktopSidebarWidthPreference,
@@ -288,7 +295,14 @@
     modal = '';
     if (fileInput) fileInput.value = '';
   }
-  $: displayedMessages = orderThreadMessages($state.thread.items, (message) => message);
+  let revealedBotCommands = new Set<string>();
+  $: botCommandChatId = $state.selected?.id;
+  $: if (botCommandChatId) revealedBotCommands = new Set();
+  $: botCommands = botCommandVisibility($state.thread.items, revealedBotCommands);
+  $: displayedMessages = orderThreadMessages(
+    $state.thread.items.filter((message) => !botCommands.hidden.has(message.id)),
+    (message) => message,
+  );
   let inspectedMessage: Message | null = null;
   let contextMessage = '';
   let contextPosition = { x: 0, y: 0 };
@@ -388,6 +402,16 @@
   }
   async function messageAction(action: string, message: Message) {
     contextMessage = '';
+    if (action === 'show-command' || action === 'hide-command') {
+      const command = botCommands.commands.get(message.id);
+      if (command) {
+        const next = new Set(revealedBotCommands);
+        if (action === 'show-command') next.add(command.id);
+        else next.delete(command.id);
+        revealedBotCommands = new Set([...next].slice(-300));
+      }
+      return;
+    }
     if (action === 'pin' || action === 'unpin') {
       await setGroupPin(action === 'unpin' ? null : message.eventId);
     } else if (action === 'reply') {
@@ -472,7 +496,7 @@
         0,
   );
   $: firstUnreadId = $state.selected?.unreadCount
-    ? $state.thread.items.find(
+    ? displayedMessages.find(
         (message) =>
           message.sender !== 'me' && (!unreadBoundary || message.sentAt > unreadBoundary),
       )?.id
@@ -509,7 +533,7 @@
     try {
       await messages.markMessagesReactionsViewed(chatId, ids);
     } catch {
-      Notify.create({ type: 'negative', message: 'Unable to save reaction read status.' });
+      reportActionFeedback({ type: 'negative', message: 'Unable to save reaction read status.' });
     } finally {
       ids.forEach((id) => markingReactions.delete(id));
     }
@@ -602,12 +626,13 @@
   }
   function fail(error: unknown) {
     if (error instanceof RecordedMessageDeliveryError) return;
-    Notify.create({
+    reportActionFeedback({
       type: 'negative',
       message: error instanceof Error ? error.message : String(error),
     });
   }
   async function act(fn: () => unknown) {
+    actionFeedback.set(null);
     try {
       await fn();
     } catch (e) {
@@ -816,6 +841,7 @@
     if (!chatId) return;
     const target = await messages.ensureMessageLoaded(chatId, id);
     if (!target || $state.selected?.id !== chatId || signal?.aborted) return;
+    revealedBotCommands = new Set([...revealedBotCommands, target.id].slice(-300));
     await tick();
     if ($state.selected?.id !== chatId || signal?.aborted) return;
     highlightedMessage = target.id;
@@ -905,7 +931,7 @@
     if (permission === 'denied' || permission === 'default' || permission === 'prompt')
       throw new Error('Allow notifications in your browser or device settings, then try again.');
     if (permission === 'unsupported')
-      Notify.create('Notifications will appear while Anagram is open on this device.');
+      reportActionFeedback('Notifications will appear while Anagram is open on this device.');
   }
   async function publicChatAction(row: SavedPublicRoom, action: string) {
     if (action === 'delete' || (action === 'block' && !row.blocked)) {
@@ -1051,7 +1077,7 @@
           warnings.push('Group created; retry adding members from the group Members tab.');
         }
       }
-      if (warnings.length) Notify.create({ type: 'warning', message: warnings.join(' ') });
+      if (warnings.length) reportActionFeedback({ type: 'warning', message: warnings.join(' ') });
       await chats.reload();
       modal = '';
       const chat = chats.chats.find((c) => c.publicKey === result.groupPublicKey);
@@ -1103,13 +1129,13 @@
           chats.chats.some((chat) => chat.id === detail.chatPubkey && chat.type === 'group'))
       ) {
         dismissGroupNotice?.();
-        dismissGroupNotice = Notify.create({ message: `${detail.title}: ${detail.messageText}` });
+        dismissGroupNotice = showIncomingMessageBanner(`${detail.title}: ${detail.messageText}`);
       }
     };
     window.addEventListener(FOREGROUND_MESSAGE_ACTIVITY_EVENT, foregroundMessage);
     if (readTopLevelBunkerLoginQueryParam()) {
       removeTopLevelBunkerLoginQueryParam();
-      Notify.create({ message: ALREADY_LOGGED_IN_BUNKER_MESSAGE });
+      reportActionFeedback({ message: ALREADY_LOGGED_IN_BUNKER_MESSAGE });
     }
     const invite = $page.url.hash.startsWith('#/call/')
       ? $page.url.hash.slice(1)
@@ -1183,6 +1209,7 @@
       })
       .catch(fail);
     return () => {
+      actionFeedback.set(null);
       stopBadge();
       stopPublicBadge();
       window.removeEventListener(FOREGROUND_MESSAGE_ACTIVITY_EVENT, foregroundMessage);
@@ -1256,6 +1283,7 @@
     class:bubble-layout={messageLayout === 'bubbles'}
   >
     <aside class="sidebar">
+      {#if mobileViewport && !mobileThread}<ActionFeedback />{/if}
       {#if section === 'chats'}
         <div class="sidebar-top">
           <div class="sidebar-top-row">
@@ -1391,7 +1419,7 @@
               active={!!publicLink && $publicState.address === item.address}
               onselect={() => {
                 if (item.blocked) {
-                  Notify.create('Unblock this public group using its menu.');
+                  reportActionFeedback('Unblock this public group using its menu.');
                   return;
                 }
                 query = '';
@@ -1474,6 +1502,7 @@
       onkeydown={resizeKey}
     ></div>
     <main class="main-panel">
+      {#if !mobileViewport || mobileThread}<ActionFeedback />{/if}
       {#if publicLink}
         {#key publicLink}<PublicGroupThread
             link={publicLink}
@@ -1524,7 +1553,6 @@
             ? () =>
                 void act(async () => {
                   await navigator.clipboard.writeText(nostr.encodeNpub($state.selected!.publicKey));
-                  Notify.create({ message: $translate('common.copiedLabel', { label: 'npub' }) });
                 })
             : undefined}
           onback={() => {
@@ -1592,7 +1620,7 @@
             chatId={$state.selected.id}
             publicKey={$state.selected.publicKey}
             onmount={mountThread}
-            firstDay={$state.thread.items[0] ? date($state.thread.items[0].sentAt) : ''}
+            firstDay={displayedMessages[0] ? date(displayedMessages[0].sentAt) : ''}
             hasOlder={Boolean($state.thread.pagination?.hasOlder || $state.thread.remote?.hasOlder)}
             historyStatus={$state.thread.remote?.loading
               ? $state.thread.remote.phase === 'keys'
@@ -2024,6 +2052,11 @@
 {/if}
 {#if actionMessage}{#key actionMessage.id}<MessageActions
       message={actionMessage}
+      botCommandAction={botCommands.commands.has(actionMessage.id)
+        ? revealedBotCommands.has(botCommands.commands.get(actionMessage.id)!.id)
+          ? 'hide-command'
+          : 'show-command'
+        : ''}
       x={contextPosition.x}
       y={contextPosition.y}
       allowedActions={[

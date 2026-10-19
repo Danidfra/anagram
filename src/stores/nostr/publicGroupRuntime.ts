@@ -1,3 +1,4 @@
+import { parseKeyboard, type BotTarget } from './botKeyboardProtocol.ts';
 import { yieldToMainThread } from '#src/utils/backgroundTasks.ts';
 import { createPublicGroupHistoryRuntime } from './publicGroupHistoryRuntime.ts';
 import { buildMessageEditTag } from '#src/utils/messageEdits.ts';
@@ -1928,7 +1929,27 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     if (address) await activity.ingest(address, event, event.created_at >= Math.floor(Date.now() / 1000) - 5);
     return deps.account() === owner && account === owner;
   }
+  async function botKeyboard(target: BotTarget) {
+    await init();
+    const owner = account, db = data!;
+    const saved = await db.get(target.chat);
+    const room = saved && parsePublicRoom(saved.room.event, target.chat);
+    if (!room || !saved?.joined || saved.blocked || room.successor ||
+        roomPolicy(room, owner) === 'blocked' || roomPolicy(room, target.bot) !== 'trusted')
+      throw new Error('Bot is unavailable in this group');
+    const event = await db.message(target.chat, target.root);
+    if (!event || !validRoomMessage(event, target.chat) || event.pubkey !== target.bot)
+      throw new Error('Message unavailable');
+    const [hydrated] = await hydrate(target.chat, [event], db);
+    const message = publicMessageState(hydrated, room, owner);
+    const keyboard = parseKeyboard(message.meta.inline_keyboard);
+    assertSession(owner);
+    if (!keyboard || message.meta.deleted || message.meta.inline_keyboard_version !== target.version)
+      throw new Error('This menu has changed');
+    return keyboard;
+  }
   return {
+    botKeyboard,
     state,
     sidebar,
     init,

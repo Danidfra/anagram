@@ -7,9 +7,9 @@
   import ProfileName from './ProfileName.svelte';
   import FormattedMessage from './FormattedMessage.svelte';
   export let parts: FormattedMessagePart[];
-  export let onopen: (href: string) => void;
-  export let oncontact: (pubkey: string) => void;
-  export let onlinkmenu: (event: MouseEvent, href: string) => void;
+  export let onopen: ((href: string) => void) | undefined = undefined;
+  export let oncontact: ((pubkey: string) => void) | undefined = undefined;
+  export let onlinkmenu: ((event: MouseEvent, href: string) => void) | undefined = undefined;
   let revealed = new Set<string>();
   let previous: FormattedMessagePart[];
   $: if (parts !== previous) {
@@ -41,7 +41,7 @@
         /></svelte:element
       >{/if}
   {:else if part.type === 'code'}<code class:block={part.block}>{part.text}</code>
-  {:else if part.type === 'url'}
+  {:else if part.type === 'url' && onopen}
     {@const room = Boolean(parseRoomLink(part.href))}
     {@const publicGroup = publicGroupLinkTarget(part.href)}
     <a
@@ -51,19 +51,19 @@
       title={part.href}
       rel="noopener noreferrer"
       target="_blank"
-      oncontextmenu={(event) => onlinkmenu(event, part.href)}
+      oncontextmenu={(event) => onlinkmenu?.(event, part.href)}
       onclick={(event) => {
         event.preventDefault();
-        onopen(part.href);
+        onopen?.(part.href);
       }}
       >{#if room || publicGroup}{$translate(room ? 'room.joinGroupCall' : 'Join chat')}<Icon
           name="group"
         />{:else}{part.text}{/if}</a
     >
-  {:else if part.type === 'mention' && part.publicKey}<button
+  {:else if part.type === 'mention' && part.publicKey && oncontact}<button
       class="mention"
       data-testid="message-mention-link"
-      onclick={() => oncontact(part.publicKey!)}
+      onclick={() => oncontact?.(part.publicKey!)}
     >
       @<ProfileName publicKey={part.publicKey} fallback={part.text.slice(1)} hydrate /></button
     >

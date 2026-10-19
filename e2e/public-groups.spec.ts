@@ -125,6 +125,8 @@ test('create, share, edit and moderate public groups without rich hydration for 
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain(`/join/chat.html#/public/${room.naddr}`);
+  await expect(page.getByText('Group link copied', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.message-banner')).toHaveCount(0);
   const sharedLink = await page.evaluate(() => navigator.clipboard.readText());
   await page.goto(sharedLink);
   await expect(page).toHaveURL(new RegExp(`/public/${room.naddr}$`));

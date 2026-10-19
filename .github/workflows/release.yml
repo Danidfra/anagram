@@ -48,13 +48,22 @@ jobs:
       - run: npm run verify:iroh
       - run: npm run quality:all
       - run: npm run test:unit
+      - name: Test standalone poll bot and encrypted interactions
+        run: |
+          cmp src/stores/nostr/botKeyboardProtocol.ts bot-example/poll/vendor/botKeyboardProtocol.ts
+          poll_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$poll_dir"' EXIT
+          cp bot-example/poll/{bot.js,package.json,package-lock.json,LICENSE,.env.example} "$poll_dir/"
+          cp -R bot-example/poll/{vendor,test} "$poll_dir/"
+          npm --prefix "$poll_dir" ci
+          npm --prefix "$poll_dir" test
       - name: Check iOS permission packaging guard
         run: python3 -B -m unittest discover -s scripts/release-smoke -p 'test_ios_permissions.py'
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e:pwa
       - name: Test messaging and browser interactions
-        run: npm run test:e2e:local -- e2e/app.spec.ts e2e/dm-relay-discovery.spec.ts e2e/group-history.spec.ts e2e/public-groups.spec.ts e2e/message-formatting.spec.ts e2e/parity/dm/link-preview.spec.ts
+        run: npm run test:e2e:local -- e2e/bot-keyboards.spec.ts e2e/app.spec.ts e2e/dm-relay-discovery.spec.ts e2e/group-history.spec.ts e2e/public-groups.spec.ts e2e/message-formatting.spec.ts e2e/parity/dm/link-preview.spec.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
