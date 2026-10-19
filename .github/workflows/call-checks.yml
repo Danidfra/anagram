@@ -45,6 +45,17 @@ jobs:
       - run: npm ci
       - run: npm run verify:iroh
       - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Start virtual audio output
+        if: runner.os == 'Linux'
+        # Firefox needs a working output device for AudioContext.resume(), even
+        # when the test generates and measures its audio entirely in the browser.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=call_tests rate=48000 channels=2
+          pactl set-default-sink call_tests
+          pactl list short sinks
       - run: npm run test:e2e:local -- --browser ${{ matrix.browser }} e2e/call-packet-audio.spec.ts e2e/call-packet-video.spec.ts e2e/call-playback.spec.ts e2e/call-ui.spec.ts e2e/mobile-call-audio.spec.ts e2e/ios-layout.spec.ts
       - uses: actions/upload-artifact@v4
         if: always()
