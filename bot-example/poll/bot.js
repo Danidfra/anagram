@@ -71,8 +71,8 @@ export class PollBot extends BotTransport {
     const [question, ...options] = parts;
     const keyboard = {
       inline_keyboard: [
-        ...options.map((text, i) => [{ text, callback_data: `vote:${i}` }]),
-        [{ text: 'View results', callback_data: 'results' }],
+        ...options.map((text, i) => [{ text, callback_data: `vote:${i}`, size: 'medium' }]),
+        [{ text: 'View results', callback_data: 'results', size: 'medium' }],
       ],
     };
     // Eight rows includes the results row.

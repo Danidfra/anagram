@@ -3,6 +3,10 @@ export const BOT_CONTROL_KIND = 21118;
 export const KEYBOARD_TAG = 'anagram-inline-keyboard';
 export const CONTROL_TAG = 'anagram-bot';
 export const COMMAND_TAG = 'anagram-bot-command';
+// Bounded Anagram extensions allow complete magnets in ten three-action rows.
+export const MAX_KEYBOARD_BYTES = 64 * 1024;
+export const MAX_BUTTON_URL_BYTES = 4096;
+export const MAX_COPY_TEXT_BYTES = 2048;
 export const HEX = /^[0-9a-f]{64}$/;
 export function commandFromTags(tags: string[][]): string | null {
   const matches = tags.filter((tag) => tag[0] === COMMAND_TAG);
@@ -15,11 +19,16 @@ const bytes = (value: string) => new TextEncoder().encode(value).length;
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 
-export type InlineButton =
-  | { text: string; callback_data: string; url?: never }
-  | { text: string; url: string; callback_data?: never };
+// Size is an Anagram extension; Telegram defines copy_text but no inline button size.
+export type InlineButton = { text: string; size?: 'small' | 'medium' | 'large' } & (
+  | { callback_data: string; url?: never; copy_text?: never }
+  | { url: string; callback_data?: never; copy_text?: never }
+  | { copy_text: { text: string }; callback_data?: never; url?: never }
+);
 export interface InlineKeyboard {
   inline_keyboard: InlineButton[][];
+  // Anagram extension: zero-based blank-line-separated paragraph for each row.
+  row_after?: number[];
 }
 export interface BotTarget {
   type: 'dm' | 'private' | 'public';
@@ -44,8 +53,34 @@ export interface BotControl {
   membership?: BotMembership;
 }
 
+export function safeMagnetUrl(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    !/^magnet:\?/i.test(value) ||
+    bytes(value) > MAX_BUTTON_URL_BYTES ||
+    /[\u0000-\u0020\u007f]/.test(value)
+  )
+    return false;
+  try {
+    const url = new URL(value);
+    const topics = url.searchParams.getAll('xt');
+    return (
+      url.protocol === 'magnet:' &&
+      !url.host &&
+      !url.pathname &&
+      !url.hash &&
+      topics.length === 1 &&
+      /^urn:btih:(?:[a-f0-9]{40}|[a-z2-7]{32})$/i.test(topics[0]) &&
+      [...url.searchParams].every(([key, text]) => !/[\u0000-\u001f\u007f]/.test(key + text))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function safeButtonUrl(value: unknown): value is string {
-  if (typeof value !== 'string' || bytes(value) > 2048) return false;
+  if (typeof value !== 'string' || bytes(value) > MAX_BUTTON_URL_BYTES) return false;
+  if (safeMagnetUrl(value)) return true;
   try {
     const url = new URL(value);
     return (
@@ -60,9 +95,27 @@ export function safeButtonUrl(value: unknown): value is string {
 }
 
 export function parseKeyboard(value: unknown): InlineKeyboard | null {
-  if (!record(value) || Object.keys(value).some((k) => k !== 'inline_keyboard')) return null;
+  if (
+    !record(value) ||
+    Object.keys(value).some((k) => !['inline_keyboard', 'row_after'].includes(k))
+  )
+    return null;
   const rows = value.inline_keyboard;
-  if (!Array.isArray(rows) || rows.length > 8) return null;
+  const positions = value.row_after;
+  if (!Array.isArray(rows) || rows.length > ('row_after' in value ? 16 : 8)) return null;
+  if (
+    'row_after' in value &&
+    (!Array.isArray(positions) ||
+      positions.length !== rows.length ||
+      positions.some(
+        (position, i) =>
+          !Number.isInteger(position) ||
+          position < 0 ||
+          position > 255 ||
+          (i > 0 && position <= positions[i - 1]),
+      ))
+  )
+    return null;
   let count = 0;
   for (const row of rows) {
     if (!Array.isArray(row) || !row.length || row.length > 4) return null;
@@ -73,20 +126,58 @@ export function parseKeyboard(value: unknown): InlineKeyboard | null {
         !button.text.trim() ||
         bytes(button.text) > 128 ||
         /[\u0000-\u001f\u007f]/.test(button.text) ||
-        Object.keys(button).some((k) => !['text', 'callback_data', 'url'].includes(k))
+        Object.keys(button).some(
+          (k) => !['text', 'callback_data', 'url', 'copy_text', 'size'].includes(k),
+        ) ||
+        ('size' in button && !['small', 'medium', 'large'].includes(button.size as string))
       )
         return null;
-      const callback =
-        typeof button.callback_data === 'string' &&
-        bytes(button.callback_data) >= 1 &&
-        bytes(button.callback_data) <= 64;
-      if (callback ? 'url' in button : 'callback_data' in button || !safeButtonUrl(button.url))
+      if (['callback_data', 'url', 'copy_text'].filter((key) => key in button).length !== 1)
         return null;
+      if ('callback_data' in button) {
+        if (
+          typeof button.callback_data !== 'string' ||
+          bytes(button.callback_data) < 1 ||
+          bytes(button.callback_data) > 64
+        )
+          return null;
+      } else if ('copy_text' in button) {
+        const copy = button.copy_text;
+        if (
+          !record(copy) ||
+          Object.keys(copy).some((key) => key !== 'text') ||
+          typeof copy.text !== 'string' ||
+          bytes(copy.text) < 1 ||
+          bytes(copy.text) > MAX_COPY_TEXT_BYTES
+        )
+          return null;
+      } else if (!safeButtonUrl(button.url)) return null;
       if (++count > 32) return null;
     }
   }
-  if (bytes(JSON.stringify(value)) > 4096) return null;
+  if (bytes(JSON.stringify(value)) > MAX_KEYBOARD_BYTES) return null;
   return value as unknown as InlineKeyboard;
+}
+
+export function keyboardSections(
+  keyboard: InlineKeyboard | null | undefined,
+  text: string,
+): { text: string; row: InlineButton[] }[] | null {
+  if (!keyboard?.row_after?.length) return null;
+  const paragraphs = text.split(/\r?\n[\t ]*\r?\n/);
+  if (keyboard.row_after.at(-1)! >= paragraphs.length) return null;
+  let start = 0;
+  const sections = keyboard.row_after.map((after, i) => {
+    const section = {
+      text: paragraphs.slice(start, after + 1).join('\n\n'),
+      row: keyboard.inline_keyboard[i],
+    };
+    start = after + 1;
+    return section;
+  });
+  if (start < paragraphs.length)
+    sections.push({ text: paragraphs.slice(start).join('\n\n'), row: [] });
+  return sections;
 }
 
 export function keyboardFromTags(tags: string[][]): InlineKeyboard | null {
@@ -95,7 +186,7 @@ export function keyboardFromTags(tags: string[][]): InlineKeyboard | null {
     matches.length !== 1 ||
     matches[0].length !== 3 ||
     matches[0][1] !== '1' ||
-    bytes(matches[0][2]) > 4096
+    bytes(matches[0][2]) > MAX_KEYBOARD_BYTES
   )
     return null;
   try {

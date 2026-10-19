@@ -972,7 +972,7 @@ test('public chats render trusted group invitations with the shared Join chat bu
   await page.getByTestId('message-composer-input').fill(`Welcome here: ${link}`);
   await page.getByRole('button', { name: 'Send message' }).click();
   const message = page.getByTestId('public-message').filter({ hasText: 'Welcome here:' });
-  await expect(message.getByRole('link', { name: 'Join chat', exact: true })).toHaveClass(
+  await expect(message.getByRole('link', { name: 'Join chat Invite card room', exact: true })).toHaveClass(
     /room-link/,
   );
   await expect(message.locator('.link-preview')).toHaveCount(0);

@@ -26,6 +26,8 @@ For private groups, invite the bot normally. For public groups, trust its public
 
 Buttons submit private votes. Results appear only to the person clicking; repeat votes return results. Votes are keyed by public key, not person, and are visible to the bot operator. Polls close after seven days. Limits: 8 options, 100 retained polls, 10,000 voters per poll.
 
+Vote and “View results” buttons explicitly use medium size. Each inner array in `inline_keyboard` is one row: normally one button per row; eight-option polls share the first row between the first two options to stay within the eight-row limit. See the [inline keyboard layout](../../docs/bot-keyboards.md#button-layout).
+
 Successful polls collapse the original command in Anagram; use the poll's message menu to show it again. Help replies leave the command visible. Messages are not deleted.
 
 Back up `data/`: it contains the bot's secret identity, group credentials and votes. Keep it private. No external API or database service is needed. Existing `.env` and `data/` should be preserved when updating.

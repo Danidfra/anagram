@@ -1,5 +1,6 @@
 <script lang="ts">
   import { STARTER_BOT } from '#src/constants/starterBot.ts';
+  import { chatLinkTarget } from '#src/utils/chatLink.ts';
   import { openExternalHttpUrl } from '#src/utils/externalLinks.ts';
   import {
     handleAndroidCallAction,
@@ -553,9 +554,49 @@
     void loadContacts();
   $: showRequests = $page.url.pathname === '/chats/requests';
   $: publicLink = $page.url.pathname.startsWith('/public/') ? $page.url.pathname.slice(8) : '';
-  $: routedChatId = section === 'chats' ? $page.url.pathname.split('/')[2] : undefined;
+  let chatRoutingReady = false;
+  $: routedChatId = chatLinkTarget($page.url.pathname)?.pubkey;
+  $: if (chatRoutingReady) void openRoutedChat($page.url.pathname);
   $: if (routedChatId && $state.chatIds.has(routedChatId) && $state.selected?.id !== routedChatId)
     chats.selectChat(routedChatId);
+  async function openRoutedChat(pathname: string) {
+    const target = chatLinkTarget(pathname);
+    if (!target) return;
+    const account = nostr.getLoggedInPublicKeyHex();
+    const isCurrent = () =>
+      chatRoutingReady &&
+      $page.url.pathname === pathname &&
+      nostr.getLoggedInPublicKeyHex() === account;
+    try {
+      // Login preserves the URL, but this peer may not have a local chat yet.
+      // Select the destination immediately so a starter chat is not shown instead.
+      chats.selectChat(target.pubkey);
+      let chat = chats.chats.find((entry) => entry.id === target.pubkey);
+      const needsProfile = !chat;
+      if (!chat || chat.meta.deleted_locally === true) {
+        const profile = getPublicProfile(target.pubkey);
+        chat =
+          (await chats.addContact(profile?.name || target.pubkey, target.pubkey, {
+            picture: profile?.picture,
+          })) ?? undefined;
+      }
+      if (!chat || !isCurrent()) return;
+      chats.selectChat(chat.id);
+      const cursor = await chats.markAsRead(chat.id);
+      if (!isCurrent()) return;
+      if (cursor) nostr.scheduleContactCursorPublish(chat.id, cursor);
+      // Opening the conversation does not depend on metadata or relay availability.
+      if (needsProfile)
+        void nostr
+          .refreshContactByPublicKey(chat.publicKey, chat.name, {
+            refreshRelayList: true,
+            relayListSeedRelayUrls: target.relays,
+          })
+          .catch(() => {});
+    } catch (error) {
+      if (isCurrent()) fail(error);
+    }
+  }
   $: mobileThread =
     section === 'contacts'
       ? Boolean(contactSelectedKey)
@@ -1157,15 +1198,7 @@
     window.addEventListener(DESKTOP_MESSAGE_LAYOUT_CHANGED_EVENT, updateLayout);
     document.addEventListener('visibilitychange', resumeAndroidNotifications);
     void chats.init().then(() => {
-      const id = $page.url.pathname.split('/')[2];
-      if (id && chats.chats.some((c) => c.id === id)) {
-        chats.selectChat(id);
-        nostr.setAppLifecycleRouteChatId(section === 'chats' && !showRequests ? id : null);
-        mobileThread = true;
-        void chats.markAsRead(id).then((cursor) => {
-          if (cursor) nostr.scheduleContactCursorPublish(id, cursor);
-        });
-      }
+      if (!disposed) chatRoutingReady = true;
     });
     nostr.startAppLifecycleRuntime();
     let disposed = false;
@@ -1218,6 +1251,7 @@
       window.removeEventListener(DESKTOP_MESSAGE_LAYOUT_CHANGED_EVENT, updateLayout);
       document.removeEventListener('visibilitychange', resumeAndroidNotifications);
       disposed = true;
+      chatRoutingReady = false;
       notificationsReady = false;
       stopNotifications();
       publicGroups.stop();

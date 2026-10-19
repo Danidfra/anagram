@@ -28,6 +28,12 @@ Keep Settings → Pages → Source set to **GitHub Actions** and the custom doma
 
 The client URL includes a branded Open Graph / Twitter card. Copied public-chat and Iroh-call links use `/join/chat.html#/public/<naddr>` and `/join/call.html#/call/<token>`. The static entry pages expose “Join chat” and “Join call” cards without JavaScript, then open the existing app flow in browsers. Call secrets remain in the fragment, outside HTTP requests and preview metadata. Existing direct links still open normally.
 
+While logged out, public-group and profile links show a compact picture/name banner above the login choices without moving the login card. The static client reads signed public metadata in the background using up to four separate, unauthenticated relay connections with a five-second deadline and a bounded five-minute memory cache. Profile discovery includes public metadata indexers so bare public keys work without relay hints. Banners remain hidden until a public name is available; login never waits for discovery. This banner does not require a preview server or change the generic social cards.
+
+Direct `/chats/<hex|npub|nprofile>` links survive login, signup and onboarding reloads. Once local chats finish loading, the client opens the linked conversation, creating it locally if needed. Profile discovery is optional and does not delay opening the chat. Existing private-group conversations keep their stored type.
+
+Public-group invitation buttons in messages reuse that metadata to display “Join chat”, the group picture and its name in bold. Discovery runs only for visible buttons, shares duplicate lookups, and permits at most three lookups at once with a bounded queue. Unavailable metadata leaves the original generic button usable.
+
 Serve the actual `build/join/*.html` files before the SPA fallback, and serve `build/social/*.jpg` as `image/jpeg`. Include these files when deploying; no preview backend is needed. If hosting on another domain, change the absolute `https://anagram.chat` metadata URLs in `src/app.html` and `static/join/*.html`. Social platforms may cache previously fetched previews.
 
 The three committed 1200×630 cards reuse the app logo and font. Regenerate them with `npm run assets:social` (set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` when using a system Chromium). The layout lives in `scripts/render-social-cards.mjs`. Verify the built HTML, images and offline entry pages with `npm run test:e2e:pwa -- e2e/pwa/social-previews.spec.ts`.

@@ -5,6 +5,7 @@
   import { translate } from '#src/i18n.ts';
   import Icon from './Icon.svelte';
   import ProfileName from './ProfileName.svelte';
+  import PublicGroupLinkLabel from './PublicGroupLinkLabel.svelte';
   import FormattedMessage from './FormattedMessage.svelte';
   export let parts: FormattedMessagePart[];
   export let onopen: ((href: string) => void) | undefined = undefined;
@@ -56,9 +57,9 @@
         event.preventDefault();
         onopen?.(part.href);
       }}
-      >{#if room || publicGroup}{$translate(room ? 'room.joinGroupCall' : 'Join chat')}<Icon
-          name="group"
-        />{:else}{part.text}{/if}</a
+      >{#if publicGroup}<PublicGroupLinkLabel href={part.href} />{:else if room}{$translate(
+          'room.joinGroupCall',
+        )}<Icon name="group" />{:else}{part.text}{/if}</a
     >
   {:else if part.type === 'mention' && part.publicKey && oncontact}<button
       class="mention"
@@ -124,6 +125,7 @@
     outline-offset: 2px;
   }
   .room-link {
+    max-width: 100%;
     display: inline-flex;
     align-items: center;
     gap: 8px;
