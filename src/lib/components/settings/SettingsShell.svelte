@@ -8,6 +8,7 @@
   import { translate } from '#src/i18n.ts';
   import Icon from '../Icon.svelte';
   import ActionFeedback from '../ActionFeedback.svelte';
+  import PrivacySupportLinks from '#src/lib/components/PrivacySupportLinks.svelte';
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { useChatStore } from '#src/stores/chatStore.svelte.ts';
   import { useAppUpdateStore } from '#src/stores/appUpdateStore.svelte.ts';
@@ -129,6 +130,7 @@
         onclick={() => confirm('logout')}
         ><Icon name="logout" /><span>{$translate('settings.logOut')}</span></button
       >
+      <PrivacySupportLinks />
     </div>
     <nav class="nav-rail" aria-label="Main navigation">
       {#each ['chats', 'contacts', 'settings'] as target}<button
@@ -198,7 +200,9 @@
 </div>
 <dialog
   bind:this={dialog}
-  use:dismissOnBackdrop={() => { if (!busy) dialog.close(); }}
+  use:dismissOnBackdrop={() => {
+    if (!busy) dialog.close();
+  }}
   class="settings-dialog"
   oncancel={(e) => {
     if (busy) e.preventDefault();

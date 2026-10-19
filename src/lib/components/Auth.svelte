@@ -11,6 +11,7 @@
   import AuthOnboarding from './AuthOnboarding.svelte';
   import AuthLinkBanner from './AuthLinkBanner.svelte';
   import Icon from './Icon.svelte';
+  import PrivacySupportLinks from '#src/lib/components/PrivacySupportLinks.svelte';
   export let onlogin: () => void;
   let step: 'methods' | 'key' | 'remote' | 'create' | 'onboarding' = 'methods';
   let key = '',
@@ -408,6 +409,7 @@
         {#if error}<p class="error" role="alert">{error}</p>{/if}
       </div>
       <footer>
+        <PrivacySupportLinks />
         <p class="independence-note">{$translate('auth.independence')}</p>
         <div class="team-credit">
           {$translate('common.made')}<a

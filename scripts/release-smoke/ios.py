@@ -39,9 +39,16 @@ def choose_device(devices):
     raise RuntimeError('No available iPhone simulator; install an iOS runtime in Xcode')
 
 
+def welcome_visible(text):
+    normalized = ''.join(text.casefold().split())
+    return all(label in normalized for label in ('welcometoanagram', 'createaccount', 'loginwith'))
+
+
 def main():
     artifacts = Path('.artifacts/ios-simulator').resolve()
     artifacts.mkdir(parents=True, exist_ok=True)
+    for name in ('result.json', 'failure.json'):
+        (artifacts / name).unlink(missing_ok=True)
 
     def simctl(*args):
         return subprocess.check_output(['xcrun', 'simctl', *args], text=True, timeout=180)
@@ -50,6 +57,11 @@ def main():
     booted_here = False
     try:
         app = simulator_app(Path('src-tauri/gen/apple/build')).resolve()
+        recognizer = artifacts / 'recognize-text'
+        subprocess.run([
+            'xcrun', 'swiftc', str(Path(__file__).with_name('recognize-text.swift')),
+            '-o', str(recognizer),
+        ], check=True, timeout=180)
         device = choose_device(json.loads(simctl('list', 'devices', 'available', '--json'))['devices'])
         udid = device['udid']
         if device['state'] != 'Booted':
@@ -62,15 +74,25 @@ def main():
                         f'--stderr={artifacts / "stderr.log"}', udid, 'com.nostr.anagram')
         pid = int(output.strip().rsplit(':', 1)[1])
         time.sleep(15)
-        simctl('io', udid, 'screenshot', str(artifacts / 'launch.png'))
-        processes = simctl('spawn', udid, 'launchctl', 'list')
-        if not any(line.split() and line.split()[0] == str(pid) for line in processes.splitlines()):
-            raise RuntimeError('The iPhone app exited after launch; inspect simulator diagnostics')
+        deadline = time.monotonic() + 90
+        while True:
+            processes = simctl('spawn', udid, 'launchctl', 'list')
+            if not any(line.split() and line.split()[0] == str(pid) for line in processes.splitlines()):
+                raise RuntimeError('The iPhone app exited after launch; inspect simulator diagnostics')
+            simctl('io', udid, 'screenshot', str(artifacts / 'launch.png'))
+            text = subprocess.check_output(
+                [str(recognizer), str(artifacts / 'launch.png')], text=True, timeout=30)
+            (artifacts / 'ui.txt').write_text(text)
+            if welcome_visible(text):
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError('The iPhone app did not render its welcome/login controls')
+            time.sleep(3)
         (artifacts / 'result.json').write_text(json.dumps({
             'passed': True, 'device': device['name'], 'pid': pid,
-            'scope': 'Installed and stayed running for 15 seconds; screenshot needs visual review',
+            'scope': 'Installed, stayed running for at least 15 seconds, and rendered welcome/login controls',
         }, indent=2) + '\n')
-        print('iPhone simulator app installed and stayed running; launch screenshot captured.')
+        print('iPhone simulator app installed and rendered welcome/login controls; screenshot captured.')
     except Exception as error:
         (artifacts / 'failure.json').write_text(json.dumps({'error': str(error)}, indent=2) + '\n')
         raise

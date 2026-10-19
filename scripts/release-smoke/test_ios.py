@@ -3,10 +3,19 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from ios import choose_device, simulator_app
+from ios import choose_device, simulator_app, welcome_visible
 
 
 class SimulatorSmokeTests(unittest.TestCase):
+    def test_requires_rendered_welcome_and_login_controls(self):
+        self.assertTrue(welcome_visible('Welcome to Anagram\nCreate Account\nLogin with Key'))
+        self.assertTrue(welcome_visible('WELCOME TO ANAGRAM\nCreate\nAccount\nLogin with Remote Signer'))
+
+    def test_rejects_blank_screen_or_incomplete_welcome(self):
+        self.assertFalse(welcome_visible('19:25'))
+        self.assertFalse(welcome_visible('Welcome to Anagram\nCreate Account'))
+        self.assertFalse(welcome_visible('Login with Key\nCreate Account'))
+
     def test_selects_an_available_iphone_in_an_ios_runtime(self):
         phone = {'name': 'iPhone 17', 'isAvailable': True, 'udid': 'test', 'state': 'Shutdown'}
         self.assertEqual(choose_device({
