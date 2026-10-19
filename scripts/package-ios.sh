@@ -2,7 +2,7 @@
 set -euo pipefail
 mkdir -p mobile-assets
 version=$(node -p 'require("./package.json").version')
-if [[ -n "${IOS_CERTIFICATE:-}" || -n "${IOS_MOBILE_PROVISION:-}" ]]; then
+if [[ -n "${IOS_CERTIFICATE:-}" || -n "${IOS_CERTIFICATE_PASSWORD:-}" || -n "${IOS_MOBILE_PROVISION:-}" ]]; then
   : "${IOS_CERTIFICATE:?Missing IOS_CERTIFICATE}"
   : "${IOS_CERTIFICATE_PASSWORD:?Missing IOS_CERTIFICATE_PASSWORD}"
   : "${IOS_MOBILE_PROVISION:?Missing IOS_MOBILE_PROVISION}"
@@ -19,7 +19,9 @@ else
   if [[ -z "${APPLE_DEVELOPMENT_TEAM:-}" ]]; then unset APPLE_DEVELOPMENT_TEAM; fi
   npm run tauri -- ios build --ci --target aarch64 --no-sign --config src-tauri/mobile-version.json -- --locked
   suffix="-unsigned"
-  echo 'Unsigned IPA: requires signing before installation on an iPhone.' >> "$GITHUB_STEP_SUMMARY"
+  note='Unsigned IPA: requires signing before installation on an iPhone.'
+  echo "$note"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then echo "$note" >> "$GITHUB_STEP_SUMMARY"; fi
 fi
 # Bash 3.2 on macOS has no mapfile.
 count=$(find src-tauri/gen/apple/build -type f -name '*.ipa' | wc -l | tr -d ' ')

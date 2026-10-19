@@ -6,10 +6,15 @@ on:
         type: string
         required: false
         default: ''
-  # Temporarily disabled; uncomment to restore manual iPhone builds.
-  # workflow_dispatch:
+  workflow_dispatch:
+  # Isolated validation branches can test iOS without publishing a release.
+  push:
+    branches: ['ios-validation/**']
 permissions:
   contents: read
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   webkit:
     if: vars.IOS_BUILDS_ENABLED == 'true'
@@ -36,7 +41,12 @@ jobs:
   ios:
     # Repository switch for standalone and reusable iPhone builds.
     if: vars.IOS_BUILDS_ENABLED == 'true'
-    needs: webkit
+    # Build independently so a WebKit failure still produces native diagnostics.
+    # Both jobs remain required for this workflow to succeed.
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [device, simulator]
     runs-on: macos-15
     timeout-minutes: 60
     env:
@@ -50,12 +60,14 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          key: ios
+          key: ios-${{ matrix.target }}
       - run: npm ci
+      - name: Test iPhone packaging and simulator guards
+        run: python3 -B -m unittest discover -s scripts/release-smoke -p 'test_ios*.py'
       - name: Set release version
         if: inputs.release_tag != ''
         run: npm run release:version
@@ -66,8 +78,8 @@ jobs:
         run: |
           command -v xcodegen >/dev/null || brew install xcodegen
           xcodebuild -version
-          # Device builds use the installed SDK; no simulator runtime is needed.
           xcrun --sdk iphoneos --show-sdk-path
+          xcrun simctl list runtimes
       - name: Generate iPhone project
         run: |
           if [[ -z "${APPLE_DEVELOPMENT_TEAM:-}" ]]; then unset APPLE_DEVELOPMENT_TEAM; fi
@@ -75,14 +87,30 @@ jobs:
           node scripts/mobile-version.mjs
           npm run tauri -- icon src-tauri/icons/icon.png --output src-tauri/icons
       - name: Build and package iPhone app
+        if: matrix.target == 'device'
         env:
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
         run: bash scripts/package-ios.sh
+      - name: Build iPhone simulator app
+        if: matrix.target == 'simulator'
+        run: npm run tauri -- ios build --ci --target aarch64-sim --no-sign --archive-only --config src-tauri/mobile-version.json -- --locked
+      - name: Launch the packaged app in the iPhone simulator
+        if: matrix.target == 'simulator'
+        run: python3 scripts/release-smoke/ios.py
       - uses: actions/upload-artifact@v4
+        if: matrix.target == 'device' && success()
         with:
           name: mobile-ios
           path: mobile-assets/*.ipa
           if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'simulator' && always()
+        with:
+          name: ios-simulator-diagnostics
+          path: .artifacts/ios-simulator/
+          include-hidden-files: true
+          if-no-files-found: warn
           retention-days: 14
