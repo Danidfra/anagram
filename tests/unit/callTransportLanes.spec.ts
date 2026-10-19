@@ -9,6 +9,27 @@ function deferred<T>() {
   return { promise, resolve };
 }
 describe('independent call transport streams', () => {
+  it('keeps datagram reads independent of blocked reliable video reads', async () => {
+    const raw = {
+      send: vi.fn(),
+      close: vi.fn(),
+      recv: vi.fn(),
+      recv_lane: vi.fn(() => new Promise<Uint8Array>(() => {})),
+      send_audio: vi.fn(),
+      recv_audio: vi.fn().mockResolvedValue(new Uint8Array([9, 1, 42])),
+      stats_json: () => JSON.stringify({ relayOnly: true, rttMs: 25, paths: 1 }),
+    };
+    const connection = mergeCallLanes(raw);
+    void connection.recv();
+    await expect(connection.recvAudio!()).resolves.toEqual(new Uint8Array([9, 1, 42]));
+    await connection.sendAudio!(new Uint8Array([9, 1, 42]));
+    expect(raw.send_audio).toHaveBeenCalledOnce();
+    await expect(connection.transportStats!()).resolves.toMatchObject({
+      relayOnly: true,
+      rttMs: 25,
+    });
+    connection.close();
+  });
   it('delivers readiness first, then audio and heartbeats while video is blocked, without read-ahead', async () => {
     const lanes = Array.from({ length: 4 }, () => deferred<Uint8Array>());
     const raw = {

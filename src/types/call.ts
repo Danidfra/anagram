@@ -26,6 +26,8 @@ export interface CallSignal {
   reconnectSupported?: boolean;
   reconnectAttempt?: number;
   mediaVersion?: 2;
+  packetAudioVersion?: 1;
+  packetVideoVersion?: 1;
   videoSupported?: boolean;
   screenSupported?: boolean;
   muteStateSupported?: boolean;
@@ -48,13 +50,22 @@ export interface CallSession {
   screenSharing?: boolean;
   endReason?: CallEndReason;
 }
+export interface CallTransportStats {
+  relayOnly: boolean;
+  rttMs: number;
+  paths: number;
+}
 export interface CallConnection {
+  transportStats?(): Promise<CallTransportStats>;
+  sendAudio?(data: Uint8Array): Promise<void>;
+  recvAudio?(): Promise<Uint8Array>;
   send(data: Uint8Array): Promise<void>;
   recv(): Promise<Uint8Array>;
   close(reason?: CallEndReason): void;
   end_reason?(): string | undefined;
 }
 export interface CallEndpoint {
+  datagrams?: boolean;
   multiplexed?: boolean;
   online(): Promise<void>;
   id(): string;

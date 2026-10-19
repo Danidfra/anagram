@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { attachCallMedia, getCallStream } from '#src/services/callStreamRegistry.ts';
   import { onMount, onDestroy } from 'svelte';
   import { isIosNative } from '#src/lib/platform/ios.ts';
   import { observeCallActivity } from '#src/services/callActivityService.ts';
@@ -33,7 +34,8 @@
         captureStream?: () => MediaStream;
         mozCaptureStream?: () => MediaStream;
       };
-      const stream = element.captureStream?.() ?? element.mozCaptureStream?.();
+      const stream =
+        getCallStream(currentUrl) ?? element.captureStream?.() ?? element.mozCaptureStream?.();
       if (stream) stopActivity = observeCallActivity(stream, onlevel);
     } catch {
       /* Audio playback is independent of activity detection. */
@@ -56,17 +58,18 @@
   function syncSource(element: HTMLAudioElement | undefined, value: string) {
     if (!element) return;
     stopFollowing?.();
-    stopFollowing = value ? watchCallLive(element, 'audio') : undefined;
+    stopFollowing = value && !getCallStream(value) ? watchCallLive(element, 'audio') : undefined;
     attempt++;
     blocked = false;
     // ManagedMediaSource on iPhone requires remote playback to be disabled
     // before attaching the stream. Calls have no alternative AirPlay URL.
     if (isIosNative()) element.disableRemotePlayback = true;
     if (value) {
-      element.src = value;
+      attachCallMedia(element, value);
       void play();
     } else {
       element.pause();
+      element.srcObject = null;
       element.removeAttribute('src');
       element.load();
     }
@@ -84,6 +87,7 @@
     onlevel(0);
     if (primary) registerCallAudio(null);
     audio?.pause();
+    if (audio) audio.srcObject = null;
   });
 </script>
 

@@ -3,6 +3,8 @@ import { groupCallNames } from '#src/lib/state/groupCallNames.ts';
 import { createStore } from '#src/lib/state/store.svelte.ts';
 import {
   callMediaSupported,
+  callPacketVideoSupported,
+  prepareCallPacketAudio,
   createCallMediaReceiver,
   getCallCamera,
   getCallMedia,
@@ -43,6 +45,8 @@ export const useCallRoomStore = createStore('callRooms', () =>
     send: (peer, signal, relays) => useNostrStore().sendRoomSignal(peer, signal, relays),
     media: {
       supported: callMediaSupported,
+      preparePacketAudio: prepareCallPacketAudio,
+      packetVideoSupported: callPacketVideoSupported,
       getMedia: getCallMedia,
       getCamera: getCallCamera,
       getMicrophone: getCallMicrophone,

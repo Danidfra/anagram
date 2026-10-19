@@ -1,8 +1,13 @@
 import { expect, test, type ConsoleMessage } from '@playwright/test';
 
 for (const kind of ['audio', 'video'] as const) {
-  for (const managed of [false, true]) {
-    test(`${kind} ${managed ? 'managed' : 'standard'} playback catches up after a brief interruption without a seek loop`, async ({
+  for (const { managed, slowSend, unevenSend } of [
+    { managed: false, slowSend: false, unevenSend: false },
+    { managed: true, slowSend: false, unevenSend: false },
+    { managed: false, slowSend: true, unevenSend: false },
+    { managed: false, slowSend: false, unevenSend: true },
+  ]) {
+    test(`${kind} ${managed ? 'managed' : 'standard'}${slowSend ? ' slow-send' : unevenSend ? ' uneven-send' : ''} playback catches up after a brief interruption without a seek loop`, async ({
       page,
       browserName,
     }, testInfo) => {
@@ -26,7 +31,7 @@ for (const kind of ['audio', 'video'] as const) {
       };
       page.on('console', onConsole);
       const playback = page.evaluate(
-        async ({ kind, managed }) => {
+        async ({ kind, managed, slowSend, unevenSend }) => {
           const stage = (name: string) =>
             console.log(`[call-playback] ${performance.now().toFixed(0)} ${name}`);
           stage('setup');
@@ -107,8 +112,12 @@ for (const kind of ['audio', 'video'] as const) {
             stream,
             mime,
             async (bytes: Uint8Array) => {
-              // Small, ordered delivery jitter; retain every continuous WebM segment.
-              await delay([0, 25, 70, 10][chunk++ % 4]);
+              // Preserve the jitter regression; separately exercise sustained slow
+              // acknowledgements that require queued WebM chunks to coalesce.
+              await delay(
+                slowSend ? 150 : (unevenSend ? [0, 25, 200, 150] : [0, 25, 70, 10])[chunk % 4],
+              );
+              chunk++;
               if (chunk === 1) stage('append first segment');
               receiver.append(bytes.subarray(1));
               if (chunk === 1) stage('first segment appended');
@@ -193,7 +202,7 @@ for (const kind of ['audio', 'video'] as const) {
             stage('cleanup complete');
           }
         },
-        { kind, managed },
+        { kind, managed, slowSend, unevenSend },
       );
       let deadline: ReturnType<typeof setTimeout> | undefined;
       const result = await Promise.race([

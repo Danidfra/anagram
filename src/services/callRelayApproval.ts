@@ -18,6 +18,7 @@ export function guardCallRelay(endpoint: CallEndpoint, configuredRelays: string[
   let closed = false;
   return {
     multiplexed: endpoint.multiplexed,
+    datagrams: endpoint.datagrams,
     online: () => endpoint.online(),
     id: () => endpoint.id(),
     relay_url: () => endpoint.relay_url(),

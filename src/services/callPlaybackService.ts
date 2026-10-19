@@ -32,7 +32,8 @@ export function followCallLive(
   // Audio can recover closer to live; video (including legacy combined media)
   // retains its existing cushion. Leave headroom for chunk arrival jitter.
   const cushion = kind === 'audio' ? 0.2 : 0.35;
-  const threshold = kind === 'audio' ? 0.4 : 0.6;
+  // Leave room for 200 ms chunk bursts before seeking again.
+  const threshold = kind === 'audio' ? 0.45 : 0.6;
   if (end - element.currentTime > threshold)
     element.currentTime = Math.max(element.buffered.start(latest), end - cushion);
 }

@@ -71,5 +71,7 @@ export default defineConfig(({ command }) => ({
       ignored: ['**/src-tauri/**', '**/build/**', '**/test-results/**', '**/playwright-report/**'],
     },
   },
+  // Call workers import this lazily; prebundle it to avoid reloading an active dev call.
+  optimizeDeps: { include: ['libopus-wasm'] },
   clearScreen: false,
 }));

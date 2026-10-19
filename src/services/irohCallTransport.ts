@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core';
 import type { CallEndpoint } from '#src/types/call.ts';
 import { defaultIrohRelays, normalizeIrohRelayUrl } from '#src/utils/irohRelays.ts';
 import { guardCallRelay } from './callRelayApproval';
@@ -13,6 +14,10 @@ export async function createIrohCallEndpoint(
   const urls = relayUrls.map(normalizeIrohRelayUrl);
   if (!urls.length || urls.length > 21 || urls.some((url) => !url))
     throw new Error('Choose at least one valid HTTPS call relay');
+  if (isTauri()) {
+    const { createNativeCallEndpoint } = await import('./nativeIrohCallTransport.ts');
+    return guardCallRelay(await createNativeCallEndpoint(urls as string[]), urls as string[]);
+  }
   if (!modulePromise) {
     const url = new URL('/iroh/anagram_iroh_calls.js', document.baseURI).href;
     modulePromise = import(/* @vite-ignore */ url)

@@ -16,6 +16,16 @@ const parse = (overrides = {}, timestamp = now / 1000) =>
   parseCallSignal(JSON.stringify({ ...signal, ...overrides }), timestamp, now);
 
 describe('private call signal validation', () => {
+  it('validates optional packet capabilities without changing the legacy media version', () => {
+    expect(parse({ mediaVersion: 2, packetAudioVersion: 1, packetVideoVersion: 1 })).toMatchObject({
+      mediaVersion: 2,
+      packetAudioVersion: 1,
+      packetVideoVersion: 1,
+    });
+    expect(parse({ packetAudioVersion: 2 })).toBeNull();
+    expect(parse({ packetVideoVersion: '1' })).toBeNull();
+    expect(parse({ packetAudioVersion: 1 })?.packetAudioVersion).toBeUndefined();
+  });
   it('accepts a fresh versioned invite and normalizes its expiration and relay', () => {
     expect(parse()).toEqual(signal);
     expect(

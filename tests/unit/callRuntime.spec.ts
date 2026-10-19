@@ -122,6 +122,162 @@ afterEach(() => {
 });
 
 describe('call negotiation and lifetime', () => {
+  it.each([
+    { packet: false, preMutedTrack: false },
+    { packet: true, preMutedTrack: false },
+    { packet: false, preMutedTrack: true },
+    { packet: true, preMutedTrack: true },
+  ])(
+    'unmuting a recorder started muted resets only legacy audio (packet=$packet, preMutedTrack=$preMutedTrack)',
+    async ({ packet, preMutedTrack }) => {
+      const h = setup();
+      if (preMutedTrack) h.microphone.enabled = false;
+      if (packet) {
+        h.endpoint.datagrams = true;
+        Object.assign(h.deps, { preparePacketAudio: async () => vi.fn() });
+      }
+      await h.runtime.start(peer, 'audio');
+      if (!preMutedTrack) h.runtime.toggleMicrophone();
+      const offer = h.deps.sendSignal.mock.calls[0][1];
+      await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
+      await vi.waitFor(() => expect(h.deps.record).toHaveBeenCalledTimes(1));
+      // A room can clone a disabled microphone before synchronizing the peer's mute UI.
+      if (preMutedTrack) h.runtime.toggleMicrophone();
+      vi.mocked(h.connection.send).mockClear();
+      h.runtime.toggleMicrophone();
+      await vi.waitFor(() => expect(h.deps.record).toHaveBeenCalledTimes(packet ? 1 : 2));
+      expect(
+        vi.mocked(h.connection.send).mock.calls.filter(([frame]) => frame[0] === 4),
+      ).toHaveLength(packet ? 0 : 1);
+      expect(h.deps.getMedia).toHaveBeenCalledOnce();
+      expect(h.microphone.stop).not.toHaveBeenCalled();
+      // Muted legacy audio stops encoding; packet audio keeps its sequence.
+      h.stopRecording.mockClear();
+      h.runtime.toggleMicrophone();
+      expect(h.stopRecording).toHaveBeenCalledTimes(packet ? 0 : 1);
+      expect(h.microphone.stop).not.toHaveBeenCalled();
+      h.runtime.toggleMicrophone();
+      await vi.waitFor(() => expect(h.deps.record).toHaveBeenCalledTimes(packet ? 1 : 3));
+    },
+  );
+  it('keeps combined legacy video recording when only the microphone is muted', async () => {
+    const h = setup();
+    await h.runtime.receiveSignal(peer, invite());
+    await h.runtime.accept();
+    await vi.waitFor(() => expect(h.deps.record).toHaveBeenCalledOnce());
+    h.runtime.toggleMicrophone();
+    expect(h.microphone.enabled).toBe(false);
+    expect(h.camera.enabled).toBe(true);
+    expect(h.stopRecording).not.toHaveBeenCalled();
+    expect(h.camera.stop).not.toHaveBeenCalled();
+  });
+  it('does not restart muted legacy audio after hangup while its reset is pending', async () => {
+    const h = setup();
+    await h.runtime.start(peer, 'audio');
+    h.runtime.toggleMicrophone();
+    const offer = h.deps.sendSignal.mock.calls[0][1];
+    await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
+    await vi.waitFor(() => expect(h.deps.record).toHaveBeenCalledOnce());
+    let complete!: () => void;
+    vi.mocked(h.connection.send).mockImplementation((frame) =>
+      frame[0] === 4
+        ? new Promise<void>((resolve) => {
+            complete = resolve;
+          })
+        : Promise.resolve(),
+    );
+    h.runtime.toggleMicrophone();
+    await h.runtime.end();
+    complete();
+    await Promise.resolve();
+    expect(h.deps.record).toHaveBeenCalledOnce();
+  });
+  it('restores unmuted legacy audio when a concurrent microphone change fails', async () => {
+    const h = setup();
+    await h.runtime.start(peer, 'audio');
+    h.runtime.toggleMicrophone();
+    const offer = h.deps.sendSignal.mock.calls[0][1];
+    await h.runtime.receiveSignal(peer, { ...offer, action: 'accept' });
+    await vi.waitFor(() => expect(h.deps.record).toHaveBeenCalledOnce());
+    let reject!: (error: Error) => void;
+    h.deps.getMicrophone.mockReturnValueOnce(
+      new Promise((_, fail) => {
+        reject = fail;
+      }),
+    );
+    const selecting = h.runtime.selectMicrophone('unavailable');
+    h.runtime.toggleMicrophone();
+    reject(new DOMException('Busy', 'NotReadableError'));
+    await selecting;
+    await vi.waitFor(() => expect(h.deps.record).toHaveBeenCalledTimes(2));
+    expect(h.microphone.enabled).toBe(true);
+    expect(h.microphone.stop).not.toHaveBeenCalled();
+  });
+  it('does not advertise packet audio with cached older transport bindings', async () => {
+    const h = setup();
+    Object.assign(h.deps, { preparePacketAudio: async () => vi.fn() });
+    await h.runtime.start(peer, 'audio');
+    const offer = h.deps.sendSignal.mock.calls[0][1];
+    expect(offer.packetAudioVersion).toBeUndefined();
+    await h.runtime.receiveSignal(peer, { ...offer, action: 'accept', packetAudioVersion: 1 });
+    await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
+    expect(h.deps.createReceiver).toHaveBeenCalledWith(
+      'audio/webm;codecs=opus',
+      expect.any(Function),
+    );
+  });
+  it.each([false, true])(
+    'negotiates packet audio only with mutual support (peer=%s)',
+    async (supported) => {
+      const h = setup();
+      const release = vi.fn();
+      Object.assign(h.deps, { preparePacketAudio: async () => release });
+      h.endpoint.datagrams = true;
+      h.connection.sendAudio = vi.fn().mockResolvedValue(undefined);
+      h.connection.recvAudio = vi.fn(() => new Promise(() => {}));
+      await h.runtime.start(peer, 'audio');
+      const offer = h.deps.sendSignal.mock.calls[0][1];
+      expect(offer.packetAudioVersion).toBe(1);
+      await h.runtime.receiveSignal(peer, {
+        ...offer,
+        action: 'accept',
+        packetAudioVersion: supported ? 1 : undefined,
+      });
+      await vi.waitFor(() => expect(h.runtime.session?.phase).toBe('active'));
+      expect(h.deps.createReceiver).toHaveBeenCalledWith(
+        supported ? 'audio/opus;anagram=1' : 'audio/webm;codecs=opus',
+        expect.any(Function),
+      );
+      const recording = h.deps.record.mock.calls[0] as unknown as [
+        MediaStream,
+        string,
+        (packet: Uint8Array) => Promise<void>,
+      ];
+      await recording[2](new Uint8Array([supported ? 9 : 0, 1]));
+      expect(h.connection.sendAudio).toHaveBeenCalledTimes(supported ? 1 : 0);
+      h.runtime.end();
+      h.runtime.reset();
+      expect(release).toHaveBeenCalledTimes(1);
+    },
+  );
+  it('releases late packet preparation after cancellation without creating an endpoint', async () => {
+    const h = setup();
+    let finish: (release: () => void) => void;
+    Object.assign(h.deps, {
+      preparePacketAudio: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    });
+    const start = h.runtime.start(peer, 'audio');
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    h.runtime.end();
+    const release = vi.fn();
+    finish(release);
+    await start;
+    expect(release).toHaveBeenCalledOnce();
+    expect(h.deps.createEndpoint).not.toHaveBeenCalled();
+  });
   it('releases mobile routing on hangup and cancellation during route setup', async () => {
     const h = setup(),
       release = vi.fn();

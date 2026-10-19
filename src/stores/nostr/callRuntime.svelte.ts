@@ -1,3 +1,5 @@
+import { PACKET_VIDEO_MIME } from '#src/services/callPacketVideo.ts';
+import { OPUS_CALL_MIME, AUDIO_PACKET_KIND } from '#src/services/callAudioPackets.ts';
 import {
   type CallMediaReceiver,
   type CallRecordingOptions,
@@ -10,6 +12,7 @@ import {
   CALL_RING_TIMEOUT_MS,
   CALL_SUPPORT_TIMEOUT_MS,
   type CallConnection,
+  type CallTransportStats,
   type CallEndpoint,
   type CallEndReason,
   type CallMode,
@@ -31,6 +34,8 @@ const DEFAULT_VIDEO_PROFILE: CallVideoProfile = {
   screenFrameRate: 15,
 };
 export interface CallRuntimeDeps {
+  packetVideoSupported?(): Promise<boolean>;
+  preparePacketAudio?(): Promise<(() => void) | undefined>;
   videoProfile?(): CallVideoProfile;
   onEnded?(session: CallSession): Promise<void>;
   sendSignal(peer: string, signal: CallSignal): Promise<void>;
@@ -57,6 +62,16 @@ export interface CallRuntimeDeps {
   ): () => void;
 }
 interface Context {
+  releasePacketAudio?: () => void;
+  packetPreparation?: Promise<void>;
+  peerPacketAudio?: boolean;
+  packetAudio?: boolean;
+  localPacketVideo?: boolean;
+  peerPacketVideo?: boolean;
+  packetVideo?: boolean;
+  audioGeneration?: number;
+  resetAudioOnUnmute?: boolean;
+  statsPending?: boolean;
   releaseAudioRoute?: () => void;
   id: string;
   peer: string;
@@ -113,6 +128,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
   let cameraDeviceId = $state('');
   let changingMedia = $state(false);
   let failureDetail = $state('');
+  let transportDiagnostics = $state.raw<CallTransportStats | null>(null);
   let context: Context | null = null;
   let generation = 0;
   const tombstones = new Map<string, number>();
@@ -143,6 +159,8 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       mode: ctx.mode,
       expiresAt: new Date(Date.now() + CALL_RING_TIMEOUT_MS).toISOString(),
       mediaVersion: 2,
+      ...(ctx.localPacketVideo ? { packetVideoVersion: 1 } : {}),
+      ...(ctx.releasePacketAudio && ctx.endpoint?.datagrams ? { packetAudioVersion: 1 } : {}),
       ...(ctx.endpoint?.multiplexed ? { transportVersion: 2 } : {}),
       reconnectSupported: true,
       videoSupported: deps.supported('video'),
@@ -164,6 +182,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
   function finish(ctx: Context, reason: CallEndReason, notify = true) {
     if (!alive(ctx)) return;
     context = null;
+    transportDiagnostics = null;
     remember(ctx.peer, ctx.id);
     clearTimeout(ctx.timeout);
     clearTimeout(ctx.supportTimeout);
@@ -186,6 +205,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     ctx.videoReceiver?.close();
     ctx.screenReceiver?.close();
     ctx.releaseAudioRoute?.();
+    ctx.releasePacketAudio?.();
     localScreenStream = null;
     remoteScreenUrl = '';
     localStream = null;
@@ -222,6 +242,8 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     ctx.reconnectSupported = incoming.reconnectSupported === true;
     clearTimeout(ctx.supportTimeout);
     ctx.splitMedia = incoming.mediaVersion === 2;
+    ctx.peerPacketVideo = ctx.splitMedia && incoming.packetVideoVersion === 1;
+    ctx.peerPacketAudio = ctx.splitMedia && incoming.packetAudioVersion === 1;
     ctx.peerVideoSupported = incoming.videoSupported === true;
     ctx.peerMuteStateSupported =
       incoming.mediaVersion === 2 && incoming.muteStateSupported === true;
@@ -279,6 +301,23 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     armTimeout(ctx, CALL_RING_TIMEOUT_MS);
     return ctx;
   }
+  function preparePacketMedia(ctx: Context) {
+    // Start AudioContext.resume within the user's call/answer gesture. Safari
+    // can otherwise leave it suspended after permission or contact lookups.
+    ctx.packetPreparation = Promise.all([
+      (deps.preparePacketAudio?.() ?? Promise.resolve(undefined))
+        .then((release) => {
+          if (alive(ctx)) ctx.releasePacketAudio = release;
+          else release?.();
+        })
+        .catch(() => {}),
+      (deps.packetVideoSupported?.() ?? Promise.resolve(false))
+        .then((supported) => {
+          if (alive(ctx)) ctx.localPacketVideo = supported;
+        })
+        .catch(() => {}),
+    ]).then(() => {});
+  }
   async function prepare(ctx: Context, captureMode: CallMode = ctx.mode) {
     let stream: MediaStream;
     try {
@@ -319,6 +358,8 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         if (track.kind === 'video' && ctx.splitMedia) disableCamera(ctx);
         else captureFailed(ctx, new DOMException('Capture device disconnected', 'NotFoundError'));
       };
+    await ctx.packetPreparation;
+    if (!alive(ctx)) return false;
     let endpoint: CallEndpoint;
     try {
       endpoint = await deps.createEndpoint();
@@ -341,14 +382,20 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     const stream = ctx.stream;
     const connection = ctx.connection;
     if (!stream || !connection || !alive(ctx) || !ctx.ready) return;
+    ctx.resetAudioOnUnmute =
+      !ctx.packetAudio && stream.getAudioTracks().some((track) => !track.enabled);
     ctx.stopRecording = deps.record(
       ctx.splitMedia ? new MediaStream(stream.getAudioTracks()) : stream,
-      ctx.splitMedia ? CALL_MIME_TYPES[1] : ctx.mime,
-      (frame) => connection.send(frame),
+      ctx.packetAudio ? OPUS_CALL_MIME : ctx.splitMedia ? CALL_MIME_TYPES[1] : ctx.mime,
+      (frame) =>
+        ctx.packetAudio && connection.sendAudio
+          ? connection.sendAudio(frame)
+          : connection.send(frame),
       () => {
         if (ctx.connection === connection) fail(ctx, new Error('Audio encoder failed'));
       },
       {
+        audioGeneration: (ctx.audioGeneration = (ctx.audioGeneration ?? 0) + 1),
         onSendError: (cause) => {
           if (ctx.connection === connection) recover(ctx, cause);
         },
@@ -380,7 +427,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     ctx.cameraProfile = profile.cameraBitrate;
     ctx.stopVideoRecording = deps.record(
       new MediaStream(ctx.stream.getVideoTracks()),
-      CALL_VIDEO_MIME_TYPE,
+      ctx.packetVideo ? PACKET_VIDEO_MIME : CALL_VIDEO_MIME_TYPE,
       (frame) => {
         frame[0] = 3;
         return connection.send(frame);
@@ -390,6 +437,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       },
       {
         videoBitsPerSecond: profile.cameraBitrate,
+        videoFrameRate: profile.cameraFrameRate,
         onCongestion: () => {
           if (ctx.connection === connection) disableCamera(ctx);
         },
@@ -461,7 +509,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       ctx.screenProfile = profile.screenBitrate;
       ctx.stopScreenRecording = deps.record(
         new MediaStream(screen.getVideoTracks()),
-        CALL_VIDEO_MIME_TYPE,
+        ctx.packetVideo ? PACKET_VIDEO_MIME : CALL_VIDEO_MIME_TYPE,
         (frame) => {
           frame[0] = 6;
           return connection.send(frame);
@@ -469,6 +517,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         stopScreen,
         {
           videoBitsPerSecond: profile.screenBitrate,
+          videoFrameRate: profile.screenFrameRate,
           onCongestion: stopScreen,
           onSendError: (cause) => {
             if (ctx.linkRevision === revision) recover(ctx, cause);
@@ -653,12 +702,15 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
               if (ctx.linkRevision === revision) disableCamera(ctx);
             });
           if (ctx.screenStream) void resumeScreenRecording(ctx);
-        } else if (data[0] === 0 && data.length > 1 && ctx.ready) {
+        } else if (data[0] === AUDIO_PACKET_KIND && ctx.packetAudio && ctx.ready) {
+          ctx.receiver?.append(data);
+        } else if (data[0] === 0 && data.length > 1 && ctx.ready && !ctx.packetAudio) {
           ctx.receiver?.append(data.subarray(1));
         } else if (data[0] === 3 && data.length > 1 && ctx.ready && ctx.splitMedia) {
           ctx.videoReceiver?.append(data.subarray(1));
         } else if (data[0] === 4 && data.length === 1 && ctx.ready && ctx.splitMedia) {
           checkMediaChangeRate(ctx);
+          if (ctx.packetAudio) continue;
           ctx.receiver?.close();
           ctx.receiver = deps.createReceiver(CALL_MIME_TYPES[1], () => {
             if (ctx.linkRevision === revision) fail(ctx, new Error('Audio decoder failed'));
@@ -678,9 +730,12 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
           if (data[1] === 1) {
             if (!deps.supported('video')) throw new Error('Video is unsupported');
             try {
-              ctx.videoReceiver = deps.createReceiver(CALL_VIDEO_MIME_TYPE, () => {
-                if (ctx.linkRevision === revision) disableRemoteVideo(ctx, 'camera');
-              });
+              ctx.videoReceiver = deps.createReceiver(
+                ctx.packetVideo ? PACKET_VIDEO_MIME : CALL_VIDEO_MIME_TYPE,
+                () => {
+                  if (ctx.linkRevision === revision) disableRemoteVideo(ctx, 'camera');
+                },
+              );
               remoteVideoUrl = ctx.videoReceiver.url;
             } catch {
               disableRemoteVideo(ctx, 'camera');
@@ -708,9 +763,12 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
           remoteScreenUrl = '';
           if (data[1] === 1) {
             try {
-              ctx.screenReceiver = deps.createReceiver(CALL_VIDEO_MIME_TYPE, () => {
-                if (ctx.linkRevision === revision) disableRemoteVideo(ctx, 'screen');
-              });
+              ctx.screenReceiver = deps.createReceiver(
+                ctx.packetVideo ? PACKET_VIDEO_MIME : CALL_VIDEO_MIME_TYPE,
+                () => {
+                  if (ctx.linkRevision === revision) disableRemoteVideo(ctx, 'screen');
+                },
+              );
               remoteScreenUrl = ctx.screenReceiver.url;
             } catch {
               disableRemoteVideo(ctx, 'screen');
@@ -741,6 +799,17 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
       }
     }
   }
+  async function receiveAudio(ctx: Context, connection: CallConnection, revision: number) {
+    try {
+      while (alive(ctx) && ctx.linkRevision === revision) {
+        const packet = await connection.recvAudio!();
+        if (!alive(ctx) || ctx.linkRevision !== revision) return;
+        if (ctx.ready) ctx.receiver?.append(packet);
+      }
+    } catch (cause) {
+      if (alive(ctx) && ctx.linkRevision === revision) recover(ctx, cause);
+    }
+  }
   async function connect(ctx: Context, invite: CallSignal) {
     if (!alive(ctx) || !invite.address || !ctx.endpoint) return;
     const endpoint = ctx.endpoint;
@@ -763,9 +832,16 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         return;
       }
       ctx.connection = connection;
-      ctx.receiver = deps.createReceiver(ctx.splitMedia ? CALL_MIME_TYPES[1] : ctx.mime, () => {
-        if (ctx.linkRevision === revision) fail(ctx, new Error('Audio decoder failed'));
-      });
+      ctx.packetVideo = Boolean(ctx.localPacketVideo && ctx.peerPacketVideo);
+      ctx.packetAudio = Boolean(
+        ctx.releasePacketAudio && ctx.peerPacketAudio && endpoint.datagrams,
+      );
+      ctx.receiver = deps.createReceiver(
+        ctx.packetAudio ? OPUS_CALL_MIME : ctx.splitMedia ? CALL_MIME_TYPES[1] : ctx.mime,
+        () => {
+          if (ctx.linkRevision === revision) fail(ctx, new Error('Audio decoder failed'));
+        },
+      );
       remoteMediaUrl = ctx.receiver.url;
       ctx.lastReceivedAt = Date.now();
       ctx.heartbeat = setInterval(() => {
@@ -774,11 +850,24 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
           recover(ctx, new Error('Call heartbeat timed out'));
           return;
         }
+        if (connection.transportStats && !ctx.statsPending) {
+          ctx.statsPending = true;
+          void connection
+            .transportStats()
+            .then((stats) => {
+              if (alive(ctx) && ctx.linkRevision === revision) transportDiagnostics = stats;
+            })
+            .catch(() => {})
+            .finally(() => {
+              ctx.statsPending = false;
+            });
+        }
         void connection.send(new Uint8Array([1])).catch((cause) => {
           if (ctx.linkRevision === revision) recover(ctx, cause);
         });
       }, 3000);
       void receiveFrames(ctx, connection, revision);
+      if (ctx.packetAudio && connection.recvAudio) void receiveAudio(ctx, connection, revision);
       await connection.send(new Uint8Array([2]));
     } catch (cause) {
       if (ctx.linkRevision === revision) recover(ctx, cause);
@@ -795,6 +884,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     deps.unlockPlayback?.();
     // Reserve before asynchronous checks so rapid clicks cannot create multiple endpoints.
     const ctx = reserve(peer, peer.slice(0, 12), mode, 'outgoing', crypto.randomUUID());
+    preparePacketMedia(ctx);
     try {
       const contact = await deps.resolvePeer(peer);
       if (!alive(ctx)) return;
@@ -925,6 +1015,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     const invite = incomingInvite;
     if (!ctx || !invite || session?.phase !== 'incoming') return;
     deps.unlockPlayback?.();
+    preparePacketMedia(ctx);
     const captureMode = mode === 'audio' ? 'audio' : ctx.mode;
     patch({ phase: 'preparing', cameraMuted: captureMode === 'audio' });
     try {
@@ -965,8 +1056,43 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     context.stream.getAudioTracks().forEach((track) => {
       track.enabled = !muted;
     });
+    if (muted && !context.packetAudio) {
+      context.resetAudioOnUnmute = true;
+      if (context.splitMedia) {
+        // Stop legacy encoders from draining captured speech after mute under
+        // load. Keep the microphone track and restart its timeline on unmute.
+        context.stopRecording?.();
+        context.stopRecording = undefined;
+      }
+    }
     patch({ microphoneMuted: muted });
     sendMuteState(context);
+    if (!muted) void resumeMutedRecording(context);
+  }
+  async function resumeMutedRecording(ctx: Context) {
+    // WebKit can stop or change the timestamps of a recorder with a disabled
+    // track. Renew the legacy audio timeline on unmute, preserving the capture
+    // and video lane. Packet audio keeps its continuous sequence.
+    if (!ctx.resetAudioOnUnmute || !ctx.splitMedia || !ctx.ready || ctx.changingMedia) return;
+    const connection = ctx.connection,
+      stream = ctx.stream,
+      generation = ctx.audioGeneration;
+    if (!connection || !stream) return;
+    ctx.resetAudioOnUnmute = false;
+    try {
+      ctx.stopRecording?.();
+      ctx.stopRecording = undefined;
+      await connection.send(new Uint8Array([4]));
+      if (
+        alive(ctx) &&
+        ctx.connection === connection &&
+        ctx.stream === stream &&
+        ctx.audioGeneration === generation
+      )
+        startAudioRecording(ctx);
+    } catch (cause) {
+      if (alive(ctx) && ctx.connection === connection) recover(ctx, cause);
+    }
   }
   async function selectMicrophone(deviceId: string) {
     const ctx = context;
@@ -1030,6 +1156,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     } finally {
       ctx.changingMedia = false;
       if (alive(ctx)) changingMedia = false;
+      if (alive(ctx) && !session?.microphoneMuted) void resumeMutedRecording(ctx);
     }
   }
   async function selectCamera(deviceId: string) {
@@ -1207,6 +1334,9 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     }
   }
   return {
+    get transportDiagnostics() {
+      return transportDiagnostics;
+    },
     get session() {
       return session;
     },

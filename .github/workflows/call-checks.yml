@@ -1,0 +1,55 @@
+name: Call media regression checks
+on:
+  pull_request:
+    paths:
+      [
+        'src/**/call*',
+        'src/**/Call*',
+        'src/**/*iroh*',
+        'src/**/*Iroh*',
+        'iroh-calls/**',
+        'src-tauri/**',
+        'e2e/*call*',
+        'scripts/native-calls/**',
+        '.github/workflows/call-checks.yml',
+        'package-lock.json',
+      ]
+  push:
+    branches: ['main', 'call-validation/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: call-media-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  browsers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            browser: chromium
+          - os: ubuntu-24.04
+            browser: firefox
+          - os: macos-latest
+            browser: webkit
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:iroh
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run test:e2e:local -- --browser ${{ matrix.browser }} e2e/call-packet-audio.spec.ts e2e/call-packet-video.spec.ts e2e/call-playback.spec.ts e2e/call-ui.spec.ts e2e/mobile-call-audio.spec.ts e2e/ios-layout.spec.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: call-media-${{ matrix.browser }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

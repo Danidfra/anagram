@@ -1,3 +1,4 @@
+import { cloneCallTrack } from '#src/services/callSharedCapture.ts';
 import { toStore } from 'svelte/store';
 import { untrack } from 'svelte';
 import { callCaptureErrorKey } from '#src/services/callMediaService.ts';
@@ -40,9 +41,12 @@ interface Deps {
     | 'record'
     | 'unlockPlayback'
     | 'acquireAudioRoute'
+    | 'preparePacketAudio'
+    | 'packetVideoSupported'
   >;
 }
 export function createCallRoomRuntime(deps: Deps) {
+  let releasePacketAudio: (() => void) | undefined;
   let releaseAudioRoute: (() => void) | undefined;
   let session = $state.raw<CallRoomSession | null>(null);
   let localStream = $state.raw<MediaStream | null>(null);
@@ -133,6 +137,8 @@ export function createCallRoomRuntime(deps: Deps) {
     localStream = localScreenStream = null;
     releaseAudioRoute?.();
     releaseAudioRoute = undefined;
+    releasePacketAudio?.();
+    releasePacketAudio = undefined;
     changingMedia = false;
     if (notify) {
       if (s.own.pubkey === s.link.host)
@@ -150,7 +156,7 @@ export function createCallRoomRuntime(deps: Deps) {
         ?.getTracks()
         .filter((track) => track.kind === kind && track.readyState !== 'ended') ?? [];
     if (!tracks.length) throw new DOMException('Capture device is unavailable', 'NotFoundError');
-    return new MediaStream(tracks.map((track) => track.clone()));
+    return new MediaStream(tracks.map(cloneCallTrack));
   }
   async function broadcastRoster() {
     const s = session;
@@ -218,9 +224,9 @@ export function createCallRoomRuntime(deps: Deps) {
         videoProfile: () =>
           session && session.members.length >= 4
             ? {
-                cameraBitrate: 300_000,
+                cameraBitrate: Math.floor(900_000 / (session.members.length - 1)),
                 cameraFrameRate: 15,
-                screenBitrate: 750_000,
+                screenBitrate: Math.floor(1_500_000 / (session.members.length - 1)),
                 screenFrameRate: 5,
               }
             : {
@@ -251,7 +257,7 @@ export function createCallRoomRuntime(deps: Deps) {
         getCamera: async () => cloneTracks('video'),
         getScreen: async () => {
           if (!localScreenStream) throw new Error('No active screen share');
-          return localScreenStream.clone();
+          return new MediaStream(localScreenStream.getTracks().map(cloneCallTrack));
         },
       });
       const peer: Peer = { member, runtime, stop: () => {} };
@@ -355,6 +361,12 @@ export function createCallRoomRuntime(deps: Deps) {
     cameraMuted = mode === 'audio';
     error = '';
     deadline = setTimeout(() => leave('room.error.timeout'), 60_000);
+    const packetPreparation = (deps.media.preparePacketAudio?.() ?? Promise.resolve(undefined))
+      .then((release) => {
+        if (generation === version && busy) releasePacketAudio = release;
+        else release?.();
+      })
+      .catch(() => {});
     try {
       const media = await deps.media.getMedia(mode, microphoneDeviceId);
       if (generation !== version || !busy) {
@@ -380,6 +392,7 @@ export function createCallRoomRuntime(deps: Deps) {
           } else leave('call.error.deviceMissing');
         };
       });
+      await packetPreparation;
       const identity = await deps.getIdentity();
       if (generation !== version || !busy) return;
       const self: CallRoomMember = {

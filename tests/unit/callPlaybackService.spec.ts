@@ -34,9 +34,11 @@ describe('live call playback recovery', () => {
     expect(video.seek).not.toHaveBeenCalled();
     for (let i = 0; i < 10; i++) followCallLive(audio.element, 'audio');
     expect(audio.seek).toHaveBeenCalledOnce();
-    const jitter = media(9.7, [[0, 10]]);
-    followCallLive(jitter.element, 'audio');
-    expect(jitter.seek).not.toHaveBeenCalled();
+    for (const time of [9.7, 9.57]) {
+      const jitter = media(time, [[0, 10]]);
+      followCallLive(jitter.element, 'audio');
+      expect(jitter.seek).not.toHaveBeenCalled();
+    }
   });
 
   it('uses the audio cushion on stalled-event recovery and preserves seek/gap guards', () => {
