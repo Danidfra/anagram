@@ -11,15 +11,23 @@
   import { portal } from '#src/lib/actions/portal.ts';
   import Icon from './Icon.svelte';
 
-  export let message: Message;
-  export let contactName = '';
-  export let contactRelayUrls: string[] = [];
-  export let publicGroup = false;
-  export let onretry: ((relayUrl: string) => Promise<void>) | undefined = undefined;
-  let opened = false;
-  let tab = 'recipient';
-  let retrying: string[] = [];
-  let error = '';
+  let {
+    message,
+    contactName = '',
+    contactRelayUrls = [],
+    publicGroup = false,
+    onretry,
+  }: {
+    message: Message;
+    contactName?: string;
+    contactRelayUrls?: string[];
+    publicGroup?: boolean;
+    onretry?: (relayUrl: string) => Promise<void>;
+  } = $props();
+  let opened = $state(false);
+  let tab = $state('recipient');
+  let retrying = $state<string[]>([]);
+  let error = $state('');
 
   // Project the existing status model only when props change. No subscriptions,
   // relay queries or timers are needed to display recorded delivery results.
@@ -51,10 +59,10 @@
           : state.statusSections,
     };
   }
-  $: view = viewFor(message, contactName, contactRelayUrls, $locale, publicGroup);
-  $: sections = view.outbound
-    ? view.sections.filter((section) => section.key === tab)
-    : view.sections;
+  let view = $derived(viewFor(message, contactName, contactRelayUrls, $locale, publicGroup));
+  let sections = $derived(
+    view.outbound ? view.sections.filter((section) => section.key === tab) : view.sections,
+  );
   function showDialog(node: HTMLDialogElement) {
     node.showModal();
     return { destroy: () => node.close() };

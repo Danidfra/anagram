@@ -407,7 +407,12 @@
     $state.selected?.meta.contact_name ||
     $state.selected?.name ||
     '';
-  $: mentionProfiles = buildGroupMemberMentionProfiles($state.selected?.meta);
+  // Paging/read-status updates publish new chat snapshots. Only rebuild the
+  // mention input (and every message's formatting) when roster contents change.
+  $: mentionMembers = JSON.stringify($state.selected?.meta.group_members ?? []);
+  $: mentionProfiles = buildGroupMemberMentionProfiles({
+    group_members: JSON.parse(mentionMembers),
+  });
   $: canCall =
     $state.selected?.type === 'user' &&
     $state.selected.publicKey !== nostr.getLoggedInPublicKeyHex() &&

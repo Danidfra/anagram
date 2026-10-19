@@ -3,15 +3,23 @@
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { useMessageStore } from '#src/stores/messageStore.svelte.ts';
   import ProfileName from './ProfileName.svelte';
-  export let message: Message;
-  export let ontoggle: ((emoji: string, remove: boolean) => Promise<void>) | undefined = undefined;
-  export let readonly = false;
-  let selected = '';
-  $: reactions = message.meta.reactions ?? [];
-  $: groups = [...new Set(reactions.map((reaction) => reaction.emoji))];
+  let {
+    message,
+    ontoggle,
+    readonly = false,
+  }: {
+    message: Message;
+    ontoggle?: (emoji: string, remove: boolean) => Promise<void>;
+    readonly?: boolean;
+  } = $props();
+  let selected = $state('');
+  let hovered = $state('');
+  let focused = $state('');
+  let reactions = $derived(message.meta.reactions ?? []);
+  let groups = $derived([...new Set(reactions.map((reaction) => reaction.emoji))]);
   const nostr = useNostrStore();
   const messages = useMessageStore();
-  let error = '';
+  let error = $state('');
   async function toggle(emoji: string) {
     try {
       const mine = reactions.find(
@@ -39,26 +47,36 @@
 <div class="reactions">
   {#each groups as emoji}
     {@const authors = reactions.filter((reaction) => reaction.emoji === emoji)}
-    <div class="reaction">
+    <div
+      class="reaction"
+      role="group"
+      onmouseenter={() => (hovered = emoji)}
+      onmouseleave={() => (hovered = '')}
+      onfocusin={() => (focused = emoji)}
+      onfocusout={() => (focused = '')}
+    >
       <button
         aria-label={`${authors[0].name || emoji} reaction`}
         aria-expanded={selected === emoji}
         onclick={() => (selected = selected === emoji ? '' : emoji)}
         >{emoji}{authors.length > 1 ? ` ${authors.length}` : ''}</button
       >
-      <div class="reaction-details" class:open={selected === emoji} role="tooltip">
-        {#each authors as author}<div>
-            <ProfileName
-              publicKey={author.reactorPublicKey}
-              fallback={author.reactorPublicKey.slice(0, 16)}
-            /><small>{author.reactorPublicKey.slice(0, 16)}</small>
-          </div>{/each}
-        {#if selected === emoji && !readonly}<button onclick={() => toggle(emoji)}
-            >{authors.some((a) => a.reactorPublicKey === nostr.getLoggedInPublicKeyHex())
-              ? 'Remove reaction'
-              : 'Add reaction'}</button
-          >{/if}
-      </div>
+      {#if selected === emoji || hovered === emoji || focused === emoji}
+        <!-- Keep hidden author lists and their profile observers out of long threads. -->
+        <div class="reaction-details" class:open={selected === emoji} role="tooltip">
+          {#each authors as author}<div>
+              <ProfileName
+                publicKey={author.reactorPublicKey}
+                fallback={author.reactorPublicKey.slice(0, 16)}
+              /><small>{author.reactorPublicKey.slice(0, 16)}</small>
+            </div>{/each}
+          {#if selected === emoji && !readonly}<button onclick={() => toggle(emoji)}
+              >{authors.some((a) => a.reactorPublicKey === nostr.getLoggedInPublicKeyHex())
+                ? 'Remove reaction'
+                : 'Add reaction'}</button
+            >{/if}
+        </div>
+      {/if}
     </div>
   {/each}
   {#if error}<span role="alert">{error}</span>{/if}

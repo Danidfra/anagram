@@ -79,6 +79,12 @@ test('reactions surface in the chat list and deleted messages stay deleted after
     });
     const reaction = alice.page.getByLabel(/thumbs up reaction/i).first();
     const reactionAuthorPublicKeyPrefix = bob.session.publicKey.slice(0, 16);
+    await alice.page.mouse.move(0, 0);
+    await expect(alice.page.locator('.reaction-details')).toHaveCount(0);
+    await reaction.focus();
+    await expect(alice.page.getByRole('tooltip')).toContainText(reactionAuthorPublicKeyPrefix);
+    await alice.page.getByTestId('message-composer-input').focus();
+    await expect(alice.page.locator('.reaction-details')).toHaveCount(0);
     await reaction.hover();
     await expect(alice.page.getByRole('tooltip')).toContainText(reactionAuthorPublicKeyPrefix);
     await expect(alice.page.getByRole('tooltip')).not.toContainText('thumbs up');

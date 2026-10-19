@@ -5,6 +5,79 @@ const key = 'a'.repeat(64);
 const client = new NostrClient();
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
+it('releases historical authors when the requested window changes and ignores their late events', async () => {
+  const subscribe = vi.fn(() => ({ stop: vi.fn() }));
+  const onProfile = vi.fn();
+  const runtime = createProfileHydrationRuntime({
+    subscribe,
+    onProfile,
+    onRelayList: vi.fn(),
+    isBlocked: () => false,
+  });
+  const next = 'b'.repeat(64);
+  runtime.request([{ publicKey: key, relayUrls: ['wss://history.test'] }]);
+  await vi.advanceTimersByTimeAsync(1);
+  const old = subscribe.mock.calls[0] as any;
+  runtime.request([{ publicKey: next, relayUrls: ['wss://history.test'] }]);
+  expect(subscribe.mock.results[0].value.stop).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(subscribe).toHaveBeenCalledTimes(2);
+  expect(
+    (subscribe.mock.calls[1] as any)[0].every((filter: any) => filter.authors[0] === next),
+  ).toBe(true);
+  old[2](
+    new ClientEvent(client, {
+      pubkey: key,
+      kind: 0,
+      content: '{"name":"Late historical author"}',
+      tags: [],
+      created_at: 1,
+    }),
+  );
+  expect(onProfile).not.toHaveBeenCalled();
+  runtime.request([]);
+  expect(subscribe.mock.results[1].value.stop).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(subscribe).toHaveBeenCalledTimes(2);
+  runtime.reset();
+});
+
+it('preserves shared in-flight work and retry progress for authors still in scope', async () => {
+  const subscribe = vi.fn(() => ({ stop: vi.fn() }));
+  const onProfile = vi.fn();
+  const runtime = createProfileHydrationRuntime({
+    subscribe,
+    onProfile,
+    onRelayList: vi.fn(),
+    isBlocked: () => false,
+  });
+  const other = 'b'.repeat(64);
+  runtime.request(
+    [key, other].map((publicKey) => ({ publicKey, relayUrls: ['wss://history.test'] })),
+  );
+  await vi.advanceTimersByTimeAsync(1);
+  const call = subscribe.mock.calls[0] as any;
+  runtime.request([{ publicKey: key, relayUrls: ['wss://history.test'] }]);
+  expect(subscribe.mock.results[0].value.stop).not.toHaveBeenCalled();
+  for (const pubkey of [other, key])
+    call[2](
+      new ClientEvent(client, {
+        pubkey,
+        kind: 0,
+        content: '{"name":"Profile"}',
+        tags: [],
+        created_at: 1,
+      }),
+    );
+  expect(onProfile).toHaveBeenCalledOnce();
+  expect(onProfile).toHaveBeenCalledWith(expect.objectContaining({ pubkey: key }));
+  call[3]();
+  runtime.request([{ publicKey: key, relayUrls: ['wss://history.test'] }]);
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(subscribe).toHaveBeenCalledOnce();
+  runtime.reset();
+});
+
 it('isolates each author and kind, follows advertised outboxes, and streams metadata before EOSE', async () => {
   const subscribe = vi.fn(() => ({ stop: vi.fn() }));
   const onProfile = vi.fn();

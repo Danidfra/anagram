@@ -1,5 +1,47 @@
 import { test, expect } from '@playwright/test';
 
+test('paging cached group history preserves formatting in unchanged messages', async ({
+  browser,
+}) => {
+  const { bootstrapUser, disposeUsers, TEST_ACCOUNTS, createGroup, navigateInApp } =
+    await import('./parity/helpers');
+  const user = await bootstrapUser(browser, TEST_ACCOUNTS.formattingAlice);
+  try {
+    const group = await createGroup(user.page, { name: 'Formatting while paging', about: '' });
+    await navigateInApp(user.page, '/settings/profile');
+    await user.page.evaluate(
+      async ({ group, author }) => {
+        const { chatDataService } = await import('/src/services/chatDataService.ts');
+        const start = Date.now() - 300000;
+        for (let index = 0; index < 160; index++)
+          await chatDataService.createMessage({
+            chat_public_key: group,
+            author_public_key: author,
+            message: index === 159 ? 'Keep this ||revealed text|| visible' : `Cached row ${index}`,
+            created_at: new Date(start + index * 1000).toISOString(),
+            meta: {},
+          });
+      },
+      { group, author: user.session.publicKey },
+    );
+    await navigateInApp(user.page, `/chats/${group}`);
+    const thread = user.page.getByTestId('chat-thread');
+    const message = thread.locator('.message-row').filter({ hasText: 'Keep this' });
+    await message.getByRole('button', { name: 'Reveal spoiler' }).click();
+    await expect(message).toContainText('revealed text');
+    const before = await thread.locator('.message-row').count();
+    await user.page.evaluate(async (group) => {
+      const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
+      await useMessageStore().loadOlderMessages(group);
+    }, group);
+    await expect.poll(() => thread.locator('.message-row').count()).toBeGreaterThan(before);
+    await expect(message).toContainText('revealed text');
+    await expect(message.getByRole('button', { name: 'Reveal spoiler' })).toHaveCount(0);
+  } finally {
+    await disposeUsers(user);
+  }
+});
+
 test('formatting component renders text safely and reveals spoilers by keyboard', async ({
   page,
 }) => {

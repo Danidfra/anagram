@@ -38,11 +38,17 @@
   function updateDay() {
     if (!element) return;
     const top = element.getBoundingClientRect().top + 38;
-    const rows = [...element.querySelectorAll<HTMLElement>('.message-row')];
-    stickyDay =
-      rows.find((row) => row.getBoundingClientRect().bottom > top)?.dataset.dayLabel ??
-      rows.at(-1)?.dataset.dayLabel ??
-      '';
+    const rows = element.querySelectorAll<HTMLElement>('.message-row');
+    // Rows are vertically ordered, as in threadPosition. Avoid measuring the
+    // entire cached window while scrolling near its bottom.
+    let low = 0;
+    let high = rows.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (rows[middle].getBoundingClientRect().bottom > top) high = middle;
+      else low = middle + 1;
+    }
+    stickyDay = rows[Math.min(low, rows.length - 1)]?.dataset.dayLabel ?? '';
   }
   function scrolled() {
     onscroll();
@@ -109,9 +115,8 @@
         disabled={loading || loadingNewer}
         onmousedown={(event) => event.preventDefault()}
         onclick={onolder}
-        >{#if loading && !loadingNewer}<span class="thread-history-spinner" aria-hidden="true"></span>{:else}<Icon
-            name="up"
-          />{/if}{$translate('common.more')}</button
+        >{#if loading && !loadingNewer}<span class="thread-history-spinner" aria-hidden="true"
+          ></span>{:else}<Icon name="up" />{/if}{$translate('common.more')}</button
       >
     </div>{/if}
   {#if historyStatus}<span class="thread-history-status" role="status">{historyStatus}</span>{/if}

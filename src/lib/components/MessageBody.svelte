@@ -113,7 +113,11 @@
     }
   }
   let history = $derived(readCallHistory(message.meta.call_history));
-  let formatted = $derived(formattedParts ?? formatMessage(message.text, mentionProfiles));
+  // Legacy parents invalidate object props on unrelated history/status updates.
+  // Gate parsing on the actual text and stable roster, not the whole message.
+  let text = $derived(message.text);
+  let profiles = $derived(mentionProfiles);
+  let formatted = $derived(formattedParts ?? formatMessage(text, profiles));
   let formatUrls = $derived(messageFormatUrls(formatted));
   let attachments = $derived(
     (message.meta.attachments ?? []).filter((attachment) => {

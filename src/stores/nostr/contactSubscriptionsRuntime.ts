@@ -302,6 +302,7 @@ export function createContactSubscriptionsRuntime({
   }
 
   async function applyContactProfileEvent(event: ClientEvent, replay = false): Promise<void> {
+    if (!activeContactPubkeys.has(event.pubkey)) return;
     if (!replay && !shouldApplyContactProfileEvent(event)) {
       return;
     }
@@ -424,6 +425,7 @@ export function createContactSubscriptionsRuntime({
   }
 
   async function applyContactRelayListEvent(event: ClientEvent): Promise<void> {
+    if (!activeContactPubkeys.has(event.pubkey)) return;
     const normalizedPubkey = inputSanitizerService.normalizeHexKey(event.pubkey);
     if (!normalizedPubkey || isPubkeyBlocked(normalizedPubkey)) return;
     const byKind = new Map(relayEvents.get(normalizedPubkey));
@@ -486,7 +488,7 @@ export function createContactSubscriptionsRuntime({
           return;
         }
       }
-      relayEvents.set(normalizedPubkey, byKind);
+      if (activeContactPubkeys.has(normalizedPubkey)) relayEvents.set(normalizedPubkey, byKind);
       if (kind === NostrKind.RelayList)
         markContactRelayListEventApplied(normalizedPubkey, nextEventState);
       return;
@@ -496,7 +498,7 @@ export function createContactSubscriptionsRuntime({
       contactRelayListsEqual(existingContact.relays, nextRelayEntries) &&
       contactMetadataEqual(existingContact.meta, persistedMeta)
     ) {
-      relayEvents.set(normalizedPubkey, byKind);
+      if (activeContactPubkeys.has(normalizedPubkey)) relayEvents.set(normalizedPubkey, byKind);
       if (kind === NostrKind.RelayList)
         markContactRelayListEventApplied(normalizedPubkey, nextEventState);
       return;
@@ -511,7 +513,7 @@ export function createContactSubscriptionsRuntime({
       return;
     }
 
-    relayEvents.set(normalizedPubkey, byKind);
+    if (activeContactPubkeys.has(normalizedPubkey)) relayEvents.set(normalizedPubkey, byKind);
     if (kind === NostrKind.RelayList)
       markContactRelayListEventApplied(normalizedPubkey, nextEventState);
     if (!contactRelayListsEqual(existingContact.relays, nextRelayEntries)) {
@@ -559,6 +561,13 @@ export function createContactSubscriptionsRuntime({
     pruneTrackedContactProfileEventState(pubkeys);
     pruneTrackedContactRelayListEventState(pubkeys);
     if (runGeneration !== generation) return;
+    activeContactPubkeys = new Set(pubkeys);
+    // The display cache and IndexedDB retain reusable profiles. Full signed
+    // snapshots are needed only for identities in the current subscription scope.
+    for (const key of profileSnapshots.keys())
+      if (!activeContactPubkeys.has(key)) profileSnapshots.delete(key);
+    for (const key of relayEvents.keys())
+      if (!activeContactPubkeys.has(key)) relayEvents.delete(key);
     const buckets = bucketRelayTargets(
       pubkeys.map((publicKey) => {
         const contact = contacts.find((contact) => contact.public_key === publicKey);
@@ -608,7 +617,6 @@ export function createContactSubscriptionsRuntime({
       visibleProfileKeys,
     );
     trackedContactPubkeys = tracked;
-    activeContactPubkeys = new Set(pubkeys);
     await subscriptions.reconcile(
       buckets.map(({ publicKeys, relayUrls: lookupRelayUrls }) => {
         const relayUrls = lookupRelayUrls.filter(
@@ -678,7 +686,6 @@ export function createContactSubscriptionsRuntime({
         };
       }),
     );
-    activeContactPubkeys = new Set(pubkeys);
     await subscriptions.waitForEose();
     if (runGeneration !== generation) return;
     // Relays/pool deduplicate kind-0 events. Reuse snapshots for new rosters and

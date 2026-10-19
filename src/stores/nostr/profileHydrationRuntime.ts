@@ -42,7 +42,7 @@ export function createProfileHydrationRuntime({
   isBlocked,
 }: Dependencies) {
   const tasks = new Map<string, Task>();
-  const active = new Map<string, () => void>();
+  const active = new Map<string, { stop: () => void; authors: Map<string, Task> }>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
   const normalizeUrls = (urls: string[]) => [
@@ -63,6 +63,16 @@ export function createProfileHydrationRuntime({
   }
   function request(targets: Target[], priorityKeys: string[] = []) {
     const priority = new Set([getOwnPublicKey(), ...priorityKeys]);
+    const wanted = new Set(
+      targets.filter((target) => !isBlocked(target.publicKey)).map((target) => target.publicKey),
+    );
+    // Requests describe the current contact/member/visible-author scope. Paging
+    // must not retain and retry every historical author encountered this session.
+    for (const key of tasks.keys()) if (!wanted.has(key)) tasks.delete(key);
+    for (const batch of [...active.values()]) {
+      for (const key of batch.authors.keys()) if (!wanted.has(key)) batch.authors.delete(key);
+      if (!batch.authors.size) batch.stop();
+    }
     for (const target of targets) {
       if (!/^[a-f0-9]{64}$/.test(target.publicKey) || isBlocked(target.publicKey)) continue;
       let task = tasks.get(target.publicKey);
@@ -133,11 +143,11 @@ export function createProfileHydrationRuntime({
       }
       schedule();
     };
-    active.set(url, finish);
+    const authors = new Map(batch.map(({ task }) => [task.publicKey, task]));
+    active.set(url, { stop: finish, authors });
     // Connection establishment has its own five-second bound. Leave time for a
     // connected relay's response instead of cancelling at that same deadline.
     deadline = setTimeout(() => finish(false), 10000);
-    const authors = new Map(batch.map(({ task }) => [task.publicKey, task]));
     try {
       subscription = subscribe(
         batch.flatMap(({ task }) =>
@@ -183,7 +193,7 @@ export function createProfileHydrationRuntime({
   function reset() {
     generation++;
     clearTimeout(timer);
-    for (const stop of [...active.values()]) stop();
+    for (const batch of [...active.values()]) batch.stop();
     active.clear();
     tasks.clear();
   }

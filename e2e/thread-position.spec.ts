@@ -97,6 +97,72 @@ async function anchor(page: Page) {
     return { id: row.id, offset: row.getBoundingClientRect().top - top };
   });
 }
+
+test('sticky dates follow the visible message without measuring the whole cached history', async ({
+  browser,
+}) => {
+  const user = await bootstrapUser(browser, TEST_ACCOUNTS['sticky-date']);
+  const peer = getPublicKey(generateSecretKey());
+  try {
+    await user.page.evaluate(async (peer) => {
+      const { chatDataService } = await import('/src/services/chatDataService.ts');
+      await chatDataService.createChat({
+        public_key: peer,
+        name: 'Dated history',
+        meta: { inbox_state: 'accepted' },
+      });
+      for (let index = 0; index < 300; index++)
+        await chatDataService.createMessage({
+          chat_public_key: peer,
+          author_public_key: peer,
+          message: `Dated row ${index} ${'variable height text '.repeat(index % 5)}`,
+          created_at: new Date(Date.UTC(2025, 0, 1) + index * 3600000).toISOString(),
+          meta: {},
+        });
+    }, peer);
+    await navigateInApp(user.page, `/chats/${peer}`);
+    await user.page.evaluate(async (peer) => {
+      const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
+      for (let page = 0; page < 4; page++) await useMessageStore().loadOlderMessages(peer);
+    }, peer);
+    const thread = user.page.getByTestId('chat-thread');
+    await expect(thread.locator('.message-row')).toHaveCount(300);
+    // Settle mounting/layout before measuring a single user scroll.
+    await user.page.waitForTimeout(500);
+    const result = await thread.evaluate(async (node) => {
+      const rows = [...node.querySelectorAll<HTMLElement>('.message-row')];
+      let reads = 0;
+      const measures = rows.map((row) => row.getBoundingClientRect.bind(row));
+      rows.forEach((row, index) => {
+        row.getBoundingClientRect = () => {
+          reads++;
+          return measures[index]();
+        };
+      });
+      try {
+        node.scrollTop -= 700;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const top = node.getBoundingClientRect().top + 38;
+        const index = measures.findIndex((measure) => measure().bottom > top);
+        return {
+          reads,
+          expected: rows[index]?.dataset.dayLabel,
+          actual: node.querySelector('.thread-day-sticky')?.textContent?.trim(),
+        };
+      } finally {
+        rows.forEach((row, index) => {
+          row.getBoundingClientRect = measures[index];
+        });
+      }
+    });
+    expect(result.expected).toBeTruthy();
+    expect(result.actual).toBe(result.expected);
+    expect(result.reads).toBeLessThan(100);
+  } finally {
+    await user.context.close();
+  }
+});
+
 async function expectAnchor(page: Page, saved: { id: string; offset: number }) {
   await expect
     .poll(() =>
