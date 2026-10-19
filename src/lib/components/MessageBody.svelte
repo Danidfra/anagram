@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getContext } from 'svelte';
+  import { BOT_KEYBOARD_LAYOUT, type BotKeyboardLayout } from '#src/lib/botKeyboardLayout.ts';
   import { goto } from '$app/navigation';
   import { publicGroupLinkTarget } from '#src/utils/publicGroupLink.ts';
   import type { Message } from '#src/types/chat.ts';
@@ -55,6 +57,10 @@
     onroom,
   }: Props = $props();
   const trusted = useTrustedMediaStore();
+  const keyboardLayout = getContext<BotKeyboardLayout | undefined>(BOT_KEYBOARD_LAYOUT);
+  const keyboardSections = $derived(
+    keyboardLayout?.messageId === message.id ? keyboardLayout.sections : null,
+  );
   const trust = toStore(() => trusted.trustedImageSenderPublicKeys);
   let actionError = $state('');
   let imageUrl = $state('');
@@ -234,7 +240,20 @@
           /^(image|video)\//.test(attachment.mimeType) && /^https:\/\//.test(attachment.url),
       )}
   >
-    {#if parts.length}<span
+    {#if keyboardSections}
+      {#each keyboardSections as section}
+        <div class="keyboard-section" data-testid="bot-keyboard-section">
+          <span class="message-text"
+            ><FormattedMessage
+              parts={formatMessage(section.text, profiles)}
+              onopen={open}
+              {oncontact}
+            /></span
+          >
+          {#if section.row.length}{@render keyboardLayout!.buttons(section.row)}{/if}
+        </div>
+      {/each}
+    {:else if parts.length}<span
         class="message-text"
         class:single-emoji={isSingleEmoji(message.text) && !message.meta.attachments?.length}
         ><FormattedMessage
@@ -254,7 +273,7 @@
         /></span
       >
     {/if}
-    {#if shouldCollapseMessageText(message.text)}<button
+    {#if !keyboardSections && shouldCollapseMessageText(message.text)}<button
         class="link"
         onclick={() => (expanded = !expanded)}
         >{$translate(expanded ? 'Show less' : 'Show more')}</button
@@ -335,6 +354,14 @@
   />{/if}
 
 <style>
+  .keyboard-section {
+    display: grid;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+  .keyboard-section + .keyboard-section {
+    margin-top: 1rem;
+  }
   .message-body {
     display: contents;
   }

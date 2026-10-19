@@ -13,6 +13,7 @@ Public groups use signed, unencrypted events on ordinary Nostr relays.
 ## Messages
 
 - NIP-C7 `kind:9` messages carry one `a` room address. Replies use `q`; attachments use NIP-92 `imeta`.
+- Posts and edits are limited to 4,000 characters, enforced by the composer, outgoing validation and incoming message validation. Counting uses JavaScript string length (UTF-16 code units), matching the textarea limit.
 - NIP-25 `kind:7` reactions and NIP-09 `kind:5` deletion requests reference message IDs with `e` tags. Anagram adds an `h` room hint. Deletions never target the room address and require the original author.
 - Edits delete the old version and publish a replacement with the same author, room and timestamp. Anagram's `e` tag marked `edit` links versions; an ordinary `e` preserves the original ID. This extends the NIP-17 edit flow to public messages.
 

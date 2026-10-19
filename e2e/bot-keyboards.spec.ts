@@ -16,6 +16,201 @@ import { PollBot } from '../bot-example/poll/bot.js';
 import { Network, State, sign } from '../bot-example/poll/vendor/runtime.js';
 import { relay } from '../bot-example/poll/test/relay.js';
 import { COMMAND_TAG, keyboardTag } from '../bot-example/poll/vendor/botKeyboardProtocol.ts';
+import { keyboardTag as sizedKeyboardTag } from '../src/stores/nostr/botKeyboardProtocol.ts';
+import { rumor, wrap } from '../bot-example/poll/vendor/runtime.js';
+
+test('copy buttons and three sizes work in desktop and mobile DMs without callbacks', async ({
+  browser,
+}) => {
+  const local = await relay();
+  const dir = mkdtempSync(join(tmpdir(), 'anagram-copy-buttons-'));
+  const store = new State(dir);
+  const bot = new PollBot({ store, net: new Network([local.url]), log() {} });
+  let user;
+  try {
+    await bot.net.publish(
+      sign(bot.key, 0, [], JSON.stringify({ name: 'Copy Bot', bot: true })),
+      [local.url],
+      bot.key,
+    );
+    user = await bootstrapUser(browser, TEST_ACCOUNTS.botOwner, { relayUrls: [local.url] });
+    const page = user.page;
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await openDirectChatFromIdentifier(page, nip19.npubEncode(bot.pubkey), 'Copy Bot');
+    await navigateToChat(page, bot.pubkey);
+    const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40);
+    const markup = {
+      inline_keyboard: [
+        [
+          { text: 'magnet', size: 'small' as const, copy_text: { text: magnet } },
+          { text: 'open', size: 'small' as const, url: 'https://example.org/' },
+        ],
+        [{ text: 'Medium', size: 'medium' as const, copy_text: { text: 'medium' } }],
+        [{ text: 'Large', size: 'large' as const, copy_text: { text: 'large' } }],
+      ],
+    };
+    const recipient = user.session.publicKey;
+    const card = rumor(
+      bot.key,
+      [['p', recipient], sizedKeyboardTag(markup)],
+      '**A movie**\nSeeders: **10**',
+    );
+    await bot.net.publish(wrap(card, bot.key, recipient), [local.url], bot.key);
+    const keyboard = page.getByTestId('bot-keyboard');
+    await expect(keyboard).toBeVisible();
+    const before = [...local.events.values()].filter((e) => e.kind === 1059).length;
+    const copy = keyboard.getByRole('button', { name: 'magnet', exact: true });
+    await copy.click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(magnet);
+    await expect(keyboard.getByRole('status')).toHaveText('Copied magnet');
+    const heights = await keyboard
+      .locator('button[data-size]')
+      .evaluateAll((buttons) => buttons.map((b) => b.getBoundingClientRect().height));
+    expect(heights[0]).toBeLessThan(heights[2]);
+    expect(heights[2]).toBeLessThan(heights[3]);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await copy.click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(magnet);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.reload();
+    await expect(copy).toBeVisible();
+    await copy.click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(magnet);
+    expect([...local.events.values()].filter((e) => e.kind === 1059).length).toBe(before);
+    await page.evaluate(() =>
+      Object.defineProperty(navigator.clipboard, 'writeText', {
+        value: () => Promise.reject(new Error('Clipboard unavailable')),
+        configurable: true,
+      }),
+    );
+    await copy.click();
+    await expect(keyboard.getByRole('alert')).toHaveText('Clipboard unavailable');
+    expect(user.browserErrors).toEqual([]);
+  } finally {
+    if (user) await disposeUsers(user);
+    await bot.close();
+    await local.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ten results keep their own copy/open buttons directly underneath in one DM', async ({
+  browser,
+}) => {
+  const local = await relay();
+  const dir = mkdtempSync(join(tmpdir(), 'anagram-result-rows-'));
+  const bot = new PollBot({ store: new State(dir), net: new Network([local.url]), log() {} });
+  let user;
+  try {
+    await bot.net.publish(
+      sign(bot.key, 0, [], JSON.stringify({ name: 'Results Bot', bot: true })),
+      [local.url],
+      bot.key,
+    );
+    user = await bootstrapUser(browser, TEST_ACCOUNTS.botOwner, { relayUrls: [local.url] });
+    const page = user.page;
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await openDirectChatFromIdentifier(page, nip19.npubEncode(bot.pubkey), 'Results Bot');
+    await navigateToChat(page, bot.pubkey);
+    const magnets = Array.from({ length: 10 }, (_, i) => {
+      const params = new URLSearchParams({
+        dn: `Movie ${i} Español & 日本語 ${'🧲'.repeat(100)}`,
+        xl: '1234567890',
+      });
+      for (const tracker of [
+        'udp://tracker.opentrackr.org:1337/announce',
+        'wss://wstracker.online',
+        'wss://tracker.openwebtorrent.com',
+        'wss://tracker.btorrent.xyz',
+      ])
+        params.append('tr', tracker);
+      return 'magnet:?xt=urn:btih:' + (i + 1).toString(16).padStart(40, '0') + '&' + params;
+    });
+    const markup = {
+      inline_keyboard: magnets.map((magnet) => [
+        { text: 'magnet', size: 'small' as const, copy_text: { text: magnet } },
+        { text: 'open', size: 'small' as const, url: magnet },
+        {
+          text: 'open in utorrent lite',
+          size: 'small' as const,
+          url: `https://www.utorrent.com/lite/#/player?m=${encodeURIComponent(Buffer.from(magnet).toString('base64'))}`,
+        },
+      ]),
+      row_after: magnets.map((_, i) => i + 2),
+    };
+    const text = [
+      '**Movie results**',
+      '*Top listings by seeders*',
+      ...magnets.map(
+        (_, i) =>
+          `**${i + 1}. Movie edition ${i + 1}**\nSeeders: **${100 - i}**\nSubtitles: Not listed`,
+      ),
+    ].join('\n\n');
+    const card = rumor(bot.key, [['p', user.session.publicKey], sizedKeyboardTag(markup)], text);
+    await bot.net.publish(wrap(card, bot.key, user.session.publicKey), [local.url], bot.key);
+    const keyboard = page.getByTestId('bot-keyboard');
+    const sections = keyboard.getByTestId('bot-keyboard-section');
+    await expect(keyboard).toHaveCount(1);
+    await expect(sections).toHaveCount(10);
+    async function verifyRows() {
+      await page.evaluate(() => {
+        const opened: string[] = [];
+        Object.assign(window, { __openedButtonUrls: opened });
+        window.open = ((url: string | URL | undefined) => {
+          opened.push(String(url));
+          return null;
+        }) as typeof window.open;
+      });
+      for (let i = 0; i < 10; i++) {
+        const section = sections.nth(i);
+        await expect(section).toContainText(`${i + 1}. Movie edition ${i + 1}`);
+        await expect(section.getByRole('button')).toHaveCount(3);
+        await section.getByRole('button', { name: 'magnet', exact: true }).click();
+        expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(magnets[i]);
+        await expect(section.getByRole('button', { name: 'open ↗', exact: true })).toHaveAttribute(
+          'title',
+          markup.inline_keyboard[i][1].url!,
+        );
+        await section.getByRole('button', { name: 'open ↗', exact: true }).click();
+        await section.getByRole('button', { name: 'open in utorrent lite ↗', exact: true }).click();
+        expect(
+          await page.evaluate(() =>
+            (window as unknown as { __openedButtonUrls: string[] }).__openedButtonUrls.slice(-2),
+          ),
+        ).toEqual([magnets[i], markup.inline_keyboard[i][2].url]);
+      }
+      const positions = await sections.evaluateAll((items) =>
+        items.map((item) => ({
+          text: item.querySelector('.message-text')!.getBoundingClientRect().bottom,
+          buttons: item.querySelector('.button-row')!.getBoundingClientRect().top,
+          bottom: item.getBoundingClientRect().bottom,
+          top: item.getBoundingClientRect().top,
+        })),
+      );
+      positions.forEach((position, i) => {
+        expect(position.buttons).toBeGreaterThanOrEqual(position.text);
+        if (i < 9) expect(position.bottom).toBeLessThan(positions[i + 1].top);
+      });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+    }
+    await verifyRows();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await verifyRows();
+    await page.reload();
+    await expect(sections).toHaveCount(10);
+    await verifyRows();
+    expect(user.browserErrors).toEqual([]);
+  } finally {
+    if (user) await disposeUsers(user);
+    await bot.close();
+    await local.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('poll keyboards work privately in DMs, private groups and public groups, including reload and mobile', async ({
   browser,

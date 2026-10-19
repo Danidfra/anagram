@@ -31,6 +31,7 @@
   import {
     roomPolicy,
     publicGroupShareLink,
+    MAX_PUBLIC_MESSAGE_LENGTH,
     type PublicRoom,
   } from '#src/stores/nostr/publicGroups.ts';
   import type { PublicGroupMessage } from '#src/services/publicGroupData.ts';
@@ -639,7 +640,7 @@
     label="Public message"
     placeholder="Write a public message"
     attachLabel="Attach public media"
-    maxlength={8000}
+    maxlength={MAX_PUBLIC_MESSAGE_LENGTH}
     onsend={() => void send()}
     onfile={(file) => uploader.choose(file)}
     pasteContext={uploadContext}

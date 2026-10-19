@@ -44,6 +44,7 @@ import {
   verifiedPublicEvent,
   ROOM_PAGE,
   ROOM_WINDOW,
+  MAX_PUBLIC_MESSAGE_LENGTH,
   type PublicRoom,
   type RoomAddress,
 } from './publicGroups.ts';
@@ -1572,8 +1573,8 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     validate();
     if (room.successor || roomPolicy(room, owner) === 'blocked')
       throw new Error('Posting is unavailable in this public group.');
-    if (!text.trim() || text.length > 8000)
-      throw new Error('Messages must contain 1–8,000 characters.');
+    if (!text.trim() || text.length > MAX_PUBLIC_MESSAGE_LENGTH)
+      throw new Error('Messages must contain 1–4,000 characters.');
     if (
       attachments.length > 4 ||
       attachments.some(
@@ -1684,8 +1685,8 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     const { room, owner, token, db, root } = await targetMessage(id);
     if (root.pubkey !== owner) throw new Error('Only the author can edit this message.');
     if (deps.containsSecret(text)) throw new Error('This message contains your session secret.');
-    if (!text.trim() || text.length > 8000)
-      throw new Error('Messages must contain 1–8,000 characters.');
+    if (!text.trim() || text.length > MAX_PUBLIC_MESSAGE_LENGTH)
+      throw new Error('Messages must contain 1–4,000 characters.');
     const current = publicMessageState(root, room, owner).nostrEvent!.event;
     const urls = await relayUrls(room.relays);
     const deletion = new ClientEvent(deps.client, {

@@ -120,6 +120,10 @@ test('create, share, edit and moderate public groups without rich hydration for 
 }, info) => {
   const owner = await login(page);
   const room = await create(page);
+  await expect(page.getByLabel('Public message', { exact: true })).toHaveAttribute(
+    'maxlength',
+    '4000',
+  );
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.getByRole('button', { name: 'Copy public group link' }).click();
   await expect

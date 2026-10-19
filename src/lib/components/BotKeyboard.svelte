@@ -1,10 +1,13 @@
 <script lang="ts">
-  import { onDestroy, type Snippet } from 'svelte';
+  import { onDestroy, setContext, type Snippet } from 'svelte';
+  import { BOT_KEYBOARD_LAYOUT, type BotKeyboardLayout } from '#src/lib/botKeyboardLayout.ts';
   import FormattedMessage from './FormattedMessage.svelte';
   import { formatMessage } from '#src/utils/messageFormatting.ts';
   import type { Message } from '#src/types/chat.ts';
   import {
     parseKeyboard,
+    keyboardSections,
+    safeMagnetUrl,
     validTarget,
     targetKey,
     type BotTarget,
@@ -12,7 +15,7 @@
   } from '#src/stores/nostr/botKeyboardProtocol.ts';
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import type { BotInteraction } from '#src/services/botInteractionData.ts';
-  import { openExternalHttpUrl } from '#src/utils/externalLinks.ts';
+  import { openExternalHttpUrl, openExternalMagnetUrl } from '#src/utils/externalLinks.ts';
   import { readMessageEditPreviousEventIds } from '#src/utils/messageEdits.ts';
 
   let { message, children }: { message: Message; children: Snippet } = $props();
@@ -22,6 +25,7 @@
   let saved = $state<BotInteraction | undefined>();
   let sending = $state(false),
     error = $state('');
+  let copied = $state('');
   let generation = 0,
     loadedKey = '';
   const keyboard = $derived(parseKeyboard(message.meta.inline_keyboard));
@@ -61,14 +65,41 @@
   const personal = $derived(saved?.answer ?? saved?.previous);
   const personalParts = $derived(formatMessage(personal?.text ?? ''));
   const visibleKeyboard = $derived(personal?.keyboard ?? keyboard);
+  const sections = $derived(
+    keyboard &&
+      validTarget(target) &&
+      !message.meta.deleted &&
+      (personal ||
+        (target.type !== 'public' &&
+          !message.meta.attachments?.length &&
+          !message.meta.call_history &&
+          !message.meta.group_epoch_notice))
+      ? keyboardSections(visibleKeyboard, personal?.text ?? message.text)
+      : null,
+  );
+  setContext<BotKeyboardLayout>(BOT_KEYBOARD_LAYOUT, {
+    get messageId() {
+      return message.id;
+    },
+    get sections() {
+      return personal ? null : sections;
+    },
+    buttons,
+  });
   async function click(button: InlineButton, retry = false) {
     if (sending) return;
     const current = target;
     sending = true;
     error = '';
+    copied = '';
     try {
-      if (button.url) await openExternalHttpUrl(button.url);
-      else {
+      if (button.copy_text) {
+        await navigator.clipboard.writeText(button.copy_text.text);
+        copied = `Copied ${button.text}`;
+      } else if (button.url) {
+        if (safeMagnetUrl(button.url)) await openExternalMagnetUrl(button.url);
+        else await openExternalHttpUrl(button.url);
+      } else {
         await runtime.click(
           current,
           button.callback_data!,
@@ -84,27 +115,42 @@
   }
 </script>
 
+{#snippet buttons(row: InlineButton[])}
+  <div class="button-row">
+    {#each row as button}
+      <button
+        type="button"
+        data-size={button.size ?? 'medium'}
+        disabled={sending}
+        title={button.url ?? undefined}
+        onclick={() => click(button)}>{button.text}{button.url ? ' ↗' : ''}</button
+      >
+    {/each}
+  </div>
+{/snippet}
+
 {#if keyboard && validTarget(target) && !message.meta.deleted}
   <div class="bot-keyboard" data-testid="bot-keyboard">
     {#if personal}
       <div class="personal" data-testid="bot-personal-response">
-        <p><FormattedMessage parts={personalParts} /></p>
+        {#if sections}
+          {#each sections as section}
+            <div class="keyboard-section" data-testid="bot-keyboard-section">
+              <p><FormattedMessage parts={formatMessage(section.text)} /></p>
+              {#if section.row.length}{@render buttons(section.row)}{/if}
+            </div>
+          {/each}
+        {:else}
+          <p><FormattedMessage parts={personalParts} /></p>
+        {/if}
       </div>
     {:else}
       {@render children()}
     {/if}
-    {#each visibleKeyboard?.inline_keyboard ?? [] as row}
-      <div class="button-row">
-        {#each row as button}
-          <button
-            type="button"
-            disabled={sending}
-            title={button.url ?? undefined}
-            onclick={() => click(button)}>{button.text}{button.url ? ' ↗' : ''}</button
-          >
-        {/each}
-      </div>
-    {/each}
+    {#if !sections}
+      {#each visibleKeyboard?.inline_keyboard ?? [] as row}{@render buttons(row)}{/each}
+    {/if}
+    {#if copied}<span class="copy-status" role="status">{copied}</span>{/if}
     {#if saved && !saved.answer}
       <div class="pending" role="status">
         {sending ? 'Sending…' : 'Waiting for bot response.'}
@@ -149,6 +195,26 @@
     opacity: 0.6;
     cursor: wait;
   }
+  .button-row button[data-size='small'] {
+    flex: 0 1 auto;
+    min-height: 28px;
+    padding: 0.2rem 0.45rem;
+    font-size: 0.8rem;
+  }
+  .button-row button[data-size='large'] {
+    min-height: 52px;
+    padding: 0.7rem 0.9rem;
+    font-size: 1.1rem;
+  }
+  .copy-status {
+    font-size: 0.8rem;
+    opacity: 0.85;
+  }
+  @media (pointer: coarse) {
+    .button-row button[data-size='small'] {
+      min-height: 44px;
+    }
+  }
   button:focus-visible {
     outline: 2px solid var(--primary, #5caef5);
     outline-offset: 2px;
@@ -157,6 +223,9 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     margin: 0.25rem 0 0.5rem;
+  }
+  .keyboard-section + .keyboard-section {
+    margin-top: 1rem;
   }
   .pending {
     font-size: 0.8rem;
