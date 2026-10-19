@@ -1,4 +1,4 @@
-import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
+import { notificationConversationId } from '#src/utils/notificationConversation.ts';
 
 export const FOREGROUND_MESSAGE_ACTIVITY_EVENT = 'anagram:foreground-message-activity';
 
@@ -33,7 +33,7 @@ export function emitForegroundMessageActivity(input: {
     return;
   }
 
-  const chatPubkey = inputSanitizerService.normalizeHexKey(input.chatPubkey);
+  const chatPubkey = notificationConversationId(input.chatPubkey);
   if (!chatPubkey) {
     return;
   }
@@ -67,7 +67,7 @@ export function readForegroundMessageActivityDetail(
     return null;
   }
 
-  const chatPubkey = inputSanitizerService.normalizeHexKey(
+  const chatPubkey = notificationConversationId(
     'chatPubkey' in value ? String(value.chatPubkey) : ''
   );
   if (!chatPubkey) {

@@ -1,14 +1,19 @@
 import { expect, test } from '@playwright/test';
 
-for (const nativeAck of [false, true]) {
-  test(`Opus worker and AudioWorklet play decoded audio through loss, jitter and a relay stall (native acknowledgements: ${nativeAck})`, async ({
+for (const { nativeAck, startupDelay } of [
+  { nativeAck: false, startupDelay: 0 },
+  { nativeAck: true, startupDelay: 0 },
+  { nativeAck: false, startupDelay: 1800 },
+]) {
+  test(`Opus worker and AudioWorklet play decoded audio through loss, jitter and a relay stall (native acknowledgements: ${nativeAck}, startup delay: ${startupDelay} ms)`, async ({
     page,
   }, info) => {
     await page.route('**/__packet-audio', (route) =>
       route.fulfill({ contentType: 'text/html', body: '<button>Start</button>' }),
     );
     await page.goto('/__packet-audio');
-    await page.evaluate(async (nativeAck) => {
+    const options = { nativeAck, startupDelay };
+    await page.evaluate(async ({ nativeAck, startupDelay }) => {
       const { prepareCallPacketAudio, recordCallMedia, createCallMediaReceiver } =
         await import('/src/services/callMediaService.ts');
       const { OPUS_CALL_MIME } = await import('/src/services/callAudioPackets.ts');
@@ -44,17 +49,38 @@ for (const nativeAck of [false, true]) {
           .connect(silent)
           .connect(monitorContext.destination);
         const spectrum = new Float32Array(analyser.frequencyBinCount);
+        const waitForTone = async (frequency: number, timeout = 2000) => {
+          const other = frequency === 440 ? 880 : 440;
+          const bin = (hz: number) =>
+            Math.round((hz * analyser.fftSize) / monitorContext.sampleRate);
+          const start = performance.now();
+          while (performance.now() - start < timeout) {
+            analyser.getFloatFrequencyData(spectrum);
+            if (
+              spectrum[bin(frequency)] > -45 &&
+              spectrum[bin(frequency)] > spectrum[bin(other)] + 8
+            )
+              return performance.now() - start;
+            await delay(5);
+          }
+          throw new Error(
+            `No decoded ${frequency} Hz audio; errors=${errors} time=${audio.currentTime} stats=${JSON.stringify(callPacketAudioDiagnostics())} max=${Math.max(...spectrum)}`,
+          );
+        };
         let count = 0,
           stall = false;
         const timers = new Set<ReturnType<typeof setTimeout>>();
         let inFlight = 0,
           maxInFlight = 0;
-        const recordingAt = performance.now();
+        const captureStarted = performance.now();
         const stop = recordCallMedia(
           destination.stream,
           OPUS_CALL_MIME,
           async (frame) => {
             const n = count++;
+            // Exercise a cold device/stream graph without sleeping in the test's
+            // readiness check or changing the actual codec/receiver.
+            if (performance.now() - captureStarted < startupDelay) return;
             if (n % 19 === 0) return; // deterministic packet loss
             const ms = stall ? 650 : [0, 10, 30, 5][n % 4];
             const timer = setTimeout(() => {
@@ -73,7 +99,12 @@ for (const nativeAck of [false, true]) {
         const timings: number[] = [];
         try {
           await audio.play();
-          await delay(1000);
+          // A fixed sleep can expire before CI's audio device/stream graphs
+          // start rendering. Establish decoded baseline audio before measuring
+          // tone-change latency; startup still has its own finite deadline.
+          const startupMs = await waitForTone(440, 5000);
+          const readyPackets = count;
+          const recordingAt = performance.now();
           for (let i = 0; i < 6; i++) {
             if (i === 2) {
               stall = true;
@@ -91,36 +122,17 @@ for (const nativeAck of [false, true]) {
               await delay(500);
             }
             const frequency = i % 2 ? 440 : 880;
-            const other = i % 2 ? 880 : 440;
-            const bin = (hz: number) =>
-              Math.round((hz * analyser.fftSize) / monitorContext.sampleRate);
-            const start = performance.now();
             tone.frequency.setValueAtTime(frequency, context.currentTime);
-            let detected = false;
-            while (performance.now() - start < 2000) {
-              analyser.getFloatFrequencyData(spectrum);
-              if (
-                spectrum[bin(frequency)] > -45 &&
-                spectrum[bin(frequency)] > spectrum[bin(other)] + 8
-              ) {
-                detected = true;
-                break;
-              }
-              await delay(5);
-            }
-            if (!detected)
-              throw new Error(
-                `No decoded ${frequency} Hz audio; errors=${errors} count=${count} time=${audio.currentTime} stats=${JSON.stringify(callPacketAudioDiagnostics())} max=${Math.max(...spectrum)}`,
-              );
-            timings.push(performance.now() - start);
+            timings.push(await waitForTone(frequency));
             await delay(150);
           }
           return {
             timings,
+            startupMs,
             errors,
             packets: count,
             maxInFlight,
-            rate: (count * 1000) / (performance.now() - recordingAt),
+            rate: ((count - readyPackets) * 1000) / (performance.now() - recordingAt),
             stats: callPacketAudioDiagnostics(),
           };
         } finally {
@@ -138,7 +150,7 @@ for (const nativeAck of [false, true]) {
       document.querySelector('button')!.onclick = () => {
         (window as any).__packetResult = run();
       };
-    }, nativeAck);
+    }, options);
     await page.getByRole('button').click();
     const result = await page.evaluate(() => (window as any).__packetResult);
     console.log('[packet audio]', JSON.stringify(result));
@@ -148,6 +160,8 @@ for (const nativeAck of [false, true]) {
     });
     expect(result.errors).toEqual([]);
     expect(result.packets).toBeGreaterThan(100);
+    expect(result.timings).toHaveLength(6);
+    if (startupDelay) expect(result.startupMs).toBeGreaterThanOrEqual(startupDelay);
     expect(Math.max(...result.timings)).toBeLessThan(400);
     if (nativeAck) {
       expect(result.maxInFlight).toBe(2);

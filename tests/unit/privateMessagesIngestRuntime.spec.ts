@@ -998,7 +998,7 @@ describe('privateMessagesIngestRuntime', () => {
     );
   });
 
-  it('uses the generic group fallback when only the generated group name is available', async () => {
+  it.each([undefined, false, true])('preserves group unread counts and only notifies on opt-in (%s)', async (enabled) => {
     const deps = createDeps();
     const runtime = createPrivateMessagesIngestRuntime(deps);
     const groupPublicKey = 'c'.repeat(64);
@@ -1025,6 +1025,7 @@ describe('privateMessagesIngestRuntime', () => {
       last_message_at: '2023-11-14T22:00:00.000Z',
       unread_count: 0,
       meta: {
+        notifications_enabled: enabled,
         inbox_state: 'accepted',
         accepted_at: '2023-11-14T22:00:00.000Z',
       },
@@ -1093,6 +1094,10 @@ describe('privateMessagesIngestRuntime', () => {
         }),
       }),
     );
+    if (enabled !== true) {
+      expect(deps.showIncomingMessageBrowserNotification).not.toHaveBeenCalled();
+      return;
+    }
     expect(deps.showIncomingMessageBrowserNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         chatPubkey: groupPublicKey,

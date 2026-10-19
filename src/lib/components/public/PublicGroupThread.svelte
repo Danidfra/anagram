@@ -267,12 +267,17 @@
     }
   }
   $: room = $state.room;
+  $: visibleAddress = room?.address ?? '';
+  $: runtime.setVisible(visibleAddress);
   $: own = nostr.getLoggedInPublicKeyHex() || '';
-  $: mentionKeys = room
-    ? [...new Set([room.owner, ...room.trusted])].filter(
-        (key) => roomPolicy(room!, key) === 'trusted',
-      )
-    : [];
+  $: mentionKeySignature = JSON.stringify(
+    room
+      ? [...new Set([room.owner, ...room.trusted])].filter(
+          (key) => roomPolicy(room!, key) === 'trusted',
+        )
+      : [],
+  );
+  $: mentionKeys = JSON.parse(mentionKeySignature) as string[];
   $: mentionProfiles = observeMentionProfiles(mentionKeys);
   function observeMentionProfiles(keys: string[]) {
     return readable(buildMentionProfiles(keys.map((publicKey) => ({ publicKey }))), (set) => {
@@ -364,17 +369,21 @@
   onMount(() => {
     void runtime.open(link);
     const reconnect = () => {
+      runtime.setVisible(visibleAddress);
       if (document.visibilityState === 'visible' && $state.stale && !$state.refreshing)
         void runtime.open(link);
     };
     window.addEventListener('online', reconnect);
+    window.addEventListener('focus', reconnect);
     document.addEventListener('visibilitychange', reconnect);
     return () => {
       window.removeEventListener('online', reconnect);
+      window.removeEventListener('focus', reconnect);
       document.removeEventListener('visibilitychange', reconnect);
       uploader.cancel();
       mediaNotice = false;
       runtime.stopView();
+      runtime.setVisible('');
     };
   });
 </script>

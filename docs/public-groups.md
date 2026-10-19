@@ -1,5 +1,7 @@
 # Public groups
 
+Joined rooms have unread-count badges and a three-dot menu for profile refresh, thread refresh, mute, block, mark-as-read, deletion and notification opt-in. A lightweight activity subscription watches rooms outside the displayed thread; the active thread uses its existing subscription. Recent activity is deduplicated in account-specific IndexedDB, separately from history coverage, with a bounded 50-event relay catch-up request. Opening a focused room marks its received messages read. This does not scan the archive or treat a pinned message as history coverage. Android can notify for opted-in groups through its existing background listener; other clients require the app to be running.
+
 Public groups use signed, unencrypted events on ordinary Nostr relays.
 
 ## Room

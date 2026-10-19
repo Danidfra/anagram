@@ -37,6 +37,7 @@
     urls: string[],
     _locale: string,
     publicGroup: boolean,
+    opened: boolean,
   ) {
     if (!message.nostrEvent?.relay_statuses?.length)
       return { visible: false, outbound: false, title: '', segments: [], sections: [] };
@@ -51,15 +52,18 @@
       outbound: state.showOutboundStatus,
       title: state.statusDialogTitle,
       segments: state.statusSegments,
-      sections:
-        publicGroup && state.showOutboundStatus
+      sections: !opened
+        ? []
+        : publicGroup && state.showOutboundStatus
           ? state.statusSections
               .filter((s) => s.key === 'recipient')
               .map((s) => ({ ...s, title: name || 'Group relays' }))
           : state.statusSections,
     };
   }
-  let view = $derived(viewFor(message, contactName, contactRelayUrls, $locale, publicGroup));
+  let view = $derived(
+    viewFor(message, contactName, contactRelayUrls, $locale, publicGroup, opened),
+  );
   let sections = $derived(
     view.outbound ? view.sections.filter((section) => section.key === tab) : view.sections,
   );

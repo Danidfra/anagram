@@ -2523,6 +2523,10 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     signer: () => getOrCreateSignerRuntime(),
     relays: async () => getAppRelayUrls(),
     containsSecret: containsSessionSecret,
+    notify: (row, event) => showIncomingMessageBrowserNotification({
+      chatPubkey: row.address, title: row.room.name, messageText: event.content,
+      iconUrl: row.room.picture,
+    }),
   });
 
   return {

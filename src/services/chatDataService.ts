@@ -568,7 +568,7 @@ class ChatDataService {
     await waitForTransaction(transaction);
   }
 
-  async updateChatMeta(chatPublicKey: string, meta: Record<string, unknown>): Promise<void> {
+  async updateChatMeta(chatPublicKey: string, meta: Record<string, unknown>, patch = false): Promise<void> {
     const normalizedPublicKey = normalizePublicKeyValue(chatPublicKey);
     if (!normalizedPublicKey) {
       return;
@@ -586,13 +586,14 @@ class ChatDataService {
       return;
     }
 
+    const nextMeta = patch ? { ...existingRecord.meta, ...normalizeMeta(meta) } : normalizeMeta(meta);
     store.put({
       ...existingRecord,
       type: normalizeChatType(existingRecord.type),
       meta:
         existingRecord.type === 'group'
-          ? mergeGroupEpochMetadata(existingRecord.meta, normalizeMeta(meta))
-          : normalizeMeta(meta),
+          ? mergeGroupEpochMetadata(existingRecord.meta, nextMeta)
+          : nextMeta,
     });
     await waitForTransaction(transaction);
   }

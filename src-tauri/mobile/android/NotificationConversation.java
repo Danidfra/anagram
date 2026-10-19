@@ -26,6 +26,9 @@ final class NotificationConversation {
     final String avatarText;
     final boolean policyEligible;
     final boolean notificationsEnabled;
+    final Set<String> blockedAuthors = new HashSet<>();
+    long publicSince = 0L;
+    boolean isPublicGroup() { return chatPubkey.startsWith("34550:"); }
 
     NotificationConversation(
         String chatPubkey,
@@ -59,6 +62,8 @@ final class NotificationConversation {
         result.put("avatarText", avatarText);
         result.put("policyEligible", policyEligible);
         result.put("notificationsEnabled", notificationsEnabled);
+        result.put("blockedAuthors", new JSONArray(blockedAuthors));
+        result.put("publicSince", publicSince);
         return result;
     }
 
@@ -67,13 +72,13 @@ final class NotificationConversation {
         if (value == null) {
             return null;
         }
-        String chatPubkey = normalizePubkey(value.optString("chatPubkey", ""));
+        String chatPubkey = normalizeChatId(value.optString("chatPubkey", ""));
         if (chatPubkey == null) {
             return null;
         }
         NotificationConversation conversation = new NotificationConversation(
             chatPubkey,
-            normalizePubkey(value.optString("recipientPubkey", "")),
+            chatPubkey.startsWith("34550:") ? null : normalizePubkey(value.optString("recipientPubkey", "")),
             value.optString("name", ""),
             value.optString("avatarUrl", ""),
             value.optString("avatarText", ""),
@@ -90,12 +95,24 @@ final class NotificationConversation {
             } catch (IllegalArgumentException ignored) { }
         }
         conversation.epochNumber = value.optLong("epochNumber", -1L);
+        conversation.publicSince = Math.max(0L, value.optLong("publicSince", 0L));
+        JSONArray blocked = value.optJSONArray("blockedAuthors");
+        if (blocked != null) for (int i = 0; i < Math.min(blocked.length(), 1024); i++) {
+            String key = normalizePubkey(blocked.optString(i, ""));
+            if (key != null) conversation.blockedAuthors.add(key);
+        }
         JSONArray epochs = value.optJSONArray("knownEpochPubkeys");
         if (epochs != null) for (int i = 0; i < epochs.length(); i++) {
             String pubkey = normalizePubkey(epochs.optString(i, ""));
             if (pubkey != null) conversation.knownEpochPubkeys.add(pubkey);
         }
         return conversation;
+    }
+
+    @Nullable
+    static String normalizeChatId(@Nullable String value) {
+        if (value != null && value.matches("^34550:[0-9a-f]{64}:[a-zA-Z0-9_-]{1,128}$")) return value;
+        return normalizePubkey(value);
     }
 
     @Nullable

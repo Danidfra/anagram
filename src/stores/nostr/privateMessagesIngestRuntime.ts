@@ -1737,6 +1737,7 @@ export function createPrivateMessagesIngestRuntime({
       if (
         !isSelfSentMessage &&
         !isBlockedChat &&
+        (chat.type !== 'group' || chat.meta?.notifications_enabled === true) &&
         isAfterSeenBoundary &&
         (await shouldNotifyForAcceptedChatOnly(chat.public_key, chat.meta ?? {}))
       ) {

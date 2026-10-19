@@ -557,7 +557,8 @@ it('keeps one live subscription on cached reentry and batches burst hydration wi
     const live = [...listeners].filter((l) => l.filters.some((f) => f.kinds?.includes(9)));
     expect(live).toHaveLength(1);
     expect(
-      subscriptions.filter((filters) => filters.some((f) => f.kinds?.includes(9))),
+      // The off-thread inbox watcher is replaced by the thread's single live subscription.
+      subscriptions.filter((filters) => filters.some((f) => f.kinds?.includes(34550)) && filters.some((f) => f.kinds?.includes(9))),
     ).toHaveLength(1);
     expect(list).not.toHaveBeenCalled();
     sidebarUpdates.mockClear();

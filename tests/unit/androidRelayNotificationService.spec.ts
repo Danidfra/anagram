@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const moduleMocks = vi.hoisted(() => ({
   chats: [] as unknown[],
+  publicRooms: [] as unknown[],
   contacts: [] as unknown[],
   privateKey: `${'0'.repeat(63)}1`,
   appRelayEntries: [] as Array<{ url: string; read: boolean; write: boolean }>,
@@ -34,6 +35,7 @@ const moduleMocks = vi.hoisted(() => ({
   watchedPubkeys: [] as string[],
   pendingEvents: [] as unknown[],
   ingestAndroidRelayNotificationEvent: vi.fn(async () => true),
+  ingestPublicActivity: vi.fn(async () => true),
   plugin: {
     getCallNotificationState: vi.fn(async () => ({ closed: [] })),
     requestPermissions: vi.fn(async () => ({ receive: 'granted' })),
@@ -106,12 +108,20 @@ vi.mock('#src/services/contactsService.ts', () => ({
   },
 }));
 
+vi.mock('#src/services/publicGroupData.ts', () => ({
+  PublicGroupData: class {
+    async list() { return moduleMocks.publicRooms; }
+    async close() {}
+  },
+}));
+
 vi.mock('#src/stores/nostrStore.svelte.ts', () => ({
   useNostrStore: () => ({
     getLoggedInPublicKeyHex: () => new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey,
     getPrivateKeyHex: () => moduleMocks.privateKey,
     getRelayConnectionState: () => 'connected',
     ingestAndroidRelayNotificationEvent: moduleMocks.ingestAndroidRelayNotificationEvent,
+    publicGroups: { ingestActivity: moduleMocks.ingestPublicActivity },
     listPrivateMessageRecipientPubkeys: async () => moduleMocks.watchedPubkeys,
   }),
 }));
@@ -143,6 +153,7 @@ describe('androidRelayNotificationService', () => {
     moduleMocks.plugin.requestPermissions.mockResolvedValue({ receive: 'granted' });
     __androidRelayNotificationServiceTestUtils.resetRefreshState();
     moduleMocks.chats.length = 0;
+    moduleMocks.publicRooms.length = 0;
     moduleMocks.contacts.length = 0;
     moduleMocks.watchedPubkeys.length = 0;
     moduleMocks.pendingEvents.length = 0;
@@ -427,6 +438,37 @@ describe('androidRelayNotificationService', () => {
 
   it('hides per-conversation details by default', () => {
     expect(readAndroidRelayConversationDetailsPreference()).toBe(false);
+  });
+
+  it('only adds opted-in public rooms to the background watch plan, without recipient keys', async () => {
+    const room = { name: 'Public room', picture: '', blocked: ['cc'.repeat(32)], relays: ['wss://public.example/'] };
+    const address = `34550:${'ab'.repeat(32)}:public`;
+    moduleMocks.publicRooms.push(
+      { address, room, joined: true, activitySince: 123, notificationsSince: 150, notificationsEnabled: true },
+      { address: `${address}-off`, room, joined: true },
+      { address: `${address}-muted`, room, joined: true, notificationsEnabled: true, muted: true },
+      { address: `${address}-blocked`, room, joined: true, notificationsEnabled: true, blocked: true },
+    );
+    await requestAndroidRelayNotificationsAfterLogin();
+    const config = moduleMocks.plugin.configure.mock.calls[0][0];
+    expect(config.conversations).toEqual([expect.objectContaining({ chatPubkey: address,
+      notificationsEnabled: true, blockedAuthors: room.blocked, publicSince: 150 })]);
+    expect(config.relays).toContain('wss://public.example/');
+    expect(config.recipientKeys).toHaveLength(1);
+    expect(config.recipientKeys[0].recipientPubkey).not.toBe(address);
+  });
+
+  it('restores public messages through the account-bound public inbox, not private decryption', async () => {
+    const address = `34550:${'ab'.repeat(32)}:public`;
+    const event = { id: 'aa'.repeat(32), pubkey: 'bb'.repeat(32), created_at: 2000000,
+      kind: 9, tags: [['a', address]], content: 'Public message', sig: 'cc'.repeat(64) };
+    moduleMocks.pendingEvents.push({ id: event.id, recipientPubkey: address,
+      relayUrl: 'wss://relay.example/', receivedAtMillis: Date.now(), event });
+    await ingestPendingAndroidRelayNotificationEvents();
+    expect(moduleMocks.ingestPublicActivity).toHaveBeenCalledWith(event,
+      new NostrPrivateKeySigner(moduleMocks.privateKey).pubkey);
+    expect(moduleMocks.ingestAndroidRelayNotificationEvent).not.toHaveBeenCalled();
+    expect(moduleMocks.pendingEvents).toHaveLength(0);
   });
 
   it('ingests and acknowledges encrypted events from the native Android inbox', async () => {

@@ -3,6 +3,8 @@ import { emitForegroundMessageActivity } from '#src/services/foregroundMessageAc
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import type { ContactRecord } from '#src/types/contact.ts';
 import { areBrowserNotificationsEnabled } from '#src/utils/browserNotificationPreference.ts';
+import { notificationConversationPath } from '#src/utils/notificationConversation.ts';
+import { isAndroidNative } from '#src/lib/platform/androidNotifications.ts';
 
 
 interface InboundTraceOptions {
@@ -120,6 +122,8 @@ export function createInboundPresentationRuntime(state: InboundPresentationRunti
     if (typeof window === 'undefined') {
       return null;
     }
+    if (chatPubkey.startsWith('34550:'))
+      return `${window.location.origin}${notificationConversationPath(chatPubkey)}`;
 
     const normalizedBase = (() => {
       const base = process.env.VUE_ROUTER_BASE?.trim() || '/';
@@ -232,6 +236,8 @@ export function createInboundPresentationRuntime(state: InboundPresentationRunti
     if (emitForegroundIncomingMessageActivity(options)) {
       return;
     }
+    // Android's persistent listener owns background public-group notifications.
+    if (options.chatPubkey.startsWith('34550:') && isAndroidNative()) return;
 
     if (shouldSuppressIncomingMessageBrowserNotification(options.chatPubkey)) {
       return;

@@ -1309,6 +1309,16 @@ export const useChatStore = createStore('chatStore', () => {
     }
   }
 
+  async function setGroupNotifications(chatId: string, enabled: boolean): Promise<void> {
+    const chat = chats.find((item) => item.id === chatId);
+    if (!chat || chat.type !== 'group') return;
+    const account = getLoggedInPublicKey();
+    await chatDataService.updateChatMeta(chatId, { notifications_enabled: enabled }, true);
+    if (account !== getLoggedInPublicKey()) return;
+    chats = chats.map((item) => item.id === chatId
+      ? { ...item, meta: { ...item.meta, notifications_enabled: enabled } } : item);
+  }
+
   async function blockChat(chatId: string): Promise<void> {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     if (!normalizedChatId) {
@@ -1946,6 +1956,7 @@ export const useChatStore = createStore('chatStore', () => {
     acceptChat,
     markAsRead,
     muteChat,
+    setGroupNotifications,
     blockChat,
     deleteChat,
     init,

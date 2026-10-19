@@ -102,6 +102,26 @@
   function focusMenu(node: HTMLElement) {
     if (menuTrigger) node.querySelector<HTMLButtonElement>('button')?.focus();
   }
+  function dismissMenu(_node: HTMLElement) {
+    const pointer = (event: PointerEvent) => {
+      if (!(
+        event.target instanceof Element &&
+        event.target.closest('[data-message-link-menu], [data-media-options]')
+      ))
+        closeLinkMenu();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeLinkMenu(true);
+    };
+    window.addEventListener('pointerdown', pointer);
+    window.addEventListener('keydown', key);
+    return {
+      destroy() {
+        window.removeEventListener('pointerdown', pointer);
+        window.removeEventListener('keydown', key);
+      },
+    };
+  }
   async function copyLink() {
     const href = linkMenu?.href;
     closeLinkMenu(true);
@@ -154,21 +174,10 @@
   );
 </script>
 
-<svelte:window
-  onpointerdown={(event) => {
-    if (!(
-      event.target instanceof Element &&
-      event.target.closest('[data-message-link-menu], [data-media-options]')
-    ))
-      closeLinkMenu();
-  }}
-  onkeydown={(event) => {
-    if (event.key === 'Escape' && linkMenu) closeLinkMenu(true);
-  }}
-/>
 {#if linkMenu && !message.meta.deleted}<div
     use:portal
     use:focusMenu
+    use:dismissMenu
     class="link-menu"
     data-message-link-menu
     role="menu"

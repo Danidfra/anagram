@@ -206,6 +206,26 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   await expect(
     b.getByTestId('message-bubble').filter({ hasText: 'Hello encrypted group' }),
   ).toBeVisible();
+  // Accepted private groups retain numeric badges independently of notification opt-in.
+  await b.getByTestId('chat-item').filter({ hasText: 'My Self' }).click();
+  const groupRow = b.getByTestId('chat-item').filter({ hasText: 'Private test group' });
+  await a.getByTestId('message-composer-input').fill('Unread private group message');
+  await a.getByTestId('message-send-button').click();
+  await expect(groupRow.getByLabel('1 unread messages')).toBeVisible();
+  await b.evaluate(() => {
+    Object.defineProperty(window, 'Notification', { configurable: true, value: class {
+      static permission = 'granted';
+      static async requestPermission() { return 'granted'; }
+    } });
+  });
+  const groupMenu = groupRow.locator('..').getByTestId('chat-item-actions-button');
+  await groupRow.hover();
+  await groupMenu.click();
+  await b.getByRole('menuitem', { name: 'Enable notifications', exact: true }).click();
+  await groupMenu.click();
+  await b.getByRole('menuitem', { name: 'Disable notifications', exact: true }).click();
+  await groupRow.click();
+  await expect(groupRow.locator('.badge')).toHaveCount(0);
   // A missing personal ticket must not lock out an owner who is already a member.
   const ownerEpoch = (await groupTicketState(a, true)).epoch;
   await a.getByTestId('message-composer-input').fill('Owner issued personal ticket');
@@ -986,8 +1006,13 @@ test('chat controls retain desktop and mobile interactions', async ({ page }, te
   await login(page);
   page.on('dialog', (dialog) => dialog.accept());
   await contact(page, getPublicKey(generateSecretKey()), 'Parity fixture');
+  // The dialog closes before open(chat) finishes navigating/loading the thread.
+  // Wait for the composer controls to leave their busy state before typing.
+  await expect(page).toHaveURL(/\/chats\/[a-f0-9]{64}$/);
+  await expect(page.getByTestId('message-composer-menu')).toBeEnabled();
   const composer = page.getByTestId('message-composer-input');
-  await composer.fill(':thumb');
+  await composer.pressSequentially(':thumb');
+  await expect(composer).toHaveValue(':thumb');
   await expect(page.getByRole('listbox', { name: 'Emoji suggestions' })).toBeVisible();
   await composer.press('ArrowDown');
   await composer.press('Enter');
@@ -1005,7 +1030,7 @@ test('chat controls retain desktop and mobile interactions', async ({ page }, te
   await page.getByRole('button', { name: 'Next search result' }).click();
   await expect(message).toHaveClass(/highlighted/);
   await page.getByRole('button', { name: 'Close search' }).click();
-  await message.locator('.message-content').click({ position: { x: 5, y: 5 } });
+  await message.locator('.message-content').click();
   await page.getByRole('menuitem', { name: 'Nostr info', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('Event ID');
   await page.getByRole('button', { name: 'Close dialog' }).click();
@@ -1021,7 +1046,7 @@ test('chat controls retain desktop and mobile interactions', async ({ page }, te
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(composer).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await message.locator('.message-content').click({ position: { x: 5, y: 5 } });
+  await message.locator('.message-content').click();
   await expect(page.getByRole('menuitem', { name: 'Reply', exact: true })).toBeVisible();
   await page.getByRole('menuitem', { name: 'Reply', exact: true }).click();
   await expect(page.locator('.composer-context')).toContainText('Find this parity message');

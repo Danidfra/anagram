@@ -2217,3 +2217,74 @@ test('mobile public catch-up stays writable and replays its durable inbox after 
   await expect(input).toBeEnabled();
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
+
+for (const width of [1280, 390]) {
+  test(`public group menu, unread badges and notification opt-in work at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(() => {
+      class AllowedNotification {
+        static permission = 'granted';
+        static async requestPermission() { return 'granted'; }
+      }
+      Object.defineProperty(window, 'Notification', { value: AllowedNotification, configurable: true });
+    });
+    await login(page);
+    const group = await create(page, `Inbox group ${width}`);
+    await navigateInApp(page, '/chats');
+    const row = page.getByTestId('public-chat-item').filter({ hasText: `Inbox group ${width}` });
+    const container = row.locator('..');
+    const menu = async (label: string) => {
+      await container.hover();
+      await container.getByTestId('public-chat-actions-button').click();
+      await page.getByRole('menuitem', { name: label, exact: true }).click();
+    };
+    await menu('View Profile');
+    const profile = page.getByRole('dialog', { name: 'Public group settings', exact: true });
+    await expect(profile.getByLabel('Description', { exact: true })).toHaveValue('Everyone welcome');
+    await profile.getByRole('button', { name: 'Close public group dialog' }).click();
+    await menu('Refresh Profile');
+    const author = generateSecretKey();
+    const send = async (text: string) => {
+      const event = finalizeEvent({ kind: 9, content: text, created_at: Math.floor(Date.now() / 1000),
+        tags: [['a', group.address]] }, author);
+      await publish(event);
+      return event;
+    };
+    const first = await send('Unread with alerts disabled');
+    await expect(row.getByLabel('1 unread messages')).toBeVisible();
+    await publish(first);
+    await expect(row.getByLabel('1 unread messages')).toBeVisible();
+    await menu('Mark as Read');
+    await expect(row.locator('.badge')).toHaveCount(0);
+    await menu('Enable notifications');
+    await send('Opted-in group alert');
+    await expect(row.getByLabel('1 unread messages')).toBeVisible();
+    await expect(page.getByText(`Inbox group ${width}: Opted-in group alert`, { exact: true })).toBeVisible();
+    await menu('Mute');
+    await send('Muted group alert');
+    await expect(row.getByLabel('2 unread messages')).toBeVisible();
+    await expect(page.getByText(`Inbox group ${width}: Muted group alert`, { exact: true })).toHaveCount(0);
+    await menu('Unmute');
+    await menu('Disable notifications');
+    await send('Disabled group alert');
+    await expect(row.getByLabel('3 unread messages')).toBeVisible();
+    await expect(page.getByText(`Inbox group ${width}: Disabled group alert`, { exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(row.getByLabel('3 unread messages')).toBeVisible();
+    await menu('Refresh Group Chat');
+    await expect(page).toHaveURL(/\/public\/naddr/);
+    await expect(page.getByTestId('public-message').filter({ hasText: 'Disabled group alert' })).toBeVisible();
+    await navigateInApp(page, '/chats');
+    await expect(row.locator('.badge')).toHaveCount(0);
+    await menu('Block');
+    const block = page.getByRole('dialog', { name: `Block Inbox group ${width}?` });
+    await block.getByRole('button', { name: 'Block', exact: true }).click();
+    await expect(row).toContainText('Blocked public group');
+    await menu('Unblock');
+    await expect(row).not.toContainText('Blocked public group');
+    await menu('Delete Chat');
+    const deletion = page.getByRole('dialog', { name: `Delete Inbox group ${width}?` });
+    await deletion.getByRole('button', { name: 'Delete Chat', exact: true }).click();
+    await expect(row).toHaveCount(0);
+  });
+}

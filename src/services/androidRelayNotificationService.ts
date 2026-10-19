@@ -22,6 +22,8 @@ import {
 } from '#src/services/androidNotificationRelaySelectionService.ts';
 import { readNativeKey } from '#src/lib/platform/secureKeys.ts';
 import { chatDataService } from '#src/services/chatDataService.ts';
+import { PublicGroupData } from '#src/services/publicGroupData.ts';
+import { notificationConversationId, notificationConversationPath } from '#src/utils/notificationConversation.ts';
 import { contactsService } from '#src/services/contactsService.ts';
 import { inputSanitizerService } from '#src/services/inputSanitizerService.ts';
 import { resolveCurrentGroupChatEpochEntryValue } from '#src/stores/nostr/valueUtils.ts';
@@ -64,6 +66,8 @@ interface AndroidNotificationConversation {
   avatarText: string;
   policyEligible: boolean;
   notificationsEnabled: boolean;
+  blockedAuthors?: string[];
+  publicSince?: number;
 }
 
 interface AndroidNotificationRecipientKey {
@@ -173,7 +177,7 @@ function parseAndroidRelayPendingEvent(value: unknown): AndroidRelayPendingEvent
   }
 
   const eventId = inputSanitizerService.normalizeHexKey(String(value.id ?? ''));
-  const recipientPubkey = inputSanitizerService.normalizeHexKey(
+  const recipientPubkey = notificationConversationId(
     String(value.recipientPubkey ?? ''),
   );
   const relayUrl = normalizePendingRelayUrl(value.relayUrl);
@@ -196,13 +200,15 @@ function parseAndroidRelayPendingEvent(value: unknown): AndroidRelayPendingEvent
     !relayUrl ||
     !pubkey ||
     !HEX_128_PATTERN.test(signature) ||
-    rawEvent.kind !== 1059 ||
+    (rawEvent.kind !== 1059 && rawEvent.kind !== 9) ||
     !Number.isInteger(createdAt) ||
     createdAt < 0 ||
     typeof rawEvent.content !== 'string' ||
     !Array.isArray(rawEvent.tags) ||
     tags.length !== rawEvent.tags.length ||
-    !tags.some((tag) => tag[0] === 'p' && tag[1]?.toLowerCase() === recipientPubkey)
+    !(rawEvent.kind === 9
+      ? recipientPubkey.startsWith('34550:') && tags.some((tag) => tag[0] === 'a' && tag[1] === recipientPubkey)
+      : tags.some((tag) => tag[0] === 'p' && tag[1]?.toLowerCase() === recipientPubkey))
   ) {
     return null;
   }
@@ -215,7 +221,7 @@ function parseAndroidRelayPendingEvent(value: unknown): AndroidRelayPendingEvent
       id: eventId,
       pubkey,
       sig: signature,
-      kind: 1059,
+      kind: rawEvent.kind,
       created_at: createdAt,
       content: rawEvent.content,
       tags: tags.map((tag) => [...tag]),
@@ -384,6 +390,7 @@ export function createAndroidNotificationConversationSignature(
         inboxState: readMetaString(chat.meta, 'inbox_state'),
         lastOutgoingMessageAt: readMetaString(chat.meta, 'last_outgoing_message_at'),
         muted: chat.meta.muted === true,
+        notificationsEnabled: chat.meta.notifications_enabled === true,
         name: chat.name.trim(),
         picture: readMetaString(chat.meta, 'picture'),
         publicKey: chat.publicKey,
@@ -523,7 +530,7 @@ async function buildAndroidNotificationConfiguration(): Promise<AndroidNotificat
       policyEligible,
       notificationsEnabled:
         chat.type === 'group'
-          ? isConversationNotificationEnabled(chat.meta) &&
+          ? chat.meta.notifications_enabled === true && isConversationNotificationEnabled(chat.meta) &&
             !isContactNotificationSuppressed(contact)
           : isAndroidDirectNotificationConversationEnabled({
               chatMeta: chat.meta,
@@ -587,6 +594,23 @@ async function buildAndroidNotificationConfiguration(): Promise<AndroidNotificat
       notificationsEnabled: !isContactNotificationSuppressed(contact),
     });
   }
+
+  const publicData = new PublicGroupData(watchPlan.ownerPubkey);
+  try {
+    for (const saved of await publicData.list()) {
+      if (saved.blocked || saved.successor || saved.notificationsEnabled !== true || saved.muted) continue;
+      conversations.push({ chatPubkey: saved.address, name: saved.room.name,
+        avatarUrl: saved.room.picture, avatarText: buildAvatarText(saved.room.name),
+        policyEligible: true, notificationsEnabled: true,
+        blockedAuthors: saved.room.blocked,
+        publicSince: Math.max(saved.notificationsSince ?? Math.floor(Date.now() / 1000), saved.activitySince ?? 0, (saved.lastActivityAt ?? 0) - 1),
+      });
+      for (const url of saved.room.relays) {
+        const normalized = normalizeRelayUrl(url);
+        if (normalized && !watchPlan.relays.includes(normalized)) watchPlan.relays.push(normalized);
+      }
+    }
+  } finally { await publicData.close(); }
 
   return {
     ...watchPlan,
@@ -853,7 +877,7 @@ export async function clearAndroidRelayNotificationForChat(chatPubkey: string): 
   if (!isAndroidRelayNotificationSupported()) {
     return;
   }
-  const normalizedChatPubkey = inputSanitizerService.normalizeHexKey(chatPubkey);
+  const normalizedChatPubkey = notificationConversationId(chatPubkey);
   if (!normalizedChatPubkey) {
     return;
   }
@@ -922,7 +946,7 @@ async function performAndroidRelayPendingEventDrain(): Promise<void> {
 
     const ingestionJobs = pendingEvents.map((pendingEvent) => ({
       pendingEvent,
-      result: nostrStore.ingestAndroidRelayNotificationEvent({
+      result: pendingEvent.event.kind === 9 ? nostrStore.publicGroups.ingestActivity(pendingEvent.event, ownerPubkey) : nostrStore.ingestAndroidRelayNotificationEvent({
         event: pendingEvent.event,
         ownerPubkey,
         relayUrl: pendingEvent.relayUrl,
@@ -1028,7 +1052,7 @@ export function startAndroidRelayNotificationListeners(
       if (event.token && event.event && onCallAction) {
         onCallAction(event as AndroidCallAction);
       } else if (event.ownerPubkey === useNostrStore().getLoggedInPublicKeyHex()) {
-        onNotificationAction(inputSanitizerService.normalizeHexKey(String(event.chatPubkey ?? '')));
+        onNotificationAction(notificationConversationId(String(event.chatPubkey ?? '')));
       }
     }),
   );
@@ -1047,6 +1071,7 @@ export function startAndroidRelayNotificationListeners(
 export async function resolveAndroidRelayNotificationRoute(
   chatPubkey: string | null,
 ): Promise<RouteLocationRaw> {
+  if (chatPubkey?.startsWith('34550:')) return notificationConversationPath(chatPubkey);
   const normalizedChatPubkey = inputSanitizerService.normalizeHexKey(chatPubkey ?? '');
   if (!normalizedChatPubkey) {
     return { name: 'chats' };

@@ -17,10 +17,12 @@ on:
   push:
     branches: ['main', 'call-validation/**']
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
-  group: call-media-${{ github.ref }}
+  # Standalone checks must not cancel checks required by a release.
+  group: call-media-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   browsers:

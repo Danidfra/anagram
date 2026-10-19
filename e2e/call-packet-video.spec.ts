@@ -59,11 +59,16 @@ for (const capture of [
           });
         };
       const OriginalDecoder = VideoDecoder;
+      const overloadDrops: number[] = [];
       if (capture === 'overloaded-decoder') {
         window.VideoDecoder = class extends OriginalDecoder {
-          reads = 0;
+          index = overloadDrops.push(0) - 1;
           get decodeQueueSize() {
-            return this.reads++ < 8 ? 3 : super.decodeQueueSize;
+            if (overloadDrops[this.index] < 8) {
+              overloadDrops[this.index]++;
+              return 3;
+            }
+            return super.decodeQueueSize;
           }
           reset() {
             throw new Error('An overloaded active decoder must drain without reset');
@@ -174,7 +179,25 @@ for (const capture of [
           if (!pictureChanges.every((count, i) => count > before[i] + 2))
             errors.push('pictures did not resume');
         } else await new Promise((resolve) => setTimeout(resolve, 5000));
-        return { supported: true, counts, pictureChanges, errors, created, encoded };
+        const fastPeerFrames = counts[0];
+        if (capture === 'overloaded-decoder') {
+          // Eight deliberately dropped deliveries cost the 350 ms peer several
+          // seconds. Allow recovery its own bounded window; keep the fast peer's
+          // original five-second throughput requirement unchanged.
+          const deadline = performance.now() + 3000;
+          while (pictureChanges.some((count) => count <= 2) && performance.now() < deadline)
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return {
+          supported: true,
+          counts,
+          pictureChanges,
+          fastPeerFrames,
+          overloadDrops,
+          errors,
+          created,
+          encoded,
+        };
       } finally {
         observing = false;
         HTMLCanvasElement.prototype.captureStream = captureCanvas;
@@ -202,9 +225,10 @@ for (const capture of [
     });
     expect(result.errors).toEqual([]);
     expect(result.created).toBe(capture === 'video-element-restart' ? 2 : 1);
-    expect(result.counts![0]).toBeGreaterThan(capture === 'all-congested' ? 2 : 30);
+    expect(result.fastPeerFrames).toBeGreaterThan(capture === 'all-congested' ? 2 : 30);
     expect(result.counts![1]).toBeGreaterThan(2);
     expect(result.pictureChanges!.every((count) => count > 2)).toBe(true);
+    if (capture === 'overloaded-decoder') expect(result.overloadDrops).toEqual([8, 8]);
     if (capture === 'all-congested') expect(result.encoded).toBeLessThan(30);
   });
 }

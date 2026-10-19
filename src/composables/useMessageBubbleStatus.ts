@@ -299,109 +299,118 @@ export function useMessageBubbleStatus(options: {
     return segments.filter((segment) => segment.weight > 0);
   })();
 
-  const contactStatusListItems: StatusListItem[] = buildStatusListItems(
-    outboundRelayStatuses,
-    (relayStatus) => relayStatus.scope === 'recipient',
-  );
+  function buildSections(): StatusSection[] {
+    const contactStatusListItems: StatusListItem[] = buildStatusListItems(
+      outboundRelayStatuses,
+      (relayStatus) => relayStatus.scope === 'recipient',
+    );
 
-  const myStatusListItems: StatusListItem[] = buildStatusListItems(
-    outboundRelayStatuses,
-    (relayStatus) => relayStatus.scope === 'self',
-  );
+    const myStatusListItems: StatusListItem[] = buildStatusListItems(
+      outboundRelayStatuses,
+      (relayStatus) => relayStatus.scope === 'self',
+    );
 
-  const inboundContactStatusListItems: StatusListItem[] = normalizedContactRelayUrls.map(
-    (relayUrl) => {
-      const status: StatusListItem['status'] = inboundReceivedRelayUrlSet.has(relayUrl)
-        ? 'received'
-        : 'missing';
+    const inboundContactStatusListItems: StatusListItem[] = normalizedContactRelayUrls.map(
+      (relayUrl) => {
+        const status: StatusListItem['status'] = inboundReceivedRelayUrlSet.has(relayUrl)
+          ? 'received'
+          : 'missing';
 
-      return {
-        key: `${status}-contact-${relayUrl}`,
+        return {
+          key: `${status}-contact-${relayUrl}`,
+          relayUrl,
+          detail: status === 'missing' ? t('relays.messageReceivedRelay') : undefined,
+          dotClass: getStatusDotClassName(status),
+          scope: 'derived',
+          status,
+          retryable: false,
+        };
+      },
+    );
+
+    const inboundReceivedStatusListItems: StatusListItem[] = inboundReceivedRelayUrls.map(
+      (relayUrl) => ({
+        key: `received-${relayUrl}`,
         relayUrl,
-        detail: status === 'missing' ? t('relays.messageReceivedRelay') : undefined,
-        dotClass: getStatusDotClassName(status),
-        scope: 'derived',
-        status,
-        retryable: false,
-      };
-    },
-  );
-
-  const inboundReceivedStatusListItems: StatusListItem[] = inboundReceivedRelayUrls.map(
-    (relayUrl) => ({
-      key: `received-${relayUrl}`,
-      relayUrl,
-      dotClass: getStatusDotClassName('received'),
-      scope: 'subscription',
-      status: 'received',
-      retryable: false,
-    }),
-  );
-
-  const inboundExtraReceivedStatusListItems: StatusListItem[] = ((): StatusListItem[] => {
-    const contactRelayUrlSet = new Set(normalizedContactRelayUrls);
-
-    return inboundReceivedRelayUrls
-      .filter((relayUrl) => !contactRelayUrlSet.has(relayUrl))
-      .map((relayUrl) => ({
-        key: `received-extra-${relayUrl}`,
-        relayUrl,
-        detail: t('relays.receivedRelayOutsideContact'),
         dotClass: getStatusDotClassName('received'),
         scope: 'subscription',
         status: 'received',
         retryable: false,
-      }));
-  })();
+      }),
+    );
 
-  const statusSections: StatusSection[] = ((): StatusSection[] => {
-    if (showOutboundStatus) {
-      return [
-        buildOutboundStatusSection('recipient', outboundContactRelaysTitle, contactStatusListItems),
-        buildOutboundStatusSection('self', outboundMyRelaysTitle, myStatusListItems),
-      ];
-    }
+    const inboundExtraReceivedStatusListItems: StatusListItem[] = ((): StatusListItem[] => {
+      const contactRelayUrlSet = new Set(normalizedContactRelayUrls);
 
-    if (!options.isMine && normalizedContactRelayUrls.length > 0) {
-      const sections: StatusSection[] = [
-        {
-          key: 'contact',
-          title: contactRelaysTitle,
-          items: inboundContactStatusListItems,
-          emptyLabel: t('relays.empty.noRelays'),
-        },
-      ];
+      return inboundReceivedRelayUrls
+        .filter((relayUrl) => !contactRelayUrlSet.has(relayUrl))
+        .map((relayUrl) => ({
+          key: `received-extra-${relayUrl}`,
+          relayUrl,
+          detail: t('relays.receivedRelayOutsideContact'),
+          dotClass: getStatusDotClassName('received'),
+          scope: 'subscription',
+          status: 'received',
+          retryable: false,
+        }));
+    })();
 
-      if (inboundExtraReceivedStatusListItems.length > 0) {
-        sections.push({
-          key: 'extra-received',
-          title: t('relays.otherReceivedRelays'),
-          items: inboundExtraReceivedStatusListItems,
-          emptyLabel: t('relays.empty.noRelays'),
-        });
+    const statusSections: StatusSection[] = ((): StatusSection[] => {
+      if (showOutboundStatus) {
+        return [
+          buildOutboundStatusSection(
+            'recipient',
+            outboundContactRelaysTitle,
+            contactStatusListItems,
+          ),
+          buildOutboundStatusSection('self', outboundMyRelaysTitle, myStatusListItems),
+        ];
       }
 
-      return sections;
-    }
-
-    return inboundReceivedStatusListItems.length > 0
-      ? [
+      if (!options.isMine && normalizedContactRelayUrls.length > 0) {
+        const sections: StatusSection[] = [
           {
-            key: 'received',
-            title: t('common.received'),
-            items: inboundReceivedStatusListItems,
+            key: 'contact',
+            title: contactRelaysTitle,
+            items: inboundContactStatusListItems,
             emptyLabel: t('relays.empty.noRelays'),
           },
-        ]
-      : [];
-  })();
+        ];
+
+        if (inboundExtraReceivedStatusListItems.length > 0) {
+          sections.push({
+            key: 'extra-received',
+            title: t('relays.otherReceivedRelays'),
+            items: inboundExtraReceivedStatusListItems,
+            emptyLabel: t('relays.empty.noRelays'),
+          });
+        }
+
+        return sections;
+      }
+
+      return inboundReceivedStatusListItems.length > 0
+        ? [
+            {
+              key: 'received',
+              title: t('common.received'),
+              items: inboundReceivedStatusListItems,
+              emptyLabel: t('relays.empty.noRelays'),
+            },
+          ]
+        : [];
+    })();
+    return statusSections;
+  }
 
   return {
     showOutboundStatus,
     hasPendingRelayStatuses,
     hasRelayStatuses,
     statusDialogTitle,
-    statusSections,
+    get statusSections() {
+      return buildSections();
+    },
     statusSegments,
   };
 }

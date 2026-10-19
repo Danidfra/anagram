@@ -77,7 +77,15 @@
     removeTopLevelBunkerLoginQueryParam,
     ALREADY_LOGGED_IN_BUNKER_MESSAGE,
   } from '#src/utils/bunkerLoginQuery.ts';
-  import { Notify } from '#src/lib/platform/ui.ts';
+  import { Notify, Dialog } from '#src/lib/platform/ui.ts';
+  import type { SavedPublicRoom } from '#src/services/publicGroupData.ts';
+  import { notificationConversationPath } from '#src/utils/notificationConversation.ts';
+  import { requestBrowserNotificationsAfterLogin } from '#src/utils/browserNotificationPreference.ts';
+  import { requestAndroidRelayNotificationsAfterLogin } from '#src/services/androidRelayNotificationService.ts';
+  import {
+    FOREGROUND_MESSAGE_ACTIVITY_EVENT,
+    readForegroundMessageActivityDetail,
+  } from '#src/services/foregroundMessageActivityService.ts';
   import { updateAppBadge } from '#src/lib/platform/appBadge.ts';
   import { RecordedMessageDeliveryError } from '#src/utils/messageRelayStatus.ts';
   import { parseRoomLink } from '#src/utils/callRoom.ts';
@@ -130,33 +138,50 @@
     void refreshAndroidRelayNotificationListener().catch(fail);
   const publicGroups = nostr.publicGroups;
   const publicState = publicGroups.sidebar;
+  let publicProfile: SavedPublicRoom | null = null;
+  $: unreadChats =
+    $state.unread +
+    $publicState.rooms.filter((row) => !row.blocked && (row.unreadCount ?? 0) > 0).length;
+  $: publicNotificationPlan = JSON.stringify(
+    $publicState.rooms.map((row) => [
+      row.address,
+      row.room.event.id,
+      row.notificationsEnabled,
+      row.muted,
+      row.blocked,
+    ]),
+  );
+  $: if (notificationsReady && publicNotificationPlan)
+    void refreshAndroidRelayNotificationListener().catch(fail);
   relays.init();
-  const state = coalesceStore(toStore(() => ({
-    chats: chats.visibleChats,
-    requests: chats.requestChats,
-    selected: chats.selectedChat,
-    chatIds: new Set(chats.chats.map((chat) => chat.id)),
-    profiles: new Map(
-      [
-        nostr.getLoggedInPublicKeyHex() ?? '',
-        chats.selectedChat?.publicKey ?? '',
-        ...(chats.selectedChatId
-          ? messages.getMessages(chats.selectedChatId).map((message) => message.authorPublicKey)
-          : []),
-      ].map((key) => [key, getPublicProfile(key)]),
-    ),
-    thread: {
-      items: chats.selectedChatId ? messages.getMessages(chats.selectedChatId) : [],
-      pagination: chats.selectedChatId ? messages.getPaginationState(chats.selectedChatId) : null,
-      remote:
-        nostr.groupHistoryState.chat === chats.selectedChatId ? nostr.groupHistoryState : null,
-    },
-    unread: chats.unreadChatCount,
-    loaded: chats.isLoaded,
-    relayEntries: relays.relayEntries,
-    relayVersion: nostr.relayStatusVersion,
-    contactVersion: nostr.contactListVersion,
-  })));
+  const state = coalesceStore(
+    toStore(() => ({
+      chats: chats.visibleChats,
+      requests: chats.requestChats,
+      selected: chats.selectedChat,
+      chatIds: new Set(chats.chats.map((chat) => chat.id)),
+      profiles: new Map(
+        [
+          nostr.getLoggedInPublicKeyHex() ?? '',
+          chats.selectedChat?.publicKey ?? '',
+          ...(chats.selectedChatId
+            ? messages.getMessages(chats.selectedChatId).map((message) => message.authorPublicKey)
+            : []),
+        ].map((key) => [key, getPublicProfile(key)]),
+      ),
+      thread: {
+        items: chats.selectedChatId ? messages.getMessages(chats.selectedChatId) : [],
+        pagination: chats.selectedChatId ? messages.getPaginationState(chats.selectedChatId) : null,
+        remote:
+          nostr.groupHistoryState.chat === chats.selectedChatId ? nostr.groupHistoryState : null,
+      },
+      unread: chats.unreadChatCount,
+      loaded: chats.isLoaded,
+      relayEntries: relays.relayEntries,
+      relayVersion: nostr.relayStatusVersion,
+      contactVersion: nostr.contactListVersion,
+    })),
+  );
   let section: 'chats' | 'contacts' | 'settings' = 'chats';
   let mobileThread = false;
   let mobileViewport = matchMedia('(max-width: 767px)').matches;
@@ -526,6 +551,8 @@
   $: nostr.setAppLifecycleRouteChatId(visibleChatId);
   $: if (notificationsReady && visibleChatId)
     void clearAndroidRelayNotificationForChat(visibleChatId).catch(fail);
+  $: if (notificationsReady && publicLink && $publicState.address)
+    void clearAndroidRelayNotificationForChat($publicState.address).catch(fail);
   let historyRevision = 0;
   let historyFrame = 0;
   let historyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -850,6 +877,14 @@
         await nostr.refreshContactByPublicKey(chat.publicKey, chat.name);
         if (action === 'refresh-group') await nostr.refreshPrivateMessages();
         await chats.reload();
+      } else if (action === 'notifications' && chat.type === 'group') {
+        const enabled = chat.meta.notifications_enabled !== true;
+        if (enabled) await enableGroupNotificationPermission();
+        await chats.setGroupNotifications(chat.id, enabled);
+        if (androidNotifications) {
+          if (!enabled) await clearAndroidRelayNotificationForChat(chat.id);
+          await refreshAndroidRelayNotificationListener();
+        }
       } else if (action === 'mute')
         await (chat.meta.muted
           ? nostr.unmutePubkey(chat.id, relays.relays)
@@ -860,6 +895,63 @@
       } else if (action === 'read') {
         const cursor = await chats.markAsRead(chat.id);
         if (cursor) nostr.scheduleContactCursorPublish(chat.id, cursor);
+      }
+    });
+  }
+  async function enableGroupNotificationPermission() {
+    const permission = androidNotifications
+      ? await requestAndroidRelayNotificationsAfterLogin()
+      : await requestBrowserNotificationsAfterLogin();
+    if (permission === 'denied' || permission === 'default' || permission === 'prompt')
+      throw new Error('Allow notifications in your browser or device settings, then try again.');
+    if (permission === 'unsupported')
+      Notify.create('Notifications will appear while Anagram is open on this device.');
+  }
+  async function publicChatAction(row: SavedPublicRoom, action: string) {
+    if (action === 'delete' || (action === 'block' && !row.blocked)) {
+      Dialog.create({
+        title: `${action === 'delete' ? 'Delete' : 'Block'} ${row.room.name}?`,
+        message:
+          action === 'delete'
+            ? 'Remove this public group from your chats? You can join it again using its link.'
+            : 'Stop messages and notifications from this public group?',
+        ok: { label: action === 'delete' ? 'Delete Chat' : 'Block' },
+        cancel: { label: 'Cancel' },
+      }).onOk(
+        () =>
+          void act(async () => {
+            const selected = publicLink && $publicState.address === row.address;
+            if (action === 'delete') await publicGroups.leave(row.address);
+            else await publicGroups.setPreferences(row.address, { blocked: true });
+            await clearAndroidRelayNotificationForChat(row.address);
+            if (selected) await goto('/chats');
+            if (androidNotifications) await refreshAndroidRelayNotificationListener();
+          }),
+      );
+      return;
+    }
+    await act(async () => {
+      if (action === 'profile') publicProfile = row;
+      else if (action === 'refresh') await publicGroups.refreshRoom(row.address);
+      else if (action === 'refresh-group') {
+        if (row.blocked) throw new Error('Unblock this group before refreshing it.');
+        if (publicLink && $publicState.address === row.address)
+          await publicGroups.open(encodeRoomLink(row.room));
+        else openPublicGroup(encodeRoomLink(row.room));
+      } else if (action === 'read') {
+        await publicGroups.markRead(row.address);
+        await clearAndroidRelayNotificationForChat(row.address);
+      } else {
+        if (action === 'notifications') {
+          const enabled = row.notificationsEnabled !== true;
+          if (enabled) await enableGroupNotificationPermission();
+          await publicGroups.setPreferences(row.address, { notificationsEnabled: enabled });
+          if (!enabled) await clearAndroidRelayNotificationForChat(row.address);
+        } else if (action === 'mute')
+          await publicGroups.setPreferences(row.address, { muted: !row.muted });
+        else if (action === 'block')
+          await publicGroups.setPreferences(row.address, { blocked: false });
+        if (androidNotifications) await refreshAndroidRelayNotificationListener();
       }
     });
   }
@@ -990,9 +1082,31 @@
     return chatDate(value, $locale);
   }
   onMount(() => {
+    let privateUnread = 0,
+      groupUnread = 0;
     const stopBadge = toStore(() => chats.unreadMessageCount).subscribe((count) => {
-      void updateAppBadge(count);
+      privateUnread = count;
+      void updateAppBadge(privateUnread + groupUnread);
     });
+    const stopPublicBadge = publicState.subscribe(({ rooms }) => {
+      groupUnread = rooms
+        .filter((row) => !row.blocked)
+        .reduce((n, row) => n + (row.unreadCount ?? 0), 0);
+      void updateAppBadge(privateUnread + groupUnread);
+    });
+    let dismissGroupNotice: (() => void) | undefined;
+    const foregroundMessage = (event: Event) => {
+      const detail = readForegroundMessageActivityDetail(event);
+      if (
+        detail?.showBanner &&
+        (detail.chatPubkey.startsWith('34550:') ||
+          chats.chats.some((chat) => chat.id === detail.chatPubkey && chat.type === 'group'))
+      ) {
+        dismissGroupNotice?.();
+        dismissGroupNotice = Notify.create({ message: `${detail.title}: ${detail.messageText}` });
+      }
+    };
+    window.addEventListener(FOREGROUND_MESSAGE_ACTIVITY_EVENT, foregroundMessage);
     if (readTopLevelBunkerLoginQueryParam()) {
       removeTopLevelBunkerLoginQueryParam();
       Notify.create({ message: ALREADY_LOGGED_IN_BUNKER_MESSAGE });
@@ -1049,7 +1163,7 @@
         pendingNotificationChat = pubkey;
         return;
       }
-      void goto(pubkey ? `/chats/${pubkey}` : '/chats');
+      void goto(pubkey ? notificationConversationPath(pubkey) : '/chats');
       drainNotifications();
     };
     const stopNotifications = startAndroidRelayNotificationListeners(
@@ -1070,6 +1184,9 @@
       .catch(fail);
     return () => {
       stopBadge();
+      stopPublicBadge();
+      window.removeEventListener(FOREGROUND_MESSAGE_ACTIVITY_EVENT, foregroundMessage);
+      dismissGroupNotice?.();
       void updateAppBadge(0);
       window.removeEventListener(DESKTOP_MESSAGE_LAYOUT_CHANGED_EVENT, updateLayout);
       document.removeEventListener('visibilitychange', resumeAndroidNotifications);
@@ -1124,7 +1241,7 @@
   onblur={() => (resizing = false)}
 />
 <svelte:head
-  ><title>{$state.unread ? `(${$state.unread}) ` : ''}{$translate('Anagram')}</title></svelte:head
+  ><title>{unreadChats ? `(${unreadChats}) ` : ''}{$translate('Anagram')}</title></svelte:head
 >
 {#if section === 'settings'}
   {#await import('./settings/SettingsShell.svelte') then component}<component.default
@@ -1266,8 +1383,17 @@
           {#each $publicState.rooms.filter( (item) => publicGroupMatches(item.room, query) ) as item (item.address)}
             <PublicGroupRow
               room={item.room}
+              unreadCount={item.unreadCount ?? 0}
+              muted={item.muted ?? false}
+              blocked={item.blocked ?? false}
+              notificationsEnabled={item.notificationsEnabled ?? false}
+              onaction={(action) => publicChatAction(item, action)}
               active={!!publicLink && $publicState.address === item.address}
               onselect={() => {
+                if (item.blocked) {
+                  Notify.create('Unblock this public group using its menu.');
+                  return;
+                }
                 query = '';
                 openPublicGroup(encodeRoomLink(item.room));
               }}
@@ -1321,8 +1447,8 @@
             class:nav-rail__btn--active={section === item}
             aria-label={item}
             onclick={() => nav(item as typeof section)}
-            ><Icon name={item} />{#if item === 'chats' && $state.unread}<span
-                class="badge nav-badge">{$state.unread}</span
+            ><Icon name={item} />{#if item === 'chats' && unreadChats}<span class="badge nav-badge"
+                >{unreadChats}</span
               >{/if}</button
           >{/each}
       </nav>
@@ -1930,6 +2056,15 @@
 {#if newPublicGroup}
   <PublicGroupDialog onclose={() => (newPublicGroup = false)} onopen={openPublicGroup} />
 {/if}
+{#if publicProfile}<PublicGroupDialog
+    room={publicProfile.room}
+    onclose={() => (publicProfile = null)}
+    onopen={openPublicGroup}
+    onleave={() => {
+      publicProfile = null;
+      void goto('/chats');
+    }}
+  />{/if}
 
 <style>
   .confirmation-actions {

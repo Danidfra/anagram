@@ -291,7 +291,7 @@ public final class AndroidRelayNotificationsPlugin extends Plugin {
 
     @Command
     public void clearDeliveredNotifications(Invoke call) {
-        String chatPubkey = normalizePubkey(call.getArgs().optString("chatPubkey"));
+        String chatPubkey = NotificationConversation.normalizeChatId(call.getArgs().optString("chatPubkey"));
         if (chatPubkey == null) {
             RelayNotificationService.clearMessageNotifications(getContext());
         } else {
@@ -413,7 +413,7 @@ public final class AndroidRelayNotificationsPlugin extends Plugin {
 
         String notificationOwner = normalizePubkey(intent.getStringExtra(RelayNotificationService.EXTRA_OWNER_PUBKEY));
         if (notificationOwner == null || !notificationOwner.equals(RelayNotificationPreferences.getOwnerPubkey(getContext()))) return;
-        String chatPubkey = normalizePubkey(
+        String chatPubkey = NotificationConversation.normalizeChatId(
             intent.getStringExtra(RelayNotificationService.EXTRA_CHAT_PUBKEY)
         );
         boolean openChats = intent.getBooleanExtra(

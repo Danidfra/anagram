@@ -18,6 +18,7 @@ import { redactPublicLinks } from '#src/utils/publicMessage.ts';
 import { previewUrl } from '#src/utils/linkPreview.ts';
 import { writable, get, type Readable } from 'svelte/store';
 import type NostrClient from '#src/lib/nostr/client.ts';
+import { createPublicGroupActivityRuntime } from './publicGroupActivityRuntime.ts';
 import {
   ClientEvent,
   type NostrEvent,
@@ -66,6 +67,7 @@ interface Dependencies {
   signer: () => Promise<NostrSigner>;
   relays: () => Promise<string[]>;
   containsSecret: (value: string) => boolean;
+  notify?: (row: SavedPublicRoom, event: NostrEvent) => void;
 }
 export function createPublicGroupRuntime(deps: Dependencies) {
   const state = writable<State>({
@@ -97,6 +99,16 @@ export function createPublicGroupRuntime(deps: Dependencies) {
   let account = '',
     data: PublicGroupData | undefined,
     view = 0;
+  const activity = createPublicGroupActivityRuntime({
+    client: deps.client, account: deps.account, database: () => data,
+    relays: relayUrls, notify: deps.notify,
+    changed: (row) => state.update((s) => ({ ...s,
+      rooms: s.rooms.map((current) => current.address === row.address
+        ? { ...row, room: newerRoom(current.room, row.room) ? current.room : row.room }
+        : current),
+    })),
+    failed: () => state.update((s) => ({ ...s, error: 'Public group updates paused. Refresh to retry.' })),
+  });
   let windowRevision = 0;
   let live: NostrSubscription | undefined;
   let stopActivity = () => {};
@@ -166,9 +178,11 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     stopLive();
     historyPages.stop();
     for (const stop of [...queries]) stop();
+    activity.setActive('');
   }
   function stop() {
     stopView();
+    activity.stop();
     void data?.close();
     data = undefined;
     account = '';
@@ -217,6 +231,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       ...s,
       rooms: valid.filter((r) => r.joined && !r.successor).sort((a, b) => b.updated - a.updated),
     }));
+    activity.sync(get(state).rooms);
   }
   async function relayUrls(hints: string[]) {
     const configured = await deps.relays();
@@ -397,11 +412,15 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     assertSession(owner);
     const db = data!;
     const previous = await db.get(room.address);
+    if (previous?.blocked) throw new Error('Unblock this public group before opening it.');
     assertSession(owner);
     const saved = await db.save({
       address: room.address,
       room,
       joined,
+      ...(!previous?.joined ? {
+        activitySince: Math.floor(Date.now() / 1000), unreadCount: 0, notificationsEnabled: false,
+      } : {}),
       successor: successor || previous?.successor,
       // Opening or refreshing an existing membership must not move its sidebar row.
       updated: previous?.joined ? previous.updated : Date.now(),
@@ -416,6 +435,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         .sort((a, b) => b.updated - a.updated)
         .slice(0, 200),
     }));
+    activity.sync(get(state).rooms);
     return saved.room;
   }
   async function hydrate(
@@ -659,6 +679,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         cachedSeen.add(cachedAddress.address);
         const saved = await db.get(cachedAddress.address);
         if (token !== view || owner !== account) return;
+        if (saved?.blocked) throw new Error('Unblock this public group before opening it.');
         if (!saved?.joined && !saved?.successor) break;
         const cachedRoom = parsePublicRoom(saved.room.event, cachedAddress.address);
         if (
@@ -801,6 +822,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     const key = JSON.stringify([owner, token, room.address, [...urls].sort()]);
     if (live && liveKey === key) return;
     stopLive();
+    activity.setActive(room.address);
     liveKey = key;
     const revision = liveRevision;
     const active = () =>
@@ -844,6 +866,8 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         }
       }
       void db.enqueue(address, message, timeline).then(() => {
+        if (active() && timeline && message.kind === 9)
+          void activity.ingest(address, message, ready, true).catch(storageFailed);
         arrivals++;
         scheduleDrain();
       }, storageFailed);
@@ -1775,7 +1799,8 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     );
   }
   async function leave(address: string) {
-    stopView();
+    const selected = get(state).room?.address === address;
+    if (selected) stopView();
     const owner = account,
       db = data!;
     const row = await db.get(address);
@@ -1784,10 +1809,45 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     assertSession(owner);
     state.update((s) => ({
       ...s,
-      room: null,
-      messages: [],
+      room: selected ? null : s.room,
+      messages: selected ? [] : s.messages,
       rooms: s.rooms.filter((r) => r.address !== address),
     }));
+    activity.sync(get(state).rooms);
+  }
+  async function setPreferences(address: string, patch: Parameters<PublicGroupData['updateLocal']>[1]) {
+    const owner = account;
+    await data!.updateLocal(address, { ...patch,
+      ...(patch.notificationsEnabled === true || patch.muted === false || patch.blocked === false
+        ? { notificationsSince: Math.floor(Date.now() / 1000) } : {}),
+    });
+    assertSession(owner);
+    if (patch.blocked) {
+      await activity.markRead(address);
+      assertSession(owner);
+      if (get(state).room?.address === address) stopView();
+    }
+    await reloadRooms();
+  }
+  async function refreshRoom(address: string) {
+    const owner = account;
+    const saved = await data!.get(address);
+    assertSession(owner);
+    if (!saved?.joined || saved.blocked) throw new Error('Unblock this group before refreshing it.');
+    const room = await readRoom(saved.room, saved.room.relays);
+    assertSession(owner);
+    const current = await saveRoom(room, true, undefined, owner);
+    state.update((s) => ({ ...s, room: s.room?.address === address ? current : s.room }));
+  }
+  async function ingestActivity(event: NostrEvent, owner: string) {
+    if (deps.account() !== owner) return false;
+    await init();
+    if (deps.account() !== owner || account !== owner) return false;
+    const address = event.tags.find((tag) => tag[0] === 'a')?.[1];
+    // Native and WebView relay delivery race. The first receipt owns the alert;
+    // old background-inbox catch-up must not produce a burst of foreground banners.
+    if (address) await activity.ingest(address, event, event.created_at >= Math.floor(Date.now() / 1000) - 5);
+    return deps.account() === owner && account === owner;
   }
   return {
     state,
@@ -1813,5 +1873,10 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     newer,
     history,
     leave,
+    setPreferences,
+    refreshRoom,
+    ingestActivity,
+    markRead: activity.markRead,
+    setVisible: activity.setVisible,
   };
 }

@@ -58,3 +58,17 @@ describe('foregroundMessageActivityService', () => {
     expect(readForegroundMessageActivityDetail(event)).toBeNull();
   });
 });
+
+it('accepts public group activity without changing private conversation normalization', () => {
+  const dispatchEvent = vi.fn();
+  vi.stubGlobal('CustomEvent', TestCustomEvent);
+  vi.stubGlobal('window', { dispatchEvent });
+  try {
+    const address = `34550:${'a'.repeat(64)}:Group_1`;
+    for (const chatPubkey of [address, ` ${'A'.repeat(64)} `]) {
+      emitForegroundMessageActivity({ chatPubkey, title: 'Group', messageText: 'hello', showBanner: true });
+    }
+    expect(readForegroundMessageActivityDetail(dispatchEvent.mock.calls[0][0])?.chatPubkey).toBe(address);
+    expect(readForegroundMessageActivityDetail(dispatchEvent.mock.calls[1][0])?.chatPubkey).toBe('a'.repeat(64));
+  } finally { vi.unstubAllGlobals(); }
+});

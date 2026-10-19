@@ -86,6 +86,7 @@ public final class RelayNotificationService extends Service {
     private final Set<String> openRelays = new HashSet<>();
     private volatile Map<String, NotificationConversation> directConversations = new HashMap<>();
     private volatile Map<String, NotificationConversation> groupConversations = new HashMap<>();
+    private volatile Map<String, NotificationConversation> publicConversations = new HashMap<>();
     private volatile List<String> configuredRelays = new ArrayList<>();
     private volatile Set<String> recipientPubkeys = new HashSet<>();
     private volatile Map<String, String> recipientPrivateKeys = new LinkedHashMap<>();
@@ -314,11 +315,14 @@ public final class RelayNotificationService extends Service {
         );
         Map<String, NotificationConversation> nextDirectConversations = new HashMap<>();
         Map<String, NotificationConversation> nextGroupConversations = new HashMap<>();
+        Map<String, NotificationConversation> nextPublicConversations = new HashMap<>();
         List<NotificationConversation> conversations = RelayNotificationPreferences.getConversations(
             this
         );
         for (NotificationConversation conversation : conversations) {
-            if (conversation.recipientPubkey == null) {
+            if (conversation.isPublicGroup()) {
+                if (isNotificationConversationEligible(conversation)) nextPublicConversations.put(conversation.chatPubkey, conversation);
+            } else if (conversation.recipientPubkey == null) {
                 nextDirectConversations.put(conversation.chatPubkey, conversation);
             } else {
                 nextGroupConversations.put(conversation.recipientPubkey, conversation);
@@ -331,6 +335,8 @@ public final class RelayNotificationService extends Service {
         recipientPrivateKeys = nextRecipientPrivateKeys;
         directConversations = nextDirectConversations;
         groupConversations = nextGroupConversations;
+        shouldReconnect |= !publicConversations.keySet().equals(nextPublicConversations.keySet());
+        publicConversations = nextPublicConversations;
         seenEventIds = new LinkedHashSet<>(RelayNotificationPreferences.getSeenEventIds(this));
         logDebug(
             "watch-plan-loaded relays=" + configuredRelays.size() +
@@ -456,6 +462,23 @@ public final class RelayNotificationService extends Service {
         return new JSONArray().put("REQ").put(subscriptionId).put(filter).toString();
     }
 
+    @Nullable
+    static String publicSubscription(String subscriptionId, java.util.Collection<NotificationConversation> conversations, long now)
+        throws JSONException {
+        JSONArray addresses = new JSONArray();
+        long since = now;
+        for (NotificationConversation conversation : conversations) {
+            if (!conversation.isPublicGroup() || !isNotificationConversationEligible(conversation)) continue;
+            addresses.put(conversation.chatPubkey);
+            since = Math.min(since, conversation.publicSince);
+        }
+        if (addresses.length() == 0) return null;
+        JSONObject filter = new JSONObject().put("kinds", new JSONArray().put(9)).put("#a", addresses)
+            .put("since", Math.max(since, subscriptionSince(now))).put("limit", 50);
+        // Separate REQ: a relay rejecting public-room filters must not cancel the private inbox.
+        return new JSONArray().put("REQ").put(subscriptionId).put(filter).toString();
+    }
+
     static long subscriptionSince(long nowSeconds) {
         return Math.max(
             0L,
@@ -505,6 +528,10 @@ public final class RelayNotificationService extends Service {
         try {
             JSONArray envelope = new JSONArray(message);
             String messageType = envelope.optString(0);
+            if ("EOSE".equals(messageType) && source.publicSubscriptionId.equals(envelope.optString(1))) {
+                source.publicCaughtUp = true;
+                return;
+            }
             if (
                 "EOSE".equals(messageType) &&
                 envelope.length() >= 2 &&
@@ -519,6 +546,10 @@ public final class RelayNotificationService extends Service {
             }
 
             JSONObject event = envelope.optJSONObject(2);
+            if (event != null && event.optInt("kind", -1) == 9) {
+                if (source.publicSubscriptionId.equals(envelope.optString(1))) handlePublicMessage(source, event);
+                return;
+            }
             if (event == null || event.optInt("kind", -1) != 1059) {
                 return;
             }
@@ -628,6 +659,57 @@ public final class RelayNotificationService extends Service {
         Intent intent = new Intent(ACTION_PENDING_EVENTS_AVAILABLE);
         intent.setPackage(getPackageName());
         sendBroadcast(intent);
+    }
+
+    static boolean isEligiblePublicMessage(JSONObject event, NotificationConversation conversation, String owner, long now) {
+        if (!conversation.isPublicGroup() || !isNotificationConversationEligible(conversation) ||
+            event.optInt("kind", -1) != 9 || owner.equals(event.optString("pubkey")) ||
+            conversation.blockedAuthors.contains(event.optString("pubkey")) ||
+            event.optString("content", "").isEmpty() || event.optString("content", "").length() > 8000 ||
+            event.optLong("created_at", 0L) < conversation.publicSince ||
+            event.optLong("created_at", 0L) > now + EVENT_TIMESTAMP_TOLERANCE_SECONDS) return false;
+        JSONArray tags = event.optJSONArray("tags");
+        if (tags == null) return false;
+        int addresses = 0;
+        for (int i = 0; i < tags.length(); i++) {
+            JSONArray tag = tags.optJSONArray(i);
+            if (tag == null) return false;
+            if ("a".equals(tag.optString(0))) {
+                if (!conversation.chatPubkey.equals(tag.optString(1))) return false;
+                addresses++;
+            }
+            if ("e".equals(tag.optString(0)) && "edit".equals(tag.optString(3))) return false;
+        }
+        return addresses == 1;
+    }
+
+    private void handlePublicMessage(RelayWebSocketListener source, JSONObject event) throws JSONException {
+        JSONArray tags = event.optJSONArray("tags");
+        if (tags == null) return;
+        NotificationConversation conversation = null;
+        for (int i = 0; i < tags.length(); i++) {
+            JSONArray tag = tags.optJSONArray(i);
+            if (tag != null && "a".equals(tag.optString(0))) conversation = publicConversations.get(tag.optString(1));
+        }
+        long now = System.currentTimeMillis() / 1000L;
+        if (conversation == null || !isEligiblePublicMessage(event, conversation, ownerPubkey, now) ||
+            !isValidSignedEvent(event, 9)) return;
+        String id = event.optString("id");
+        if (seenEventIds.contains(id)) return;
+        boolean queued;
+        try {
+            queued = RelayNotificationEventInbox.enqueue(this, ownerPubkey, conversation.chatPubkey,
+                source.relayUrl, event, System.currentTimeMillis());
+        } catch (RuntimeException exception) {
+            logWarning("public-message-inbox-failed " + exceptionSummary(exception));
+            return;
+        }
+        if (!RelayNotificationPreferences.markEventSeen(this, id)) { seenEventIds.add(id); return; }
+        seenEventIds.add(id);
+        if (queued) notifyPendingEventsAvailable();
+        if (!RelayNotificationPreferences.isAppForeground(this) && shouldNotifyEvent(source.initializedAtConnect,
+            source.publicCaughtUp, event.optLong("created_at"), source.listenerStartedAt, now))
+            showMessageNotification(notificationTargetForEligibleConversation(conversation, event.optLong("created_at")));
     }
 
     @Nullable
@@ -1208,14 +1290,17 @@ public final class RelayNotificationService extends Service {
 
         private final String relayUrl;
         private final String subscriptionId;
+        private final String publicSubscriptionId;
         private final boolean initializedAtConnect;
         private final long listenerStartedAt;
         private final long connectionGeneration;
         private boolean caughtUp;
+        private boolean publicCaughtUp;
 
         private RelayWebSocketListener(String relayUrl) {
             this.relayUrl = relayUrl;
             this.subscriptionId = "notifications-" + shortHash(relayUrl);
+            this.publicSubscriptionId = "public-" + shortHash(relayUrl);
             this.listenerStartedAt = System.currentTimeMillis() / 1000L;
             this.connectionGeneration = RelayNotificationService.this.connectionGeneration;
             this.initializedAtConnect = RelayNotificationPreferences.isRelayInitialized(
@@ -1260,6 +1345,8 @@ public final class RelayNotificationService extends Service {
             );
             try {
                 boolean queued = webSocket.send(createSubscription(relayUrl));
+                String publicRequest = publicSubscription(publicSubscriptionId, publicConversations.values(), System.currentTimeMillis() / 1000L);
+                if (publicRequest != null) webSocket.send(publicRequest);
                 logDebug(
                     "relay-subscription-sent relay=" + relayLogId(relayUrl) +
                     " queued=" + queued

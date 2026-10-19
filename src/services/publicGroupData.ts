@@ -21,14 +21,26 @@ export interface SavedPublicRoom {
   joined: boolean;
   successor?: string;
   updated: number;
+  unreadCount?: number;
+  notificationsEnabled?: boolean;
+  notificationsSince?: number;
+  muted?: boolean;
+  blocked?: boolean;
+  readAt?: number;
+  activitySince?: number;
+  lastActivityAt?: number;
 }
 export class PublicGroupData {
   private db: Promise<IDBDatabase>;
   constructor(account: string) {
     if (!/^[a-f0-9]{64}$/.test(account)) throw new Error('Public groups require an account.');
     this.db = new Promise((resolve, reject) => {
-      const req = indexedDB.open(`anagram-public-groups-${account}`, 4);
+      const req = indexedDB.open(`anagram-public-groups-${account}`, 5);
       req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains('receipts')) {
+          const receipts = req.result.createObjectStore('receipts', { keyPath: ['room', 'id'] });
+          receipts.createIndex('unread', ['room', 'unread']);
+        }
         if (!req.result.objectStoreNames.contains('inbox')) {
           const inbox = req.result.createObjectStore('inbox', {
             keyPath: 'sequence',
@@ -233,12 +245,81 @@ export class PublicGroupData {
         // A refresh can finish after a newer live policy has already been saved.
         // Compare inside the write transaction so concurrent saves cannot regress it.
         const saved = {
+          ...previous,
           ...value,
           room: previous && newerRoom(previous.room, value.room) ? previous.room : value.room,
           successor: previous?.successor || value.successor,
         };
         store.put(saved);
         done(saved);
+      };
+    });
+  }
+  /** Local preferences are independent of signed room metadata and relay refreshes. */
+  updateLocal(address: string, patch: Partial<Pick<SavedPublicRoom,
+    'notificationsEnabled' | 'notificationsSince' | 'muted' | 'blocked' | 'activitySince'>>): Promise<SavedPublicRoom | undefined> {
+    return this.transaction('rooms', 'readwrite', (store, done) => {
+      const request = store.get(address);
+      request.onsuccess = () => {
+        if (!request.result) return done(undefined);
+        const row = { ...request.result, ...patch };
+        store.put(row);
+        done(row);
+      };
+    });
+  }
+  async recordActivity(address: string, event: PublicGroupMessage, visible: boolean): Promise<{
+    row: SavedPublicRoom | undefined; fresh: boolean;
+  }> {
+    const db = await this.db;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['rooms', 'receipts'], 'readwrite');
+      let row: SavedPublicRoom | undefined;
+      let fresh = false;
+      tx.oncomplete = () => resolve({ row, fresh });
+      tx.onerror = tx.onabort = () => reject(tx.error);
+      const rooms = tx.objectStore('rooms'), receipts = tx.objectStore('receipts');
+      const request = rooms.get(address);
+      request.onsuccess = () => {
+        row = request.result;
+        if (!row?.joined || row.blocked || row.successor) return;
+        const membership = row;
+        if (event.created_at < (membership.activitySince ?? Number.MAX_SAFE_INTEGER)) return;
+        const known = receipts.get([address, event.id!]);
+        known.onsuccess = () => {
+          if (known.result) return;
+          fresh = event.created_at >= (membership.activitySince ?? Number.MAX_SAFE_INTEGER);
+          const unread = fresh && !visible && event.created_at >= (membership.readAt ?? 0);
+          receipts.add({ room: address, id: event.id, unread: unread ? 1 : 0 });
+          row = { ...membership,
+            unreadCount: (membership.unreadCount ?? 0) + (unread ? 1 : 0),
+            lastActivityAt: Math.max(membership.lastActivityAt ?? 0, event.created_at),
+          };
+          rooms.put(row);
+        };
+      };
+    });
+  }
+  async markRead(address: string): Promise<SavedPublicRoom | undefined> {
+    const db = await this.db;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['rooms', 'receipts'], 'readwrite');
+      let row: SavedPublicRoom | undefined;
+      tx.oncomplete = () => resolve(row);
+      tx.onerror = tx.onabort = () => reject(tx.error);
+      const rooms = tx.objectStore('rooms');
+      const request = rooms.get(address);
+      request.onsuccess = () => {
+        if (!request.result) return;
+        row = { ...request.result, unreadCount: 0, readAt: Math.floor(Date.now() / 1000) };
+        rooms.put(row);
+      };
+      const unread = tx.objectStore('receipts').index('unread').openCursor(IDBKeyRange.only([address, 1]));
+      unread.onsuccess = () => {
+        const cursor = unread.result;
+        if (!cursor) return;
+        cursor.update({ ...cursor.value, unread: 0 });
+        cursor.continue();
       };
     });
   }
