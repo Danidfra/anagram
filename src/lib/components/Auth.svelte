@@ -9,6 +9,7 @@
     removeTopLevelBunkerLoginQueryParam,
   } from '#src/utils/bunkerLoginQuery.ts';
   import AuthOnboarding from './AuthOnboarding.svelte';
+  import AuthLinkBanner from './AuthLinkBanner.svelte';
   import Icon from './Icon.svelte';
   export let onlogin: () => void;
   let step: 'methods' | 'key' | 'remote' | 'create' | 'onboarding' = 'methods';
@@ -206,6 +207,7 @@
 
 <div class="auth-page auth-entry-page">
   <div class="auth-shell" class:wide={step === 'onboarding'}>
+    {#if step === 'methods'}<AuthLinkBanner />{/if}
     <div class="auth-card">
       <header class="auth-header">
         {#if (step !== 'methods' && step !== 'onboarding') || (onboardingCanGoBack && step === 'onboarding')}<button
@@ -427,6 +429,7 @@
     padding: 20px;
   }
   .auth-shell {
+    position: relative;
     width: min(100%, 460px);
   }
   .auth-card {

@@ -7,6 +7,7 @@
   import { toStore } from 'svelte/store';
   import { translate } from '#src/i18n.ts';
   import Icon from '../Icon.svelte';
+  import ActionFeedback from '../ActionFeedback.svelte';
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { useChatStore } from '#src/stores/chatStore.svelte.ts';
   import { useAppUpdateStore } from '#src/stores/appUpdateStore.svelte.ts';
@@ -163,6 +164,7 @@
     }}
   ></div>
   <main class="main-panel">
+    <ActionFeedback />
     <header class="settings-detail-header">
       <button
         class="icon-button mobile-back"
