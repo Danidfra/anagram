@@ -95,10 +95,12 @@ test('original incoming choices, compact call, controls tray, devices and presen
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await setup(page);
-  await expect(page.getByTestId('call-remote-audio')).toHaveJSProperty(
-    'disableRemotePlayback',
-    false,
-  );
+  // Firefox has no Remote Playback API; absence also means it is not disabled.
+  expect(
+    await page
+      .getByTestId('call-remote-audio')
+      .evaluate((audio) => Boolean((audio as HTMLAudioElement).disableRemotePlayback)),
+  ).toBe(false);
   await expect(page.getByTestId('call-accept')).toHaveText(/Answer with audio/);
   await expect(page.getByTestId('call-accept-video')).toBeVisible();
   await expect(page.getByTestId('call-decline')).toBeVisible();
@@ -208,9 +210,27 @@ test('room lobby validates links and offers audio and video creation', async ({ 
 test('new hosted group calls display and copy unique links after the previous call closes', async ({
   page,
   context,
+  browserName,
 }) => {
   await setup(page);
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  if (browserName === 'chromium') {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  } else {
+    // These engines cannot grant clipboard-read through Playwright. Exercise the
+    // copy action and exact link value; Chromium covers the real OS clipboard.
+    await page.evaluate(() => {
+      let text = '';
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: async (value: string) => {
+            text = value;
+          },
+          readText: async () => text,
+        },
+      });
+    });
+  }
   await page.evaluate(() => {
     (window as any).__testCall.dismiss();
     // Replace capture only; use the real room store, creation, cleanup and link generation.

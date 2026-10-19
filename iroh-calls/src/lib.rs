@@ -1,10 +1,33 @@
+#[cfg(not(target_arch = "wasm32"))]
+use futures_util::FutureExt;
 use futures_util::lock::Mutex;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayUrl,
-    endpoint::{Connection, ConnectionError, RecvStream, RelayMode, SendStream, presets},
+    endpoint::{
+        Connection, ConnectionError, QuicTransportConfig, RecvStream, RelayMode, SendStream,
+        presets,
+    },
 };
 use n0_future::time::{Duration, timeout};
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct JsError(String);
+#[cfg(not(target_arch = "wasm32"))]
+impl JsError {
+    fn new(message: &str) -> Self {
+        Self(message.into())
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+impl std::fmt::Display for JsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+impl std::error::Error for JsError {}
 
 const ALPN: &[u8] = b"anagram/call/1";
 const LANES_ALPN: &[u8] = b"anagram/call/2";
@@ -15,12 +38,12 @@ fn js_error(e: impl std::fmt::Display) -> JsError {
 }
 
 /// An ephemeral identity. Never shared between calls or persisted.
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct CallEndpoint {
     endpoint: Endpoint,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl CallEndpoint {
     pub async fn create(relay_url: Option<String>) -> Result<CallEndpoint, JsError> {
         let urls = match relay_url {
@@ -40,13 +63,38 @@ impl CallEndpoint {
         if urls.is_empty() || urls.len() > 21 {
             return Err(JsError::new("Configure between 1 and 21 Iroh relays"));
         }
+        for url in &urls {
+            let parsed: RelayUrl = url.parse().map_err(js_error)?;
+            let url = &*parsed;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(JsError::new("Invalid HTTPS relay URL"));
+            }
+        }
         let relays = urls
             .iter()
             .map(|url| url.parse::<RelayUrl>())
             .collect::<Result<Vec<_>, _>>()
             .map_err(js_error)?;
         // Nostr supplies authenticated addresses; never publish or resolve call IDs publicly.
-        let endpoint = Endpoint::builder(presets::Minimal)
+        let builder = Endpoint::builder(presets::Minimal);
+        // Browser WASM has no IP transports; native clients explicitly remove them.
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.clear_ip_transports();
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        let builder = builder.ca_tls_config(iroh_relay::tls::CaTlsConfig::system());
+        let endpoint = builder
+            .transport_config(
+                QuicTransportConfig::builder()
+                    .datagram_send_buffer_size(2200)
+                    .datagram_receive_buffer_size(Some(8800))
+                    .build(),
+            )
             .alpns(vec![ALPN.to_vec(), LANES_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(RelayMap::from_iter(relays)))
             .bind()
@@ -55,8 +103,14 @@ impl CallEndpoint {
         Ok(Self { endpoint })
     }
 
-    pub async fn online(&self) {
-        self.endpoint.online().await;
+    pub fn audio_datagrams(&self) -> bool {
+        true
+    }
+    pub async fn online(&self) -> Result<(), JsError> {
+        timeout(Duration::from_secs(15), self.endpoint.online())
+            .await
+            .map_err(js_error)?;
+        Ok(())
     }
     pub fn id(&self) -> String {
         self.endpoint.id().to_string()
@@ -114,6 +168,7 @@ impl CallEndpoint {
         call_id: String,
         lanes: bool,
     ) -> Result<CallConnection, JsError> {
+        validate_call_id(&call_id)?;
         let id: EndpointId = peer_id.parse().map_err(js_error)?;
         let addr = EndpointAddr::new(id).with_relay_url(relay_url.parse().map_err(js_error)?);
         let conn = self
@@ -153,6 +208,7 @@ impl CallEndpoint {
         call_id: String,
         lanes: bool,
     ) -> Result<CallConnection, JsError> {
+        validate_call_id(&call_id)?;
         let expected: EndpointId = peer_id.parse().map_err(js_error)?;
         loop {
             let incoming = self
@@ -194,24 +250,98 @@ impl CallEndpoint {
     }
 }
 
+fn validate_call_id(id: &str) -> Result<(), JsError> {
+    if id.len() != 36
+        || !id.bytes().enumerate().all(|(i, c)| {
+            if [8, 13, 18, 23].contains(&i) {
+                c == b'-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        })
+    {
+        return Err(JsError::new("Invalid call ID"));
+    }
+    Ok(())
+}
+
 fn frame_lane(kind: u8) -> usize {
     match kind {
-        0 | 4 => 1,
+        0 | 4 | 9 => 1,
         3 | 5 => 2,
         6 | 7 => 3,
         _ => 0,
     }
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct CallConnection {
     conn: Connection,
     send: Vec<Mutex<SendStream>>,
     recv: Vec<Mutex<RecvStream>>,
 }
 
-#[wasm_bindgen]
+#[cfg(not(target_arch = "wasm32"))]
 impl CallConnection {
+    // Amortize native WebView IPC latency without retaining a speech backlog.
+    // Datagram reads are cancellation-safe; stream reads must never use this.
+    pub async fn recv_audio_batch(&self) -> Result<Vec<u8>, JsError> {
+        let mut packets = std::collections::VecDeque::from([self.recv_audio().await?]);
+        for _ in 0..64 {
+            let Some(next) = self.conn.read_datagram().now_or_never() else {
+                break;
+            };
+            let data = next.map_err(js_error)?;
+            if data.len() > 14 && data.len() <= 1100 && data[0] == 9 && data[1] == 1 {
+                if packets.len() == 4 {
+                    packets.pop_front();
+                }
+                packets.push_back(data.to_vec());
+            }
+        }
+        let mut bytes = Vec::with_capacity(4408);
+        for packet in packets {
+            bytes.extend_from_slice(&(packet.len() as u16).to_be_bytes());
+            bytes.extend_from_slice(&packet);
+        }
+        Ok(bytes)
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl CallConnection {
+    pub fn stats_json(&self) -> String {
+        let paths = self.conn.paths();
+        let relay_only = paths.iter().all(|path| path.is_relay());
+        let rtt = paths
+            .iter()
+            .find(|path| path.is_selected())
+            .map(|path| path.rtt().as_millis())
+            .unwrap_or(0);
+        format!(
+            r#"{{"relayOnly":{},"rttMs":{},"paths":{}}}"#,
+            relay_only,
+            rtt,
+            paths.len()
+        )
+    }
+    // Datagram buffers are bounded by Iroh; never enqueue stale speech behind
+    // video retransmissions. Relay TCP stalls can still delay the underlying path.
+    pub fn send_audio(&self, data: Vec<u8>) -> Result<(), JsError> {
+        if data.len() <= 14 || data.len() > 1100 || data[0] != 9 || data[1] != 1 {
+            return Err(JsError::new("Invalid audio packet"));
+        }
+        self.conn.send_datagram(data.into()).map_err(js_error)
+    }
+    pub async fn recv_audio(&self) -> Result<Vec<u8>, JsError> {
+        loop {
+            let data = self.conn.read_datagram().await.map_err(js_error)?;
+            if data.len() > 14 && data.len() <= 1100 && data[0] == 9 && data[1] == 1 {
+                return Ok(data.to_vec());
+            }
+        }
+    }
+
     pub async fn send(&self, data: Vec<u8>) -> Result<(), JsError> {
         if data.is_empty() || data.len() > MAX_FRAME {
             return Err(JsError::new("Invalid call frame size"));

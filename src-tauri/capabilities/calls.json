@@ -1,0 +1,6 @@
+{
+  "identifier": "calls",
+  "description": "Relay-only Iroh call transport in the main application window",
+  "windows": ["main"],
+  "permissions": ["allow-iroh-call"]
+}

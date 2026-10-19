@@ -1,9 +1,13 @@
 import type { CallConnection, CallEndpoint } from '#src/types/call.ts';
 
-interface RawConnection extends CallConnection {
+export interface RawConnection extends CallConnection {
+  stats_json?(): string;
+  send_audio?(data: Uint8Array): Promise<void> | void;
+  recv_audio?(): Promise<Uint8Array>;
   recv_lane(lane: number): Promise<Uint8Array>;
 }
 export interface RawCallEndpoint extends CallEndpoint {
+  audio_datagrams?(): boolean;
   connect_lanes?(peer: string, relay: string, call: string): Promise<RawConnection>;
   accept_lanes?(peer: string, call: string): Promise<RawConnection>;
 }
@@ -16,6 +20,18 @@ export function mergeCallLanes(connection: RawConnection): CallConnection {
   let ready = false;
   let closed = false;
   return {
+    ...(connection.stats_json
+      ? { transportStats: async () => JSON.parse(connection.stats_json!()) }
+      : {}),
+    ...(connection.transportStats ? { transportStats: () => connection.transportStats!() } : {}),
+    ...(connection.send_audio && connection.recv_audio
+      ? {
+          sendAudio: async (data: Uint8Array) => {
+            await connection.send_audio!(data);
+          },
+          recvAudio: () => connection.recv_audio!(),
+        }
+      : {}),
     send: (data) => connection.send(data),
     async recv() {
       if (closed) throw new Error('Call connection closed');
@@ -45,6 +61,7 @@ export function adaptCallEndpoint(endpoint: RawCallEndpoint): CallEndpoint {
   const multiplexed = Boolean(endpoint.connect_lanes && endpoint.accept_lanes);
   return {
     multiplexed,
+    datagrams: endpoint.audio_datagrams?.() === true,
     online: () => endpoint.online(),
     id: () => endpoint.id(),
     relay_url: () => endpoint.relay_url(),

@@ -1,8 +1,13 @@
 import { expect, test, type ConsoleMessage } from '@playwright/test';
 
 for (const kind of ['audio', 'video'] as const) {
-  for (const managed of [false, true]) {
-    test(`${kind} ${managed ? 'managed' : 'standard'} playback catches up after a brief interruption without a seek loop`, async ({
+  for (const { managed, slowSend, unevenSend } of [
+    { managed: false, slowSend: false, unevenSend: false },
+    { managed: true, slowSend: false, unevenSend: false },
+    { managed: false, slowSend: true, unevenSend: false },
+    { managed: false, slowSend: false, unevenSend: true },
+  ]) {
+    test(`${kind} ${managed ? 'managed' : 'standard'}${slowSend ? ' slow-send' : unevenSend ? ' uneven-send' : ''} playback catches up after a brief interruption without a seek loop`, async ({
       page,
       browserName,
     }, testInfo) => {
@@ -22,14 +27,52 @@ for (const kind of ['audio', 'video'] as const) {
       // Keep progress outside the page: a native media hang can also stop its timers.
       const diagnostics: string[] = [];
       const onConsole = (message: ConsoleMessage) => {
-        if (message.text().startsWith('[call-playback]')) diagnostics.push(message.text());
+        if (message.text().startsWith('[call-playback]')) {
+          diagnostics.push(message.text());
+          if (diagnostics.length > 160) diagnostics.shift();
+        }
       };
       page.on('console', onConsole);
       const playback = page.evaluate(
-        async ({ kind, managed }) => {
+        async ({ kind, managed, slowSend, unevenSend, traceMedia }) => {
           const stage = (name: string) =>
             console.log(`[call-playback] ${performance.now().toFixed(0)} ${name}`);
           stage('setup');
+          // These markers do not read media state themselves. If a native getter
+          // or seek blocks WebKit, the external deadline retains the last entry.
+          const restores: (() => void)[] = [];
+          if (traceMedia) {
+            for (const [prototype, properties] of [
+              [HTMLMediaElement.prototype, ['buffered', 'currentTime', 'paused']],
+              [SourceBuffer.prototype, ['buffered']],
+            ] as const) {
+              for (const property of properties) {
+                const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
+                if (!descriptor?.get || !descriptor.configurable) continue;
+                const label = `${prototype.constructor.name}.${property}`;
+                Object.defineProperty(prototype, property, {
+                  ...descriptor,
+                  get() {
+                    stage(`read ${label}`);
+                    const value = descriptor.get!.call(this);
+                    stage(`read ${label} returned`);
+                    return value;
+                  },
+                  ...(descriptor.set
+                    ? {
+                        set(value: number) {
+                          stage(`set ${label}`);
+                          descriptor.set!.call(this, value);
+                          stage(`set ${label} returned`);
+                        },
+                      }
+                    : {}),
+                });
+                restores.push(() => Object.defineProperty(prototype, property, descriptor));
+              }
+            }
+          }
+          const heartbeat = traceMedia ? setInterval(() => stage('heartbeat'), 1000) : undefined;
           if (managed) {
             (window as any).isTauri = true;
             Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' });
@@ -107,8 +150,12 @@ for (const kind of ['audio', 'video'] as const) {
             stream,
             mime,
             async (bytes: Uint8Array) => {
-              // Small, ordered delivery jitter; retain every continuous WebM segment.
-              await delay([0, 25, 70, 10][chunk++ % 4]);
+              // Preserve the jitter regression; separately exercise sustained slow
+              // acknowledgements that require queued WebM chunks to coalesce.
+              await delay(
+                slowSend ? 150 : (unevenSend ? [0, 25, 200, 150] : [0, 25, 70, 10])[chunk % 4],
+              );
+              chunk++;
               if (chunk === 1) stage('append first segment');
               receiver.append(bytes.subarray(1));
               if (chunk === 1) stage('first segment appended');
@@ -175,6 +222,8 @@ for (const kind of ['audio', 'video'] as const) {
               displayedFrames: displayedFrames - framesBefore,
             };
           } finally {
+            clearInterval(heartbeat);
+            restores.forEach((restore) => restore());
             stopFollowing();
             if (element instanceof HTMLVideoElement)
               element.cancelVideoFrameCallback(frameCallback);
@@ -193,7 +242,13 @@ for (const kind of ['audio', 'video'] as const) {
             stage('cleanup complete');
           }
         },
-        { kind, managed },
+        {
+          kind,
+          managed,
+          slowSend,
+          unevenSend,
+          traceMedia: process.env.ANAGRAM_MEDIA_DIAGNOSTICS === '1',
+        },
       );
       let deadline: ReturnType<typeof setTimeout> | undefined;
       const result = await Promise.race([

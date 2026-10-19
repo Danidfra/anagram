@@ -1,14 +1,12 @@
 #[cfg(desktop)]
 use std::sync::atomic::AtomicUsize;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::atomic::Ordering;
 #[cfg(target_os = "android")]
 mod android_notifications;
 #[cfg(any(target_os = "android", test))]
 mod call_notifications;
 mod clipboard;
+mod iroh_calls;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 mod mobile_call_audio;
 mod secure_storage;
@@ -135,7 +133,7 @@ async fn set_mobile_call_audio(
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().manage(iroh_calls::Calls::default());
     #[cfg(target_os = "android")]
     let builder = builder
         .plugin(secure_storage::android_plugin())
@@ -152,7 +150,7 @@ pub fn run() {
                 None
             };
             let navigation_origin = dev_origin.clone();
-            let capture_origin_trusted = Arc::new(AtomicBool::new(false));
+            let capture_origin_trusted = app.state::<iroh_calls::Calls>().trusted_origin.clone();
             let navigation_capture_trusted = capture_origin_trusted.clone();
             let loaded_capture_trusted = capture_origin_trusted.clone();
             let builder =
@@ -221,6 +219,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.state::<iroh_calls::Calls>().close_all();
                 for (label, presentation) in window.app_handle().webview_windows() {
                     if label.starts_with("call-presentation-") {
                         let _ = presentation.close();
@@ -229,6 +228,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            iroh_calls::iroh_call,
             read_clipboard_image,
             read_private_key,
             write_private_key,

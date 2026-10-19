@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getCallStream } from '#src/services/callStreamRegistry.ts';
   import { onDestroy } from 'svelte';
   import { isIosNative } from '#src/lib/platform/ios.ts';
   import {
@@ -34,11 +35,13 @@
     value: string,
   ) {
     if (!node) return;
+    source = source ?? getCallStream(value) ?? null;
     stopFollowing?.();
     stopFollowing = !source && value ? watchCallLive(node) : undefined;
     if (isIosNative()) node.disableRemotePlayback = true;
     node.srcObject = source;
     if (!source && value) node.src = value;
+    else node.removeAttribute('src');
     void play();
   }
   $: syncSource(element, stream, url);

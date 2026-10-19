@@ -1,0 +1,47 @@
+import plistlib
+from pathlib import Path
+import tempfile
+import unittest
+
+from ios import choose_device, simulator_app
+
+
+class SimulatorSmokeTests(unittest.TestCase):
+    def test_selects_an_available_iphone_in_an_ios_runtime(self):
+        phone = {'name': 'iPhone 17', 'isAvailable': True, 'udid': 'test', 'state': 'Shutdown'}
+        self.assertEqual(choose_device({
+            'com.apple.CoreSimulator.SimRuntime.tvOS-26-0': [phone],
+            'com.apple.CoreSimulator.SimRuntime.iOS-26-0': [
+                dict(phone, name='iPad'), dict(phone, isAvailable=False), phone,
+            ],
+        }), phone)
+        with self.assertRaises(RuntimeError):
+            choose_device({'com.apple.CoreSimulator.SimRuntime.tvOS-26-0': [phone]})
+
+    def test_rejects_device_bundles_and_missing_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = root / 'Anagram.app'
+            app.mkdir()
+            info = {
+                'CFBundleIdentifier': 'com.nostr.anagram',
+                'CFBundleSupportedPlatforms': ['iPhoneSimulator'],
+                'NSCameraUsageDescription': 'Camera for calls',
+                'NSMicrophoneUsageDescription': 'Microphone for calls',
+            }
+
+            def write(value):
+                (app / 'Info.plist').write_bytes(plistlib.dumps(value))
+
+            write(info)
+            self.assertEqual(simulator_app(root), app)
+            write(dict(info, CFBundleSupportedPlatforms=['iPhoneOS']))
+            with self.assertRaisesRegex(RuntimeError, 'not an iPhone simulator'):
+                simulator_app(root)
+            write(dict(info, NSMicrophoneUsageDescription=''))
+            with self.assertRaisesRegex(RuntimeError, 'permission description'):
+                simulator_app(root)
+
+
+if __name__ == '__main__':
+    unittest.main()

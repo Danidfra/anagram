@@ -41,6 +41,8 @@ export function parseCallSignal(
           value.reconnectAttempt < 1 ||
           !['accept', 'reconnect'].includes(value.action))) ||
       (value.action === 'reconnect' && value.reconnectAttempt === undefined) ||
+      (value.packetVideoVersion !== undefined && value.packetVideoVersion !== 1) ||
+      (value.packetAudioVersion !== undefined && value.packetAudioVersion !== 1) ||
       (value.mediaVersion !== undefined && value.mediaVersion !== 2) ||
       (value.videoSupported !== undefined && typeof value.videoSupported !== 'boolean') ||
       (value.screenSupported !== undefined && typeof value.screenSupported !== 'boolean') ||
@@ -92,6 +94,8 @@ export function parseCallSignal(
       ...(value.mediaVersion === 2
         ? {
             mediaVersion: 2,
+            ...(value.packetVideoVersion === 1 ? { packetVideoVersion: 1 } : {}),
+            ...(value.packetAudioVersion === 1 ? { packetAudioVersion: 1 } : {}),
             ...(value.muteStateSupported === undefined
               ? {}
               : { muteStateSupported: value.muteStateSupported }),

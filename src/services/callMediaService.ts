@@ -1,3 +1,12 @@
+import {
+  PACKET_VIDEO_MIME,
+  createPacketVideoReceiver,
+  recordPacketVideo,
+} from './callPacketVideo.ts';
+export { callPacketVideoSupported } from './callPacketVideo.ts';
+import { OPUS_CALL_MIME } from './callAudioPackets.ts';
+import { createPacketAudioReceiver, recordPacketAudio } from './callPacketAudio.ts';
+export { prepareCallPacketAudio } from './callPacketAudio.ts';
 import type { CallMode } from '#src/types/call.ts';
 import { CALL_MIME_TYPES, CALL_VIDEO_MIME_TYPE } from '#src/utils/callSignal.ts';
 import { isIosNative } from '#src/lib/platform/ios.ts';
@@ -111,6 +120,8 @@ export interface CallMediaReceiver {
 
 // Each peer produces a continuous WebM stream; preserve every segment and bound buffering.
 export function createCallMediaReceiver(mimeType: string, onError: () => void): CallMediaReceiver {
+  if (mimeType === OPUS_CALL_MIME) return createPacketAudioReceiver(onError);
+  if (mimeType === PACKET_VIDEO_MIME) return createPacketVideoReceiver(onError);
   const Source = callMediaSource();
   if (!Source) throw new Error('Streaming call playback is unavailable');
   const source = new Source();
@@ -177,6 +188,8 @@ export function createCallMediaReceiver(mimeType: string, onError: () => void): 
 }
 
 export interface CallRecordingOptions {
+  audioGeneration?: number;
+  videoFrameRate?: number;
   videoBitsPerSecond?: number;
   onCongestion?: () => void;
   onSendError?: (cause: unknown) => void;
@@ -189,8 +202,10 @@ export function recordCallMedia(
   onError: () => void,
   options?: CallRecordingOptions,
 ): () => void {
-  // Only the standalone Opus lane uses shorter chunks. Video and legacy
-  // combined audio/video retain their recording cadence.
+  if (mimeType === OPUS_CALL_MIME) return recordPacketAudio(stream, send, onError, options);
+  if (mimeType === PACKET_VIDEO_MIME) return recordPacketVideo(stream, send, onError, options);
+  const nativeLinux =
+    isTauri() && /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
   const timeslice = mimeType === CALL_MIME_TYPES[1] ? 50 : 100;
   const recorder = new MediaRecorder(stream, {
     mimeType,
@@ -200,7 +215,8 @@ export function recordCallMedia(
   let stopped = false;
   let keyframeTimer: ReturnType<typeof setTimeout> | undefined;
   let queuedBytes = 0;
-  let queue = Promise.resolve();
+  const pending: { id: number; blob: Blob }[] = [];
+  let sending = false;
   let sequence = 0;
   const queuedAt = new Map<number, number>();
   const stop = () => {
@@ -209,6 +225,7 @@ export function recordCallMedia(
     clearTimeout(keyframeTimer);
     clearInterval(watchdog);
     queuedAt.clear();
+    pending.length = 0;
     recorder.ondataavailable = null;
     recorder.onerror = null;
     recorder.onstop = null;
@@ -222,23 +239,23 @@ export function recordCallMedia(
   };
   // Byte limits protect memory; age limits protect conversation latency. Stop a
   // whole video stream, never discard arbitrary chunks from continuous WebM.
-  const watchdog = options?.onCongestion
-    ? setInterval(() => {
-        const oldest = queuedAt.values().next().value;
-        if (oldest !== undefined && performance.now() - oldest > 1500)
-          failed(options.onCongestion!);
-      }, 250)
-    : undefined;
+  const watchdog =
+    options?.onCongestion || options?.onSendError
+      ? setInterval(() => {
+          const oldest = queuedAt.values().next().value;
+          if (oldest !== undefined && performance.now() - oldest > 1500)
+            failed(
+              options.onCongestion ??
+                (() => options.onSendError!(new Error('Call media send queue stalled'))),
+            );
+        }, 250)
+      : undefined;
   recorder.onerror = () => failed(onError);
   // WebKitGTK's VP8 recorder disables periodic keyframes. Renew its video-only
   // recording before the receiver's eight-second buffer discards the first one.
   // GStreamer keeps monotonic timestamps across recordings; ordered WebM init
   // segments can reuse the same MSE player without interrupting the audio track.
-  const renewVideo =
-    mimeType === CALL_VIDEO_MIME_TYPE &&
-    isTauri() &&
-    /Linux/.test(navigator.userAgent) &&
-    !/Android/.test(navigator.userAgent);
+  const renewVideo = mimeType === CALL_VIDEO_MIME_TYPE && nativeLinux;
   const scheduleKeyframe = () => {
     if (renewVideo)
       keyframeTimer = setTimeout(() => {
@@ -260,29 +277,41 @@ export function recordCallMedia(
       failed(onError);
     }
   };
-  recorder.ondataavailable = (event) => {
-    if (stopped || !event.data.size) return;
-    queuedBytes += event.data.size;
-    if (queuedBytes > 1_048_576 || event.data.size > 1_048_575) {
-      failed(options?.onCongestion ?? onError);
-      return;
-    }
-    const id = sequence++;
-    queuedAt.set(id, performance.now());
-    queue = queue
-      .then(async () => {
-        if (stopped) return;
-        const data = new Uint8Array(await event.data.arrayBuffer());
+  const pump = async () => {
+    if (sending || stopped) return;
+    sending = true;
+    try {
+      while (!stopped && pending.length) {
+        // Coalesce only chunks already waiting. WebM is an ordered byte stream;
+        // one IPC round trip per chunk otherwise builds lag on native WebViews.
+        const batch = pending.splice(0);
+        const blob = batch.length === 1 ? batch[0].blob : new Blob(batch.map((p) => p.blob));
+        const data = new Uint8Array(await blob.arrayBuffer());
         if (stopped) return;
         const frame = new Uint8Array(data.length + 1);
         frame.set(data, 1);
         await send(frame);
         queuedBytes -= data.length;
-        queuedAt.delete(id);
-      })
-      .catch((cause) =>
-        failed(() => (options?.onSendError ? options.onSendError(cause) : onError())),
-      );
+        for (const { id } of batch) queuedAt.delete(id);
+      }
+    } catch (cause) {
+      failed(() => (options?.onSendError ? options.onSendError(cause) : onError()));
+    } finally {
+      sending = false;
+    }
+  };
+  recorder.ondataavailable = (event) => {
+    if (stopped || !event.data.size) return;
+    queuedBytes += event.data.size;
+    // Leave one byte for the lane marker, including when a whole queue is merged.
+    if (queuedBytes > 1_048_575) {
+      failed(options?.onCongestion ?? onError);
+      return;
+    }
+    const id = sequence++;
+    queuedAt.set(id, performance.now());
+    pending.push({ id, blob: event.data });
+    void pump();
   };
   try {
     recorder.start(timeslice);

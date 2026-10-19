@@ -222,6 +222,55 @@ describe('continuous media buffering', () => {
   });
 });
 
+it.each(['audio/webm;codecs=opus', 'video/webm;codecs=vp8', 'video/webm;codecs=vp8,opus'])(
+  'keeps ordered %s flowing when a send takes longer than the recording cadence',
+  async (mime) => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
+    class Recorder {
+      static current: Recorder;
+      state = 'inactive';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      constructor() {
+        Recorder.current = this;
+      }
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+      }
+    }
+    vi.stubGlobal('MediaRecorder', Recorder);
+    const delivered: number[] = [];
+    let sending = 0,
+      peakSending = 0;
+    const failure = vi.fn(),
+      congestion = vi.fn();
+    const send = vi.fn(async (frame: Uint8Array) => {
+      peakSending = Math.max(peakSending, ++sending);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      delivered.push(...frame.subarray(1));
+      sending--;
+    });
+    const stop = recordCallMedia({} as MediaStream, mime, send, failure, {
+      onCongestion: congestion,
+    });
+    for (let i = 0; i < 50; i++) {
+      Recorder.current.ondataavailable?.({ data: new Blob([new Uint8Array([i])]) });
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    await vi.advanceTimersByTimeAsync(1000);
+    stop();
+    expect(congestion).not.toHaveBeenCalled();
+    expect(failure).not.toHaveBeenCalled();
+    expect(delivered).toEqual(Array.from({ length: 50 }, (_, i) => i));
+    expect(peakSending).toBe(1);
+    expect(send.mock.calls.length).toBeLessThan(30);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
 it('stops a congested video recorder by queue age without dropping chunks or ending audio', async () => {
   vi.useFakeTimers();
   class Recorder {
@@ -305,7 +354,7 @@ it.each([
       {} as MediaStream,
       mime,
       async (bytes) => {
-        sent.push(bytes[1]);
+        sent.push(...bytes.subarray(1));
       },
       failure,
     );

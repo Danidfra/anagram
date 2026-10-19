@@ -3,6 +3,8 @@ import type { CallSignal } from '#src/types/call.ts';
 import { createStore } from '#src/lib/state/store.svelte.ts';
 import {
   callMediaSupported,
+  callPacketVideoSupported,
+  prepareCallPacketAudio,
   createCallMediaReceiver,
   getCallCamera,
   getCallMedia,
@@ -57,6 +59,8 @@ export const useCallStore = createStore('calls', () => {
       return { name: contact?.name || chat?.name || peer.slice(0, 12) };
     },
     supported: callMediaSupported,
+    preparePacketAudio: prepareCallPacketAudio,
+    packetVideoSupported: callPacketVideoSupported,
     otherCallBusy: () => useCallRoomStore().busy,
     hasSeen: (peer, id) =>
       hasSeenCallControl(useNostrStore().getLoggedInPublicKeyHex() ?? '', peer, id),

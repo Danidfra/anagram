@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { getPublicKey, nip19, nip44 } from 'nostr-tools';
+import { generateSecretKey, getPublicKey, nip19, nip44, nip59 } from 'nostr-tools';
 import {
   bootstrapSessionOnPage,
   createGroup,
@@ -11,10 +11,11 @@ import {
 } from './parity/helpers';
 
 // Only generated test credentials are used. Never attach captured traffic or keys.
-test('private login and group messaging keep keys out of traffic, logs and diagnostics', async ({
+test('private login, group messages and call signals keep keys out of traffic, logs and diagnostics', async ({
   page,
 }) => {
   const account = TEST_ACCOUNTS.keyExposure;
+  const sender = getPublicKey(Uint8Array.from(Buffer.from(account.privateKey, 'hex')));
   const outbound: string[] = [];
   const logs: string[] = [];
   const consoleSnapshots: Promise<void>[] = [];
@@ -58,6 +59,51 @@ test('private login and group messaging keep keys out of traffic, logs and diagn
   await navigateToChat(page, group);
   await waitForThreadMessage(page, message, { chatId: group });
 
+  const recipientKey = generateSecretKey();
+  const recipient = getPublicKey(recipientKey);
+  const roomSecret = Buffer.from(generateSecretKey()).toString('hex');
+  const callIds = await page.evaluate(
+    async ({ recipient, roomSecret, sender }) => {
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
+      const { CALL_PROTOCOL } = await import('/src/types/call.ts');
+      const { ROOM_PROTOCOL } = await import('/src/types/callRoom.ts');
+      const store = useNostrStore();
+      const callId = crypto.randomUUID();
+      const roomId = crypto.randomUUID();
+      const senderSession = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 60_000).toISOString();
+      await store.sendCallSignal(recipient, {
+        protocol: CALL_PROTOCOL,
+        action: 'invite',
+        callId,
+        expiresAt,
+        mode: 'audio',
+        address: { id: 'a'.repeat(64), relayUrl: 'https://call-relay.invalid/' },
+        mimeType: 'audio/webm;codecs=opus',
+      });
+      await store.sendRoomSignal(
+        recipient,
+        {
+          protocol: ROOM_PROTOCOL,
+          action: 'join',
+          roomId,
+          senderSession,
+          expiresAt,
+          secret: roomSecret,
+          member: {
+            pubkey: sender,
+            sessionId: senderSession,
+            name: 'Generated caller',
+            relays: ['ws://127.0.0.1:7777/'],
+          },
+        },
+        ['ws://127.0.0.1:7777/'],
+      );
+      return [callId, roomId];
+    },
+    { recipient, roomSecret, sender },
+  );
+
   const snapshot = await page.evaluate(async (group) => {
     const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
     const { chatDataService } = await import('/src/services/chatDataService.ts');
@@ -94,6 +140,29 @@ test('private login and group messaging keep keys out of traffic, logs and diagn
     Buffer.from(secret, 'hex').toString('base64'),
   ]);
   if (identity.recovery_entropy) encodings.push(identity.recovery_entropy);
+  encodings.push(roomSecret, ...callIds);
+  const received = new Map<string, ReturnType<typeof nip59.unwrapEvent>>();
+  for (const frame of outbound.filter((value) => value.startsWith('["EVENT",'))) {
+    const event = JSON.parse(frame)[1];
+    if (
+      event.kind !== 1059 ||
+      !event.tags.some((tag: string[]) => tag[0] === 'p' && tag[1] === recipient)
+    )
+      continue;
+    received.set(event.id, nip59.unwrapEvent(event, recipientKey));
+  }
+  expect(received.size).toBe(2);
+  const controls = [...received.values()].map((rumor) => {
+    expect(rumor.kind).toBe(21117);
+    expect(rumor.pubkey).toBe(sender);
+    return JSON.parse(rumor.content);
+  });
+  expect(controls).toContainEqual(
+    expect.objectContaining({ action: 'invite', callId: callIds[0] }),
+  );
+  expect(controls).toContainEqual(
+    expect.objectContaining({ action: 'join', roomId: callIds[1], secret: roomSecret }),
+  );
   await Promise.all(consoleSnapshots);
   const observed = [outbound.join('\n'), logs.join('\n'), snapshot.diagnostics, snapshot.traces];
   expect(outbound.some((frame) => frame.startsWith('["EVENT",'))).toBe(true);
