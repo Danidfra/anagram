@@ -487,6 +487,275 @@ it('pages history through a healthy replica without a stalled replica blocking a
   expect(get(runtime.state).error).toBe('');
 });
 
+it('restores the newest cached messages after scrolling through retained edit versions', async () => {
+  const key = generateSecretKey();
+  const metadata = room(key, 'edited-cache-window');
+  const group = parsePublicRoom(metadata);
+  const db = new PublicGroupData(getPublicKey(key));
+  stops.push(() => void db.close());
+  const events = Array.from({ length: 302 }, (_, n) =>
+    finalizeEvent(
+      { kind: 9, created_at: 100 + n, content: `Message ${n}`, tags: [['a', group.address]] },
+      key,
+    ),
+  );
+  const edits = [40, 80].map((n) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: events[n].created_at,
+        content: `Edited ${n}`,
+        tags: [
+          ['a', group.address],
+          ['e', events[n].id, '', 'edit'],
+        ],
+      },
+      key,
+    ),
+  );
+  await db.putMany(group.address, [...events, ...edits]);
+  const { runtime, subscriptions } = setup([metadata], key);
+  await runtime.open(encodeRoomLink(group));
+  expect(get(runtime.state).messages.at(-1)?.id).toBe(events[301].id);
+  const pages = vi.spyOn(PublicGroupData.prototype, 'page');
+  for (let cycle = 0; cycle < 2; cycle++) {
+    for (let n = 0; n < 6; n++) await runtime.older();
+    expect(get(runtime.state).messages[0].id).toBe(events[0].id);
+    expect(get(runtime.state).hasNewer).toBe(true);
+    const queries = subscriptions.length;
+    await runtime.newer();
+    expect(get(runtime.state).messages.map((event) => event.id)).toEqual(
+      events.slice(-300).map((event) => event.id),
+    );
+    expect(get(runtime.state).hasNewer).toBe(false);
+    expect(subscriptions).toHaveLength(queries);
+  }
+  expect(pages.mock.calls.every((args) => args[2]! <= 300)).toBe(true);
+  expect((await db.page(group.address, undefined, 2)).map((event) => event.id)).toEqual(
+    events.slice(-2).map((event) => event.id),
+  );
+}, 20_000);
+
+it('pages cached public history without relay waits or repeated signature checks', async () => {
+  const key = generateSecretKey(),
+    metadata = room(key, 'cached-older');
+  const group = parsePublicRoom(metadata),
+    db = new PublicGroupData(getPublicKey(key));
+  stops.push(() => void db.close());
+  const events = Array.from({ length: 180 }, (_, n) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 100 + n,
+        content: `Message ${n}`,
+        tags: [['a', group.address]],
+      },
+      key,
+    ),
+  );
+  await db.putMany(group.address, events);
+  let online = true;
+  const { runtime, subscriptions } = setup([metadata], key, () => online);
+  await runtime.open(encodeRoomLink(group));
+  const previous = get(runtime.state).messages;
+  const historyQueries = () =>
+    subscriptions.filter((filters) =>
+      filters.some((filter) => filter.kinds?.includes(9) && filter.until !== undefined),
+    ).length;
+  const queries = historyQueries();
+  const verify = vi.spyOn(ClientEvent.prototype, 'verifySignature');
+  online = false;
+  await runtime.older();
+  const current = get(runtime.state).messages;
+  expect(current.map((event) => event.id)).toEqual(events.slice(80).map((event) => event.id));
+  expect(current.slice(-50).every((event, index) => event === previous[index])).toBe(true);
+  expect(verify.mock.calls.length).toBeLessThanOrEqual(50);
+  expect(historyQueries()).toBe(queries);
+  expect(get(runtime.state).loading).toBe(false);
+  // Cached pages do not claim EOSE or exhaust unknown relay history.
+  expect(get(runtime.state).more).toBe(true);
+});
+
+it('refreshes changed cached actions and out-of-window reply parents while retaining unchanged rows', async () => {
+  const key = generateSecretKey(),
+    metadata = room(key, 'hydration-reuse');
+  const group = parsePublicRoom(metadata),
+    db = new PublicGroupData(getPublicKey(key));
+  stops.push(() => void db.close());
+  const events = Array.from({ length: 180 }, (_, n) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 100 + n,
+        content: `Message ${n}`,
+        tags: [['a', group.address]],
+      },
+      key,
+    ),
+  );
+  events[170] = finalizeEvent(
+    {
+      ...events[170],
+      tags: [
+        ['a', group.address],
+        ['q', events[20].id, '', getPublicKey(key)],
+      ],
+    },
+    key,
+  );
+  await db.putMany(group.address, events);
+  const { runtime } = setup([metadata], key);
+  const { publicMessageState } = await import('#src/stores/nostr/publicMessageActions.ts');
+  await runtime.open(encodeRoomLink(group));
+  const before = get(runtime.state).messages;
+  const edit = finalizeEvent(
+    {
+      ...events[20],
+      content: 'Updated parent',
+      tags: [
+        ['a', group.address],
+        ['e', events[20].id, '', 'edit'],
+      ],
+    },
+    key,
+  );
+  const reaction = finalizeEvent(
+    {
+      kind: 7,
+      created_at: 300,
+      content: '+',
+      tags: [
+        ['h', group.address],
+        ['e', events[160].id],
+      ],
+    },
+    key,
+  );
+  await db.putActions(group.address, [
+    { event: edit, targets: [events[20].id] },
+    { event: reaction, targets: [events[160].id] },
+  ]);
+  await runtime.older();
+  const rows = get(runtime.state).messages;
+  const message = (n: number) =>
+    publicMessageState(
+      rows.find((event) => event.id === events[n].id)!,
+      group,
+    );
+  expect(message(170).meta.reply?.text).toBe('Updated parent');
+  expect(message(160).meta.reactions).toHaveLength(1);
+  expect(rows.find((event) => event.id === events[179].id)).toBe(before.at(-1));
+  const deletion = finalizeEvent(
+    {
+      kind: 5,
+      created_at: 301,
+      content: '',
+      tags: [
+        ['h', group.address],
+        ['e', edit.id],
+      ],
+    },
+    key,
+  );
+  await db.putActions(group.address, [{ event: deletion, targets: [edit.id] }]);
+  await runtime.older();
+  const reply = get(runtime.state).messages.find((event) => event.id === events[170].id)!;
+  expect(publicMessageState(reply, group).meta.reply?.text).toBe('Message deleted');
+});
+
+it('loads newer cached messages without starting an older relay-history query', async () => {
+  const key = generateSecretKey();
+  const metadata = room(key, 'offline-newer');
+  const group = parsePublicRoom(metadata);
+  const db = new PublicGroupData(getPublicKey(key));
+  stops.push(() => void db.close());
+  const events = Array.from({ length: 180 }, (_, n) =>
+    finalizeEvent(
+      {
+        kind: 9,
+        created_at: 100 + n,
+        content: `Message ${n}`,
+        tags: [['a', group.address]],
+      },
+      key,
+    ),
+  );
+  await db.putMany(group.address, events);
+  let online = true;
+  const { runtime, subscriptions } = setup([metadata], key, () => online);
+  await runtime.open(encodeRoomLink(group));
+  await runtime.jumpToMessage(events[40].id);
+  const historyQueries = () =>
+    subscriptions.filter((filters) =>
+      filters.some((filter) => filter.kinds?.includes(9) && filter.until !== undefined),
+    ).length;
+  const queries = historyQueries();
+  online = false;
+  await runtime.newer();
+  expect(get(runtime.state).messages.at(-1)?.id).toBe(events[115].id);
+  expect(get(runtime.state).loading).toBe(false);
+  expect(historyQueries()).toBe(queries);
+});
+
+it.each(['prev', 'next'] as const)(
+  'advances %s through dense cached edits with bounded reads',
+  async (direction) => {
+    const key = generateSecretKey();
+    const metadata = room(key, `dense-edits-${direction}`);
+    const group = parsePublicRoom(metadata);
+    const db = new PublicGroupData(getPublicKey(key));
+    stops.push(() => void db.close());
+    const events = Array.from({ length: 180 }, (_, n) =>
+      finalizeEvent(
+        {
+          kind: 9,
+          created_at: 100 + n,
+          content: `Message ${n}`,
+          tags: [['a', group.address]],
+        },
+        key,
+      ),
+    );
+    const edits = Array.from({ length: 650 }, (_, n) =>
+      finalizeEvent(
+        {
+          kind: 9,
+          created_at: events[80].created_at,
+          content: `Version ${n}`,
+          tags: [
+            ['a', group.address],
+            ['e', events[80].id, '', 'edit'],
+          ],
+        },
+        key,
+      ),
+    );
+    await db.putMany(group.address, [...events, ...edits]);
+    const { runtime } = setup([metadata], key);
+    await runtime.open(encodeRoomLink(group));
+    await runtime.jumpToMessage(events[direction === 'prev' ? 120 : 40].id);
+    const pages = vi.spyOn(PublicGroupData.prototype, 'page');
+    for (let n = 0; n < 6; n++) {
+      pages.mockClear();
+      await (direction === 'prev' ? runtime.older() : runtime.newer());
+      expect(pages.mock.calls.length).toBeLessThanOrEqual(9);
+      expect(pages.mock.calls.every((args) => args[2]! <= 300)).toBe(true);
+      expect(get(runtime.state).messages.length).toBeLessThanOrEqual(300);
+    }
+    const messages = get(runtime.state).messages;
+    expect(messages.map((event) => event.id)).toEqual(
+      (direction === 'prev' ? events.slice(0, 146) : events.slice(15)).map((event) => event.id),
+    );
+    expect(direction === 'prev' ? messages[0].id : messages.at(-1)?.id).toBe(
+      events[direction === 'prev' ? 0 : 179].id,
+    );
+    expect(direction === 'prev' ? get(runtime.state).more : get(runtime.state).hasNewer).toBe(
+      false,
+    );
+  },
+  20_000,
+);
+
 it('does not skip uncached history when an old pin was fetched separately', async () => {
   const key = generateSecretKey();
   const address = `34550:${getPublicKey(key)}:pin-history-gap`;

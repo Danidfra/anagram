@@ -987,6 +987,90 @@ test('public chats render trusted group invitations with the shared Join chat bu
   await expect(untrusted.getByRole('link')).toHaveCount(0);
 });
 
+for (const width of [1280, 390]) {
+  test(`public scrolling restores the latest cached messages past edits at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const owner = await login(page);
+    const room = await create(page, 'Edited cache history');
+    let stallHistory = true, historyQueries = 0;
+    await page.routeWebSocket(relay, (socket) => {
+      const server = socket.connectToServer();
+      socket.onMessage((raw) => {
+        const data = JSON.parse(String(raw));
+        const history = data[0] === 'REQ' && data.slice(2).some(
+          (filter: { kinds?: number[]; until?: number }) =>
+            filter.kinds?.includes(9) && filter.until !== undefined,
+        );
+        if (history && stallHistory) { historyQueries++; return; }
+        server.send(raw);
+      });
+    });
+    const base = Math.floor(Date.now() / 1000) - 1000;
+    const events = Array.from({ length: 302 }, (_, n) =>
+      finalizeEvent(
+        {
+          kind: 9,
+          created_at: base + n,
+          content: `Cached note ${n}`,
+          tags: [['a', room.address]],
+        },
+        owner.key,
+      ),
+    );
+    const edits = [40, 80].map((n) =>
+      finalizeEvent(
+        {
+          kind: 9,
+          created_at: events[n].created_at,
+          content: `Edited note ${n}`,
+          tags: [
+            ['a', room.address],
+            ['e', events[n].id, '', 'edit'],
+          ],
+        },
+        owner.key,
+      ),
+    );
+    await page.evaluate(
+      async ({ account, address, events }) => {
+        const { PublicGroupData } = await import('/src/services/publicGroupData.ts');
+        const db = new PublicGroupData(account);
+        await db.putMany(address, events);
+        await db.close();
+      },
+      { account: owner.pubkey, address: room.address, events: [...events, ...edits] },
+    );
+    await page.reload();
+    const rows = page.getByTestId('public-message');
+    const latest = rows.filter({ hasText: 'Cached note 301' });
+    await expect(latest).toBeVisible();
+    await page.getByTestId('thread-load-older').click();
+    await expect(rows.first()).toHaveAttribute('data-event-id', events[202].id, { timeout: 3000 });
+    expect(historyQueries).toBe(0);
+    stallHistory = false;
+    for (let n = 0; n < 5; n++) {
+      const first = await rows.first().getAttribute('data-event-id');
+      if (first === events[0].id) break;
+      await page.getByTestId('thread-load-older').click();
+      await expect(rows.first()).not.toHaveAttribute('data-event-id', first!);
+    }
+    await expect(rows.first()).toHaveAttribute('data-event-id', events[0].id);
+    await expect(latest).toHaveCount(0);
+    const log = page.getByRole('log', { name: 'Public group messages' });
+    await log.evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+    });
+    await log.hover();
+    await page.mouse.wheel(0, 120);
+    await expect(latest).toBeVisible();
+    await expect(rows.filter({ hasText: 'Cached note 300' })).toBeVisible();
+    await expect(rows).toHaveCount(300);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+}
+
 test('public search reuses thread search and navigates cached messages on desktop and mobile', async ({
   page,
 }, info) => {

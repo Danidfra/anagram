@@ -1,4 +1,5 @@
 import { ClientEvent, nip19, type NostrEvent } from '#src/lib/nostr/client.ts';
+import { getEventHash } from 'nostr-tools';
 import { previewUrl } from '#src/utils/linkPreview.ts';
 
 export const ROOM_KIND = 34550;
@@ -65,17 +66,46 @@ export function publicGroupShareLink(room: RoomAddress): string {
       : 'https://anagram.chat';
   return `${base}/join/chat.html#/public/${encodeRoomLink(room)}`;
 }
+// Cache only successful public-event proofs, not messages or account secrets.
+// Rehash the signed fields on every lookup: an ID alone cannot authenticate a
+// mutated event, and a changed signature must never inherit an earlier result.
+const verifiedSignatures = new Set<string>();
+const VERIFIED_SIGNATURE_LIMIT = 2048;
 export function verifiedPublicEvent(event: NostrEvent): boolean {
-  return (
-    JSON.stringify(event).length <= 65536 &&
-    Number.isSafeInteger(event.created_at) &&
-    event.created_at >= 0 &&
-    event.created_at <= Math.floor(Date.now() / 1000) + 60 &&
-    event.tags.length <= 2200 &&
-    event.tags.every((t) => t.every((v) => typeof v === 'string' && v.length <= 4096)) &&
-    new ClientEvent(undefined, event).verifySignature()
-  );
+  if (
+    !(
+      JSON.stringify(event).length <= 65536 &&
+      Number.isSafeInteger(event.created_at) &&
+      event.created_at >= 0 &&
+      event.created_at <= Math.floor(Date.now() / 1000) + 60 &&
+      event.tags.length <= 2200 &&
+      event.tags.every((t) => t.every((v) => typeof v === 'string' && v.length <= 4096))
+    )
+  )
+    return false;
+  try {
+    const hash = getEventHash(event);
+    if (
+      event.id !== hash ||
+      typeof event.sig !== 'string' ||
+      !/^[a-f0-9]{128}$/i.test(event.sig)
+    )
+      return false;
+    const proof = `${hash}:${event.sig}`;
+    if (verifiedSignatures.delete(proof)) {
+      verifiedSignatures.add(proof);
+      return true;
+    }
+    if (!new ClientEvent(undefined, event).verifySignature()) return false;
+    verifiedSignatures.add(proof);
+    if (verifiedSignatures.size > VERIFIED_SIGNATURE_LIMIT)
+      verifiedSignatures.delete(verifiedSignatures.values().next().value!);
+    return true;
+  } catch {
+    return false;
+  }
 }
+
 export function parsePublicRoom(event: NostrEvent, expected?: string): PublicRoom {
   if (event.kind !== ROOM_KIND || !verifiedPublicEvent(event))
     throw new Error('Invalid signed public group.');

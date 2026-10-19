@@ -27,7 +27,12 @@
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
-  import { roomPolicy, publicGroupShareLink } from '#src/stores/nostr/publicGroups.ts';
+  import {
+    roomPolicy,
+    publicGroupShareLink,
+    type PublicRoom,
+  } from '#src/stores/nostr/publicGroups.ts';
+  import type { PublicGroupMessage } from '#src/services/publicGroupData.ts';
   import ProfileName from '../ProfileName.svelte';
   import { publicMessageState } from '#src/stores/nostr/publicMessageActions.ts';
   import {
@@ -296,11 +301,24 @@
       };
     });
   }
+  // Paging retains unchanged hydrated objects. Weak keys let old windows be
+  // collected; a changed policy or account still rebuilds the presentation.
+  const presentations = new WeakMap<
+    PublicGroupMessage,
+    { room: PublicRoom; own: string; message: Message }
+  >();
+  function presented(event: PublicGroupMessage, room: PublicRoom, own: string) {
+    const known = presentations.get(event);
+    if (known?.room === room && known.own === own) return known.message;
+    const message = publicMessageState(event, room, own);
+    presentations.set(event, { room, own, message });
+    return message;
+  }
   $: entries = orderThreadMessages(
     room
       ? $state.messages
           .filter((event) => roomPolicy(room!, event.pubkey) !== 'blocked')
-          .map((event) => ({ event, message: publicMessageState(event, room!, own) }))
+          .map((event) => ({ event, message: presented(event, room!, own) }))
       : [],
     ({ message }) => message,
   );

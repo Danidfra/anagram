@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  getEventHash,
+  nip19,
+} from 'nostr-tools';
+import { ClientEvent } from '#src/lib/nostr/client.ts';
 import {
   decodeRoomLink,
   encodeRoomLink,
@@ -10,6 +17,7 @@ import {
   roomPolicy,
   roomTags,
   validRoomMessage,
+  verifiedPublicEvent,
 } from '#src/stores/nostr/publicGroups.ts';
 const owner = generateSecretKey(),
   other = generateSecretKey();
@@ -38,6 +46,65 @@ function definition(tags: string[][] = [], key = owner) {
   );
 }
 describe('public groups', () => {
+  it('reuses public signature proofs without trusting mutated fields, IDs or signatures', () => {
+    const event = definition([['name', 'Signature cache test']]);
+    const verify = vi.spyOn(ClientEvent.prototype, 'verifySignature');
+    try {
+      expect(verifiedPublicEvent(event)).toBe(true);
+      expect(verifiedPublicEvent(structuredClone(event))).toBe(true);
+      expect(verify).toHaveBeenCalledTimes(1);
+      for (const changed of [
+        { ...event, content: 'forged' },
+        { ...event, pubkey: outsider },
+        { ...event, kind: 9 },
+        { ...event, created_at: event.created_at - 1 },
+        { ...event, tags: [...event.tags, ['trusted', outsider]] },
+      ]) {
+        expect(verifiedPublicEvent(changed)).toBe(false);
+        expect(verifiedPublicEvent({ ...changed, id: getEventHash(changed) })).toBe(false);
+      }
+      expect(verifiedPublicEvent({ ...event, id: '0'.repeat(64) })).toBe(false);
+      expect(verifiedPublicEvent({ ...event, sig: '0'.repeat(128) })).toBe(false);
+      expect(verifiedPublicEvent(event)).toBe(true);
+    } finally {
+      verify.mockRestore();
+    }
+  });
+
+  it('still applies time and size limits to events with cached signature proofs', () => {
+    const event = definition();
+    expect(verifiedPublicEvent(event)).toBe(true);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue((event.created_at - 61) * 1000);
+    try {
+      expect(verifiedPublicEvent(event)).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(verifiedPublicEvent({ ...event, extra: 'x'.repeat(65536) } as typeof event)).toBe(
+      false,
+    );
+  });
+
+  it('bounds the public proof cache and re-verifies evicted entries', () => {
+    // Mock only the expensive elliptic-curve step; real hashes distinguish all
+    // entries, while the tests above exercise real signatures and tampering.
+    const event = definition([['name', 'Proof eviction']]);
+    const verify = vi.spyOn(ClientEvent.prototype, 'verifySignature').mockReturnValue(true);
+    try {
+      expect(verifiedPublicEvent(event)).toBe(true);
+      for (let n = 0; n < 2048; n++) {
+        const next = { ...event, content: `Cache entry ${n}` };
+        next.id = getEventHash(next);
+        expect(verifiedPublicEvent(next)).toBe(true);
+      }
+      verify.mockClear();
+      expect(verifiedPublicEvent(event)).toBe(true);
+      expect(verify).toHaveBeenCalledTimes(1);
+    } finally {
+      verify.mockRestore();
+    }
+  });
+
   it('binds a signed room to the whole address, not its name or slug', () => {
     const room = parsePublicRoom(definition());
     expect(() => parsePublicRoom(definition([], other), room.address)).toThrow();

@@ -110,6 +110,16 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     failed: () => state.update((s) => ({ ...s, error: 'Public group updates paused. Refresh to retry.' })),
   });
   let windowRevision = 0;
+  // Raw edit versions can outnumber displayed rows. Retain only the last scan
+  // cursor, scoped to the unchanged window, so a bounded page can keep advancing.
+  let cachedPage:
+    | {
+        revision: number;
+        direction: 'prev' | 'next';
+        edge: string | undefined;
+        cursor: { created_at: number; id: string };
+      }
+    | undefined;
   let live: NostrSubscription | undefined;
   let stopActivity = () => {};
   let liveRevision = 0;
@@ -443,6 +453,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     events: PublicGroupMessage[],
     db = data!,
     includeReplies = true,
+    previous: PublicGroupMessage[] = [],
   ): Promise<PublicGroupMessage[]> {
     if (includeReplies) events = publicMessageRoots(events);
     const activity = await db.actionsFor(
@@ -463,18 +474,26 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       for (const id of actionTargets(action))
         byTarget.set(id, [...(byTarget.get(id) ?? []), action]);
     }
+    const previousById = new Map(previous.map((event) => [event.id, event]));
     const decorated = events.map((event) => {
       const direct = byTarget.get(event.id!) ?? [];
-      return {
-        ...event,
-        activity: [
-          ...new Map(
-            [...direct, ...direct.flatMap((action) => byTarget.get(action.id!) ?? [])].map(
-              (action) => [action.id!, action],
-            ),
-          ).values(),
-        ],
-      };
+      const activity = [
+        ...new Map(
+          [...direct, ...direct.flatMap((action) => byTarget.get(action.id!) ?? [])].map(
+            (action) => [action.id!, action],
+          ),
+        ).values(),
+      ];
+      const { activity: _actions, replyEvent: _reply, ...signed } = event;
+      const known = previousById.get(event.id);
+      if (known) {
+        const { activity: oldActions, replyEvent: _parent, ...oldSigned } = known;
+        // Read current actions even for retained rows, including changes saved
+        // by another view. Reuse unchanged hydration without caching stale edits.
+        if (JSON.stringify([signed, activity]) === JSON.stringify([oldSigned, oldActions]))
+          return known;
+      }
+      return { ...signed, activity };
     });
     if (!includeReplies) return decorated;
     const parents = [...new Set(events.map(replyTarget).filter(Boolean) as string[])].slice(
@@ -483,7 +502,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     );
     if (!parents.length) return decorated;
     const references = new Map(
-      await Promise.all(parents.map(async (id) => [id, await db.message(address, id)] as const)),
+      await Promise.all(
+        parents.map(async (id) => [id, await db.message(address, id)] as const),
+      ),
     );
     const replacements = await db.actionsFor(
       address,
@@ -516,15 +537,15 @@ export function createPublicGroupRuntime(deps: Dependencies) {
           ],
           db,
           false,
+          previous.flatMap((event) => (event.replyEvent ? [event.replyEvent] : [])),
         )
       ).map((parent) => [parent.id!, parent]),
     );
-    return resolved.map(({ event, parent }) => ({
-      ...event,
-      replyEvent: parent ? hydrated.get(parent.id!) : undefined,
-    }));
+    return resolved.map(({ event, parent }) => {
+      const replyEvent = parent ? hydrated.get(parent.id!) : undefined;
+      return event.replyEvent === replyEvent ? event : { ...event, replyEvent };
+    });
   }
-
   async function cacheEvents(address: string, events: PublicGroupMessage[], db = data!) {
     const roots = events.filter((event) => validRoomMessage(event, address) && !editTarget(event));
     const actions = events.filter((event) => validPublicAction(event, address));
@@ -1039,63 +1060,121 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       db = data!;
     const address = s.history || s.room.address;
     const room = s.ancestors.find((room) => room.address === address) ?? s.room;
-    const active = () => token === view && revision === windowRevision && owner === deps.account();
+    const active = () =>
+      token === view && revision === windowRevision && owner === deps.account();
     state.update((s) => ({ ...s, loading: true, error: '' }));
     try {
-      const urls = await relayUrls(room.relays);
-      if (!active()) return;
-      await historyPages.load(address, urls);
-      if (!active()) return;
-      // Cursors belong to relay reads, never to a pin/search result in this window.
+      let urls: string[] | undefined;
+      // Relay history cursors stay independent of this cached window and its pins.
       // Reconcile the visible interval as well as its edge: this repairs gaps in
       // caches created by older versions without deleting any account data.
-      const current = get(state).messages;
-      const edge = direction === 'prev' ? current[0] : current.at(-1);
+      const snapshot = get(state).messages;
+      const edge = direction === 'prev' ? snapshot[0] : snapshot.at(-1);
       const cursor = (event: PublicGroupMessage) => ({
         created_at: event.created_at,
         id: event.id!,
       });
-      const order = (a: PublicGroupMessage, b: PublicGroupMessage) =>
-        a.created_at - b.created_at || a.id!.localeCompare(b.id!);
-      const adjacent = await db.page(
-        address,
-        edge ? cursor(edge) : undefined,
-        ROOM_PAGE,
-        direction,
-      );
-      const candidates = publicMessageRoots([...current, ...adjacent])
-        .filter((event) => validRoomMessage(event, address))
-        .sort(order);
+      const order = (
+        a: Pick<PublicGroupMessage, 'created_at' | 'id'>,
+        b: Pick<PublicGroupMessage, 'created_at' | 'id'>,
+      ) => a.created_at - b.created_at || a.id!.localeCompare(b.id!);
+      let scan =
+        cachedPage?.revision === revision - 1 &&
+        cachedPage.direction === direction &&
+        cachedPage.edge === edge?.id
+          ? cachedPage.cursor
+          : edge
+            ? cursor(edge)
+            : undefined;
+      let firstPage = await db.page(address, scan, ROOM_PAGE, direction);
+      if (!active()) return;
+      // Like private threads, a full cached page need not wait for the network.
+      // Fill short pages from relays first: an isolated pin/search hit is not
+      // evidence that the intervening history has already been downloaded.
+      if (direction === 'prev' && firstPage.length < ROOM_PAGE) {
+        urls = await relayUrls(room.relays);
+        if (!active()) return;
+        await historyPages.load(address, urls);
+        if (!active()) return;
+        firstPage = await db.page(address, scan, ROOM_PAGE, direction);
+        if (!active()) return;
+      }
+      const current = get(state).messages;
+      let candidates = current;
+      // Bound work even if the cache contains hundreds of versions of one edit.
+      // A subsequent gesture resumes the raw cursor instead of rereading them.
+      for (let read = 0; read < ROOM_WINDOW; read += ROOM_PAGE) {
+        const adjacent =
+          read === 0 ? firstPage : await db.page(address, scan, ROOM_PAGE, direction);
+        if (!active()) return;
+        const scanned = direction === 'prev' ? adjacent[0] : adjacent.at(-1);
+        if (scanned) scan = cursor(scanned);
+        candidates = publicMessageRoots([...candidates, ...adjacent])
+          .filter((event) => validRoomMessage(event, address))
+          .sort(order);
+        if (adjacent.length < ROOM_PAGE || candidates.length >= current.length + ROOM_PAGE)
+          break;
+      }
       const anchors =
-        direction === 'prev' ? candidates.slice(0, ROOM_WINDOW) : candidates.slice(-ROOM_WINDOW);
+        direction === 'prev'
+          ? candidates.slice(0, ROOM_WINDOW)
+          : candidates.slice(-ROOM_WINDOW);
       const boundary = direction === 'prev' ? anchors.at(-1) : anchors[0];
       let filled: PublicGroupMessage[] = [];
       if (boundary) {
         const rows = await db.page(address, cursor(boundary), ROOM_WINDOW - 1, direction);
         filled = [...rows, boundary]
-          .filter((event) => order(event, anchors[0]) >= 0 && order(event, anchors.at(-1)!) <= 0)
+          .filter(
+            (event) => order(event, anchors[0]) >= 0 && order(event, anchors.at(-1)!) <= 0,
+          )
           .sort(order);
       }
+      // The gap-repair read counts raw events, not logical messages. Keep the
+      // anchors it did not reach when edits consumed some of its bounded budget.
+      const merged = publicMessageRoots([
+        ...anchors,
+        ...filled.filter((event) => validRoomMessage(event, address)),
+      ]).sort(order);
       const messages = await hydrate(
         address,
-        filled.filter((event) => validRoomMessage(event, address)),
+        direction === 'prev' ? merged.slice(0, ROOM_WINDOW) : merged.slice(-ROOM_WINDOW),
         db,
+        true,
+        get(state).messages,
       );
       const first = messages[0],
         last = messages.at(-1);
+      const visibleEdge = direction === 'prev' ? first : last;
+      const scannedPastEdge =
+        scan &&
+        (!visibleEdge ||
+          (direction === 'prev' ? order(scan, visibleEdge) < 0 : order(scan, visibleEdge) > 0));
+      const nextCursor = scannedPastEdge ? scan : visibleEdge ? cursor(visibleEdge) : undefined;
       const [before, after] = await Promise.all([
-        first ? db.page(address, cursor(first), 1) : Promise.resolve([]),
-        last ? db.page(address, cursor(last), 1, 'next') : Promise.resolve([]),
+        direction === 'prev' && nextCursor
+          ? db.page(address, nextCursor, 1)
+          : first
+            ? db.page(address, cursor(first), 1)
+            : Promise.resolve([]),
+        direction === 'next' && nextCursor
+          ? db.page(address, nextCursor, 1, 'next')
+          : last
+            ? db.page(address, cursor(last), 1, 'next')
+            : Promise.resolve([]),
       ]);
       if (!active()) return;
+      cachedPage = nextCursor
+        ? { revision, direction, edge: visibleEdge?.id, cursor: nextCursor }
+        : undefined;
       state.update((s) => ({
         ...s,
         messages,
-        more: before.length > 0 || historyPages.hasOlder(urls),
+        more: before.length > 0 || (urls ? historyPages.hasOlder(urls) : s.more),
         hasNewer: after.length > 0,
-        error: historyPages.error
-          ? 'Some public group history could not be loaded. Retry to continue.'
-          : '',
+        error:
+          urls && historyPages.error
+            ? 'Some public group history could not be loaded. Retry to continue.'
+            : '',
       }));
     } catch (error) {
       if (active()) state.update((s) => ({ ...s, error: (error as Error).message }));
