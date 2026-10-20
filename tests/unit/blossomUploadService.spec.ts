@@ -1,5 +1,6 @@
 import {
   prepareEncryptedMedia,
+  BlossomUploadError,
   sha256HexFromBlob,
   uploadBlossomMedia,
   uploadPreparedEncryptedMedia,
@@ -242,9 +243,10 @@ describe('blossomUploadService', () => {
       });
       vi.stubGlobal('fetch', fetchMock);
 
-      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
-        'Could not upload to media.example.com. The server may be unavailable or may not accept encrypted file uploads.'
-      );
+      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toMatchObject({
+        kind: 'network',
+        message: 'Could not reach media.example.com. Check your connection, or try another server.',
+      });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
@@ -305,6 +307,113 @@ describe('blossomUploadService', () => {
         uploadEncryptedMedia(imageFile('image/svg+xml', 'x.svg'), UPLOAD_OPTIONS)
       ).rejects.toThrow('Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.');
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('upload failure classification', () => {
+    it.each([
+      [401, 'auth', 'media.example.com refused the upload authorization.'],
+      [403, 'auth', 'media.example.com refused the upload authorization.'],
+      [402, 'payment', 'media.example.com requires payment or an account to upload.'],
+      [413, 'too-large', 'media.example.com rejected the file because it is too large.'],
+      [415, 'unsupported-type', 'media.example.com does not accept encrypted files.'],
+      [500, 'server', 'media.example.com could not store the file (HTTP 500).'],
+      [404, 'server', 'media.example.com could not store the file (HTTP 404).'],
+    ])('reports HTTP %s as %s', async (status, kind, message) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('', { status }))
+      );
+
+      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toMatchObject({
+        kind,
+        message,
+      });
+    });
+
+    it('names the file type, not encryption, when plaintext media is refused', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('', { status: 415 }))
+      );
+
+      await expect(uploadBlossomMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toMatchObject({
+        kind: 'unsupported-type',
+        message: 'media.example.com does not accept this file type.',
+      });
+    });
+
+    it('appends a short plain-text server reason', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('Quota   exceeded\n for today', { status: 402 }))
+      );
+
+      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
+        'media.example.com requires payment or an account to upload. The server said: Quota exceeded for today'
+      );
+    });
+
+    it('never shows an HTML error page and shortens long reasons', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            new Response('<html><body><h1>502 Bad Gateway</h1></body></html>', { status: 502 })
+          )
+          .mockResolvedValueOnce(new Response('x'.repeat(500), { status: 400 }))
+      );
+
+      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toThrow(
+        /^media\.example\.com could not store the file \(HTTP 502\)\.$/u
+      );
+      const error = await uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS).catch((e) => e);
+      expect(error.message.length).toBeLessThan(260);
+      expect(error.message.endsWith('…')).toBe(true);
+    });
+
+    it('reports a signer failure as an authentication failure without uploading', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(
+        uploadEncryptedMedia(imageFile(), {
+          ...UPLOAD_OPTIONS,
+          signUploadAuthHeader: async () => {
+            throw new Error('Signer locked');
+          },
+        })
+      ).rejects.toMatchObject({ kind: 'auth' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('separates an invalid response from an integrity failure', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce(new Response('not json', { status: 201 }))
+          .mockResolvedValueOnce(descriptorResponse('f'.repeat(64), 10))
+      );
+
+      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toMatchObject({
+        kind: 'invalid-response',
+      });
+      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toMatchObject({
+        kind: 'integrity',
+      });
+    });
+
+    it('uses a single error type for every classified failure', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('', { status: 401 }))
+      );
+
+      await expect(uploadEncryptedMedia(imageFile(), UPLOAD_OPTIONS)).rejects.toBeInstanceOf(
+        BlossomUploadError
+      );
     });
   });
 

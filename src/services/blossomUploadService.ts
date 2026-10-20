@@ -123,18 +123,67 @@ export async function sha256HexFromBlob(blob: Blob): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function readUploadError(response: Response, serverHost: string): Promise<string> {
-  const reason = response.headers.get('X-Reason')?.trim();
-  if (reason) {
-    return reason;
+export type BlossomUploadErrorKind =
+  | 'network'
+  | 'auth'
+  | 'payment'
+  | 'too-large'
+  | 'unsupported-type'
+  | 'server'
+  | 'invalid-response'
+  | 'integrity';
+
+// An upload failure with its cause, so callers can offer the right recovery instead of assuming
+// that every failure is caused by encryption.
+export class BlossomUploadError extends Error {
+  constructor(
+    readonly kind: BlossomUploadErrorKind,
+    message: string
+  ) {
+    super(message);
+    this.name = 'BlossomUploadError';
+  }
+}
+
+const MAX_SERVER_REASON_LENGTH = 160;
+
+// Servers explain rejections in X-Reason or the body. Only short plain text is shown; HTML pages
+// and long bodies are dropped. X-Reason is often not exposed to the browser cross-origin.
+async function readServerReason(response: Response): Promise<string> {
+  const text = response.headers.get('X-Reason') || (await response.text().catch(() => '')) || '';
+  const reason = text.replace(/\s+/gu, ' ').trim();
+  if (!reason || /<[a-z!/]/iu.test(reason)) {
+    return '';
   }
 
-  const body = (await response.text().catch(() => '')).trim();
-  if (body) {
-    return body;
-  }
+  return reason.length > MAX_SERVER_REASON_LENGTH
+    ? `${reason.slice(0, MAX_SERVER_REASON_LENGTH - 1)}…`
+    : reason;
+}
 
-  return `${serverHost} upload failed with HTTP ${response.status}.`;
+async function classifyUploadResponse(
+  response: Response,
+  serverHost: string,
+  contentType: string
+): Promise<BlossomUploadError> {
+  const { status } = response;
+  const [kind, message]: [BlossomUploadErrorKind, string] =
+    status === 401 || status === 403
+      ? ['auth', `${serverHost} refused the upload authorization.`]
+      : status === 402
+        ? ['payment', `${serverHost} requires payment or an account to upload.`]
+        : status === 413
+          ? ['too-large', `${serverHost} rejected the file because it is too large.`]
+          : status === 415
+            ? [
+                'unsupported-type',
+                contentType === ENCRYPTED_BLOB_CONTENT_TYPE
+                  ? `${serverHost} does not accept encrypted files.`
+                  : `${serverHost} does not accept this file type.`,
+              ]
+            : ['server', `${serverHost} could not store the file (HTTP ${status}).`];
+  const reason = await readServerReason(response);
+  return new BlossomUploadError(kind, reason ? `${message} The server said: ${reason}` : message);
 }
 
 interface PutBlossomBlobInput {
@@ -142,16 +191,21 @@ interface PutBlossomBlobInput {
   contentType: string;
   sha256: string;
   serverUrl: string;
-  serverHost: string;
   options: UploadBlossomMediaOptions;
-  unreachableMessage?: string;
 }
 
 // A single PUT: the response is authoritative and failures are never retried automatically,
 // so a rejected upload is not sent again.
 async function putBlossomBlob(input: PutBlossomBlobInput): Promise<BlossomBlobDescriptor> {
-  const { body, contentType, sha256, serverUrl, serverHost, options } = input;
-  const authorization = await options.signUploadAuthHeader({ serverUrl, sha256 });
+  const { body, contentType, sha256, serverUrl, options } = input;
+  const serverHost = getBlossomServerHost(serverUrl);
+  let authorization: string;
+  try {
+    authorization = await options.signUploadAuthHeader({ serverUrl, sha256 });
+  } catch {
+    throw new BlossomUploadError('auth', 'The upload authorization could not be signed.');
+  }
+
   let response: Response;
   try {
     response = await fetch(buildBlossomUploadUrl(serverUrl), {
@@ -165,20 +219,26 @@ async function putBlossomBlob(input: PutBlossomBlobInput): Promise<BlossomBlobDe
       signal: options.signal,
     });
   } catch (error) {
-    // Browsers report a rejection without CORS headers as an opaque network error.
-    if (input.unreachableMessage && !options.signal?.aborted) {
-      throw new Error(input.unreachableMessage);
+    if (options.signal?.aborted) {
+      throw error;
     }
-    throw error;
+    // Browsers also report a rejection without CORS headers as an opaque network error.
+    throw new BlossomUploadError(
+      'network',
+      `Could not reach ${serverHost}. Check your connection, or try another server.`
+    );
   }
 
   if (response.status !== 200 && response.status !== 201) {
-    throw new Error(await readUploadError(response, serverHost));
+    throw await classifyUploadResponse(response, serverHost, contentType);
   }
 
   const descriptor = normalizeBlobDescriptor(await response.json().catch(() => null));
   if (!descriptor) {
-    throw new Error(`${serverHost} returned an invalid upload response.`);
+    throw new BlossomUploadError(
+      'invalid-response',
+      `${serverHost} returned an invalid upload response.`
+    );
   }
 
   return descriptor;
@@ -196,26 +256,13 @@ export async function uploadBlossomMedia(
   const serverUrl = requireBlossomServerUrl(options.serverUrl);
   const serverHost = getBlossomServerHost(serverUrl);
   const sha256 = await sha256HexFromBlob(file);
-  const authorization = await options.signUploadAuthHeader({ serverUrl, sha256 });
-  const response = await fetch(buildBlossomUploadUrl(serverUrl), {
-    method: 'PUT',
-    headers: {
-      Authorization: authorization,
-      'Content-Type': file.type,
-      'X-SHA-256': sha256,
-    },
+  const descriptor = await putBlossomBlob({
     body: file,
-    signal: options.signal,
+    contentType: file.type,
+    sha256,
+    serverUrl,
+    options,
   });
-
-  if (response.status !== 200 && response.status !== 201) {
-    throw new Error(await readUploadError(response, serverHost));
-  }
-
-  const descriptor = normalizeBlobDescriptor(await response.json().catch(() => null));
-  if (!descriptor) {
-    throw new Error(`${serverHost} returned an invalid upload response.`);
-  }
 
   const uploadedAt = descriptor.uploaded ? new Date(descriptor.uploaded * 1000).toISOString() : '';
 
@@ -285,20 +332,24 @@ export async function uploadPreparedEncryptedMedia(
     contentType: ENCRYPTED_BLOB_CONTENT_TYPE,
     sha256,
     serverUrl,
-    serverHost,
     options,
-    unreachableMessage: `Could not upload to ${serverHost}. The server may be unavailable or may not accept encrypted file uploads.`,
   });
 
   if (descriptor.sha256 !== sha256) {
-    throw new Error(`${serverHost} stored a blob with an unexpected hash.`);
+    throw new BlossomUploadError(
+      'integrity',
+      `${serverHost} stored a blob with an unexpected hash.`
+    );
   }
 
   // Same HTTPS rule the kind 15 message and its receivers enforce. Checked here so a bad URL is
   // an upload error the user can retry or route to another server, not a silently dropped send.
   const blobUrl = normalizeEncryptedMediaUrl(descriptor.url);
   if (!blobUrl) {
-    throw new Error(`${serverHost} returned a blob URL that does not use HTTPS.`);
+    throw new BlossomUploadError(
+      'invalid-response',
+      `${serverHost} returned a blob URL that does not use HTTPS.`
+    );
   }
 
   const uploadedAt = descriptor.uploaded ? new Date(descriptor.uploaded * 1000).toISOString() : '';
