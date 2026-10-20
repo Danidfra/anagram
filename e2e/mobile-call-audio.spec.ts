@@ -138,26 +138,50 @@ for (const variant of [
     const prefix = room ? 'room' : 'call';
     const loudspeaker = page.getByTestId(`${prefix}-loudspeaker`);
     for (const width of [320, 390]) {
-      await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
-      const ids = ['microphone', 'loudspeaker', 'camera', 'more'];
-      const boxes = await Promise.all(
-        ids.map((id) => page.getByTestId(`${prefix}-${id}`).boundingBox()),
-      );
-      for (const box of boxes) {
-        expect(box).not.toBeNull();
-        expect(box!.width).toBeGreaterThanOrEqual(44);
-        expect(box!.height).toBeGreaterThanOrEqual(44);
-        expect(box!.y).toBeCloseTo(boxes[0]!.y, 0);
-        expect(box!.x).toBeGreaterThanOrEqual(0);
-        expect(box!.x + box!.width).toBeLessThanOrEqual(width);
-      }
-      for (let i = 1; i < boxes.length; i++)
-        expect(boxes[i]!.x).toBeGreaterThan(boxes[i - 1]!.x + boxes[i - 1]!.width);
-      const hangup = page.getByTestId(room ? 'room-leave' : 'call-hangup');
-      await expect(hangup).toBeInViewport();
-      const end = (await hangup.boundingBox())!;
-      expect(end.y).toBeGreaterThan(boxes[0]!.y + boxes[0]!.height);
-      expect(end.x + end.width / 2).toBeCloseTo(width / 2, 0);
+      const height = width === 320 ? 568 : 844;
+      await page.setViewportSize({ width, height });
+      // Resize can commit between separate boundingBox calls. Sample the viewport
+      // and every control in one browser task, then wait for the responsive layout.
+      await expect(async () => {
+        const layout = await page.evaluate(
+          ({ prefix, room }) => {
+            const ids = [
+              ...['microphone', 'loudspeaker', 'camera', 'more'].map((id) => `${prefix}-${id}`),
+              room ? 'room-leave' : 'call-hangup',
+            ];
+            return {
+              width: innerWidth,
+              height: innerHeight,
+              boxes: ids.map((id) =>
+                document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect().toJSON(),
+              ),
+            };
+          },
+          { prefix, room },
+        );
+        expect(layout.width).toBe(width);
+        expect(layout.height).toBe(height);
+        const boxes = layout.boxes.slice(0, 4);
+        for (const box of boxes) {
+          expect(box).toBeDefined();
+          expect(box.width).toBeGreaterThanOrEqual(44);
+          expect(box.height).toBeGreaterThanOrEqual(44);
+          expect(box.y).toBeCloseTo(boxes[0].y, 0);
+          expect(box.x).toBeGreaterThanOrEqual(0);
+          expect(box.x + box.width).toBeLessThanOrEqual(width);
+        }
+        for (let i = 1; i < boxes.length; i++)
+          expect(boxes[i].x).toBeGreaterThan(boxes[i - 1].x + boxes[i - 1].width);
+        const end = layout.boxes[4];
+        expect(end).toBeDefined();
+        expect(end.width).toBeGreaterThanOrEqual(44);
+        expect(end.height).toBeGreaterThanOrEqual(44);
+        expect(end.y).toBeGreaterThan(boxes[0].y + boxes[0].height);
+        expect(end.y + end.height).toBeLessThanOrEqual(height);
+        expect(end.x).toBeGreaterThanOrEqual(0);
+        expect(end.x + end.width).toBeLessThanOrEqual(width);
+        expect(end.x + end.width / 2).toBeCloseTo(width / 2, 0);
+      }).toPass({ timeout: 15000 });
       await expect(page.getByTestId(`${prefix}-open-controls`)).toBeHidden();
       await expect(page.getByTestId(`${prefix}-microphone-menu`)).toBeHidden();
       await page.screenshot({ path: `test-results/${agent}-${prefix}-${width}-controls.png` });
