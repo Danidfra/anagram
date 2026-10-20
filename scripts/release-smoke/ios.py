@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import plistlib
+import re
 import subprocess
 import time
 
@@ -29,14 +30,37 @@ def simulator_app(root):
     return app
 
 
-def choose_device(devices):
+def choose_device(devices, sdk_version):
+    # Runners can have runtimes from several Xcode installations. "Available"
+    # alone does not mean that a runtime matches the active build toolchain.
+    sdk = tuple(int(part) for part in sdk_version.strip().split('.')[:2])
     for runtime in sorted(devices, reverse=True):
-        if '.iOS-' not in runtime:
+        version = re.fullmatch(r'com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)-(\d+)(?:-\d+)?',
+                               runtime)
+        if not version or tuple(map(int, version.groups())) != sdk:
             continue
         for device in devices[runtime]:
             if device.get('isAvailable') and device['name'].startswith('iPhone'):
                 return device
-    raise RuntimeError('No available iPhone simulator; install an iOS runtime in Xcode')
+    raise RuntimeError(f'No available iPhone simulator matching iOS SDK {sdk_version.strip()}; '
+                       'install its runtime in the selected Xcode')
+
+
+def collect_failure_diagnostics(udid, artifacts):
+    commands = [
+        ('screenshot.log', ['io', udid, 'screenshot', str(artifacts / 'failure.png')]),
+        ('processes.log', ['spawn', udid, 'launchctl', 'list']),
+        ('system.log', ['spawn', udid, 'log', 'show', '--last', '5m', '--style', 'compact',
+                        '--predicate', 'process == "anagram" OR process == "Anagram" OR '
+                        'process == "SpringBoard" OR process == "runningboardd"']),
+    ]
+    for name, args in commands:
+        with (artifacts / name).open('w') as output:
+            try:
+                subprocess.run(['xcrun', 'simctl', *args], stdout=output,
+                               stderr=subprocess.STDOUT, timeout=30, check=False)
+            except (OSError, subprocess.SubprocessError) as error:
+                output.write(f'\nDiagnostic collection failed: {error}\n')
 
 
 def welcome_visible(text):
@@ -51,6 +75,7 @@ def main():
         (artifacts / name).unlink(missing_ok=True)
 
     def simctl(*args):
+        print('simctl ' + ' '.join(args), flush=True)
         return subprocess.check_output(['xcrun', 'simctl', *args], text=True, timeout=180)
 
     device = None
@@ -62,7 +87,16 @@ def main():
             'xcrun', 'swiftc', str(Path(__file__).with_name('recognize-text.swift')),
             '-o', str(recognizer),
         ], check=True, timeout=180)
-        device = choose_device(json.loads(simctl('list', 'devices', 'available', '--json'))['devices'])
+        sdk_version = subprocess.check_output(
+            ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version'],
+            text=True, timeout=30).strip()
+        devices = json.loads(simctl('list', 'devices', 'available', '--json'))['devices']
+        (artifacts / 'environment.json').write_text(json.dumps({
+            'sdk': sdk_version, 'devices': devices,
+        }, indent=2) + '\n')
+        device = choose_device(devices, sdk_version)
+        (artifacts / 'device.json').write_text(json.dumps(device, indent=2) + '\n')
+        print(f'Using {device["name"]} with iOS SDK {sdk_version}', flush=True)
         udid = device['udid']
         if device['state'] != 'Booted':
             simctl('boot', udid)
@@ -95,10 +129,15 @@ def main():
         print('iPhone simulator app installed and rendered welcome/login controls; screenshot captured.')
     except Exception as error:
         (artifacts / 'failure.json').write_text(json.dumps({'error': str(error)}, indent=2) + '\n')
+        if device:
+            collect_failure_diagnostics(device['udid'], artifacts)
         raise
     finally:
         if device and booted_here:
-            subprocess.run(['xcrun', 'simctl', 'shutdown', device['udid']], timeout=60, check=False)
+            try:
+                subprocess.run(['xcrun', 'simctl', 'shutdown', device['udid']], timeout=60, check=False)
+            except (OSError, subprocess.SubprocessError) as error:
+                print(f'Simulator shutdown failed: {error}', flush=True)
 
 
 if __name__ == '__main__':
