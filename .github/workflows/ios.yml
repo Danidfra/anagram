@@ -18,7 +18,9 @@ concurrency:
 jobs:
   webkit:
     if: vars.IOS_BUILDS_ENABLED == 'true'
-    runs-on: macos-15
+    # Match call-checks: the macOS 15 WebKit build stalls on the first VP8 append.
+    # This browser runner is independent of the native Xcode build toolchain below.
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

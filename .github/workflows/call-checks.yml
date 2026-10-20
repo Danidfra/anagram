@@ -34,7 +34,7 @@ jobs:
             browser: chromium
           - os: ubuntu-24.04
             browser: firefox
-          - os: macos-latest
+          - os: macos-26
             browser: webkit
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
