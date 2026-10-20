@@ -640,12 +640,12 @@ p {
   display: block;
   margin: 16px auto;
 }
-.modal .media-notice-dismiss {
+.modal .media-dont-ask {
   display: flex;
   gap: 8px;
   align-items: center;
 }
-.modal .media-notice-dismiss input {
+.modal .media-dont-ask input {
   display: inline-block;
   width: auto;
   margin: 0;

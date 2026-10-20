@@ -54,7 +54,7 @@
   import { locale, translate } from '#src/i18n.ts';
   import { goto } from '$app/navigation';
   import { page as routeState } from '$app/state';
-  import { get, toStore } from 'svelte/store';
+  import { toStore } from 'svelte/store';
   import { coalesceStore } from '#src/lib/state/coalesceStore.ts';
   const page = toStore(() => ({ url: routeState.url }));
   import { countUnseenReactionsForAuthor } from '#src/utils/messageReactions.ts';
@@ -67,18 +67,11 @@
   import { contactsService } from '#src/services/contactsService.ts';
   import {
     prepareEncryptedMedia,
+    uploadBlossomMedia,
     uploadPreparedEncryptedMedia,
-    validateEncryptedMediaFile,
+    validateBlossomMediaFile,
   } from '#src/services/blossomUploadService.ts';
-  import {
-    createPrivateMediaComposerUpload,
-    skipsPrivateMediaConfirmation,
-    type PrivateMediaSource,
-  } from '#src/lib/state/privateMediaComposerUpload.ts';
-  import {
-    isPrivateMediaNoticeDismissed,
-    setPrivateMediaNoticeDismissed,
-  } from '#src/utils/privateMediaNoticePreference.ts';
+  import { createPrivateMediaComposerUpload } from '#src/lib/state/privateMediaComposerUpload.ts';
   import { normalizeBlossomServerUrl } from '#src/utils/blossomServer.ts';
   import { getPublicProfile, type PublicProfile } from '#src/lib/state/publicProfiles.ts';
   import {
@@ -278,17 +271,23 @@
   let attachmentMenu = false;
   // Context key for the composer's native image paste (the logged-in key and the open chat).
   const uploadContext = () => `${nostr.getLoggedInPublicKeyHex()}:${$state.selected?.id ?? ''}`;
-  // Private media is always encrypted locally and sent as NIP-17 kind 15. A failed upload keeps
-  // the prepared ciphertext, key and nonce so Retry never encrypts again, and there is no
-  // plaintext path to fall back to. The upload belongs to the account and chat it was chosen in.
+  // Private media is encrypted locally by default and sent as NIP-17 kind 15. Plaintext is only
+  // uploaded, to the regular Blossom server, after the user chooses it for a file that failed or
+  // cannot be encrypted. The upload belongs to the account and chat it was chosen in.
   const privateMediaUpload = createPrivateMediaComposerUpload({
     account: () => nostr.getLoggedInPublicKeyHex() ?? '',
     chatId: () => $state.selected?.id ?? '',
     getServerUrl: () => nostr.getPrivateMediaBlossomServerUrl(),
+    getPlaintextServerUrl: () => nostr.getBlossomServerUrl(),
     prepare: prepareEncryptedMedia,
     upload: uploadPreparedEncryptedMedia,
+    uploadPlaintext: uploadBlossomMedia,
     signUploadAuthHeader: nostr.signBlossomUploadAuthHeader,
     ensureAuthentication: () => nostr.ensureBlossomUploadAuthentication(),
+    isPlaintextConfirmationSkipped: () => nostr.isPlaintextMediaConfirmationSkipped(),
+    // If saving fails the user is simply asked again next time, which is the safe default.
+    skipPlaintextConfirmation: () =>
+      nostr.setPlaintextMediaConfirmationSkipped(true).catch(() => undefined),
     send: (chatId, attachment, replyTo) =>
       messages.sendMediaAttachment(chatId, attachment, replyTo),
     persistServer: (serverUrl) => nostr.savePrivateMediaBlossomServerUrl(serverUrl),
@@ -306,15 +305,14 @@
   $: ({
     file: pendingFile,
     phase: mediaPhase,
+    encrypted: mediaEncrypted,
     error: mediaError,
-    canRetry: mediaCanRetry,
     server: mediaServer,
   } = $privateMediaState);
   $: mediaBusy = mediaPhase === 'uploading' || mediaPhase === 'sending';
   let mediaServerDraft = '';
   let changingMediaServer = false;
-  let dismissMediaNotice = false;
-  let showMediaNotice = true;
+  let dontAskPlaintextAgain = false;
   $: normalizedMediaServerDraft = normalizeBlossomServerUrl(mediaServerDraft);
   // Switching chat cancels the upload, as it does for public uploads; an account change is
   // caught before anything is signed, sent or saved.
@@ -1167,10 +1165,10 @@
       busy = false;
     }
   }
-  function prepareUpload(file?: File, source: PrivateMediaSource = 'picker') {
-    // An upload that is waiting, running or offering Retry is never replaced by another file.
+  function prepareUpload(file?: File) {
+    // An upload that is waiting, running or offering recovery is never replaced by another file.
     if (!file || !$state.selected || busy || pendingFile) return;
-    const validationError = validateEncryptedMediaFile(file);
+    const validationError = validateBlossomMediaFile(file);
     if (validationError) {
       reportActionFeedback({ type: 'warning', message: validationError });
       if (fileInput) fileInput.value = '';
@@ -1178,20 +1176,8 @@
     }
     if (!privateMediaUpload.choose(file, reply)) return;
     changingMediaServer = false;
-    dismissMediaNotice = false;
-    showMediaNotice = !isPrivateMediaNoticeDismissed();
+    dontAskPlaintextAgain = false;
     modal = 'upload';
-    // The notice is informational only. A picked file skips the dialog once the notice is
-    // dismissed; pasted and dropped media always wait for Upload.
-    if (skipsPrivateMediaConfirmation(source, !showMediaNotice)) commitUpload();
-  }
-  // Reads the controller's state rather than the reactive copies, which are not updated yet
-  // when the notice is skipped straight from prepareUpload.
-  function commitUpload() {
-    const { file, phase } = get(privateMediaState);
-    if (!file || phase !== 'notice') return;
-    if (dismissMediaNotice) setPrivateMediaNoticeDismissed(true);
-    void privateMediaUpload.commit();
   }
   function retryMediaUpload() {
     void privateMediaUpload.retry();
@@ -1200,7 +1186,7 @@
   // changes after the kind 15 message has actually been sent.
   function retryMediaUploadOnServer() {
     const serverUrl = normalizedMediaServerDraft;
-    if (!serverUrl || !mediaCanRetry || mediaPhase !== 'failed') return;
+    if (!serverUrl || mediaPhase !== 'failed') return;
     changingMediaServer = false;
     void privateMediaUpload.retryWithServer(serverUrl);
   }
@@ -1945,29 +1931,59 @@
                   .find((message) => message.id === inspectedMessage?.id) ?? inspectedMessage;
           }}
         />
-      {:else if modal === 'upload'}{#if mediaPhase === 'notice'}{#if showMediaNotice}<p
-              data-testid="composer-media-notice"
-            >
-              {$translate('message.mediaEncryptionNotice')}
-            </p>{/if}
+      {:else if modal === 'upload'}{#if mediaPhase === 'confirm'}<p
+            data-testid="composer-media-notice"
+          >
+            {$translate('message.mediaEncryptionNotice')}
+          </p>
           <p>
             {$translate('message.mediaUpload.usingPrivateMediaServer', { server: mediaServer })}
           </p>
           <p>{pendingFile?.name}</p>
           <p>{$translate('message.mediaUpload.separateMessage')}</p>
-          {#if showMediaNotice}<label class="media-notice-dismiss"
-              ><input
-                type="checkbox"
-                data-testid="composer-media-notice-dont-show"
-                bind:checked={dismissMediaNotice}
-              />{$translate('message.mediaNoticeDontShowAgain')}</label
-            >{/if}
-          <button class="outline" onclick={cancelMediaUpload}
-            >{$translate('common.cancel')}</button
-          ><button class="primary" data-testid="composer-media-upload-confirm" onclick={commitUpload}
-            >{$translate('message.upload')}</button
+          <button class="outline" onclick={cancelMediaUpload}>{$translate('common.cancel')}</button
+          ><button
+            class="primary"
+            data-testid="composer-media-upload-confirm"
+            onclick={() => void privateMediaUpload.commit()}>{$translate('message.upload')}</button
           >
-        {:else if mediaPhase === 'failed'}<p class="error" role="alert">{mediaError}</p>
+        {:else if mediaPhase === 'confirm-plaintext'}<p
+            data-testid="composer-media-plaintext-warning"
+          >
+            {$translate('message.mediaUpload.plaintextWarning')}
+          </p>
+          <p>
+            {$translate('message.mediaUpload.usingBlossomServer', {
+              server: nostr.getBlossomServerUrl(),
+            })}
+          </p>
+          <p>{pendingFile?.name}</p>
+          <label class="media-dont-ask"
+            ><input
+              type="checkbox"
+              data-testid="composer-media-plaintext-dont-ask"
+              bind:checked={dontAskPlaintextAgain}
+            />{$translate('message.mediaUpload.dontAskAgain')}</label
+          >
+          <div class="media-upload-actions">
+            <button
+              class="outline"
+              data-testid="composer-media-upload-cancel"
+              onclick={cancelMediaUpload}>{$translate('common.cancel')}</button
+            ><button
+              class="primary"
+              data-testid="composer-media-plaintext-confirm"
+              onclick={() => void privateMediaUpload.confirmUnencrypted(dontAskPlaintextAgain)}
+              >{$translate('message.mediaUpload.sendUnencrypted')}</button
+            >
+          </div>
+        {:else if mediaPhase === 'failed' || mediaPhase === 'unsupported'}<p
+            class="error"
+            role="alert"
+            data-testid="composer-media-upload-error"
+          >
+            {mediaError}
+          </p>
           <p>{pendingFile?.name}</p>
           {#if changingMediaServer}<label
               >{$translate('mediaDataStorage.serverUrl')}<input
@@ -1983,28 +1999,37 @@
                 {$translate('mediaDataStorage.serverUrlInvalid')}
               </p>{/if}
           {/if}
-          <div>
+          <div class="media-upload-actions">
             <button
               class="outline"
               data-testid="composer-media-upload-cancel"
               onclick={cancelMediaUpload}>{$translate('common.cancel')}</button
-            >{#if mediaCanRetry && !changingMediaServer}<button
-                class="outline"
-                data-testid="composer-media-upload-change-server"
-                onclick={() => {
-                  mediaServerDraft = mediaServer;
-                  changingMediaServer = true;
-                }}>{$translate('message.mediaUpload.changeServer')}</button
-              ><button
-                class="primary"
-                data-testid="composer-media-upload-retry"
-                onclick={retryMediaUpload}>{$translate('message.mediaUpload.retry')}</button
-              >{:else if mediaCanRetry}<button
+            >{#if changingMediaServer}<button
                 class="primary"
                 data-testid="composer-media-upload-use-server"
                 disabled={!normalizedMediaServerDraft}
                 onclick={retryMediaUploadOnServer}
                 >{$translate('message.mediaUpload.useServerAndRetry')}</button
+              >{:else if mediaEncrypted}<button
+                class="outline"
+                data-testid="composer-media-upload-unencrypted"
+                onclick={() => void privateMediaUpload.chooseUnencrypted()}
+                >{$translate('message.mediaUpload.sendUnencrypted')}</button
+              >{#if mediaPhase === 'failed'}<button
+                  class="outline"
+                  data-testid="composer-media-upload-change-server"
+                  onclick={() => {
+                    mediaServerDraft = mediaServer;
+                    changingMediaServer = true;
+                  }}>{$translate('message.mediaUpload.changeServer')}</button
+                ><button
+                  class="primary"
+                  data-testid="composer-media-upload-retry"
+                  onclick={retryMediaUpload}>{$translate('message.mediaUpload.retry')}</button
+                >{/if}{:else}<button
+                class="primary"
+                data-testid="composer-media-upload-retry"
+                onclick={retryMediaUpload}>{$translate('common.retry')}</button
               >{/if}
           </div>
         {:else}<p role="status" data-testid="composer-media-upload-status">

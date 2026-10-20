@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
-import { type BrowserContext, expect, type Locator, type Page, type Route, test } from '@playwright/test';
+import {
+  type BrowserContext,
+  expect,
+  type Locator,
+  type Page,
+  type Route,
+  test,
+} from '@playwright/test';
 import {
   type BootstrappedUser,
   bootstrapUser,
@@ -18,6 +25,8 @@ import {
 
 const BLOSSOM_ORIGIN = 'https://blossom.e2e.test';
 const BACKUP_ORIGIN = 'https://backup-blossom.e2e.test';
+// The regular Blossom server, used only for media the user chose to send without encryption.
+const PLAIN_ORIGIN = 'https://plain-blossom.e2e.test';
 const SECRET_METADATA = 'SECRET-METADATA-E2E-GPS';
 
 interface StoredBlob {
@@ -129,6 +138,8 @@ function createFakeBlossom() {
   // Every upload request body, including the ones answered with an error.
   const uploadAttempts: { origin: string; body: Buffer; contentType: string }[] = [];
   const failingOrigins = new Set<string>();
+  // Servers that refuse encrypted (application/octet-stream) uploads, as blossom.nostr.build does.
+  const rejectingEncrypted = new Set<string>();
 
   async function handle(route: Route): Promise<void> {
     const request = route.request();
@@ -144,6 +155,13 @@ function createFakeBlossom() {
       uploadAttempts.push({ origin: url.origin, body, contentType: headers['content-type'] ?? '' });
       if (failingOrigins.has(url.origin)) {
         await route.fulfill({ status: 503, headers: CORS_HEADERS, body: 'unavailable' });
+        return;
+      }
+      if (
+        rejectingEncrypted.has(url.origin) &&
+        headers['content-type'] === 'application/octet-stream'
+      ) {
+        await route.fulfill({ status: 415, headers: CORS_HEADERS, body: 'File type not allowed' });
         return;
       }
       const sha256 = createHash('sha256').update(body).digest('hex');
@@ -177,7 +195,7 @@ function createFakeBlossom() {
     downloads.push(request.url());
     await route.fulfill({
       status: 200,
-      headers: { ...CORS_HEADERS, 'Content-Type': 'application/octet-stream' },
+      headers: { ...CORS_HEADERS, 'Content-Type': blob.contentType || 'application/octet-stream' },
       body: blob.body,
     });
   }
@@ -187,9 +205,11 @@ function createFakeBlossom() {
     downloads,
     uploadAttempts,
     failingOrigins,
+    rejectingEncrypted,
     async install(context: BrowserContext): Promise<void> {
       await context.route(`${BLOSSOM_ORIGIN}/**`, handle);
       await context.route(`${BACKUP_ORIGIN}/**`, handle);
+      await context.route(`${PLAIN_ORIGIN}/**`, handle);
     },
   };
 }
@@ -197,7 +217,8 @@ function createFakeBlossom() {
 async function waitForSessionReady(user: BootstrappedUser) {
   await expect
     .poll(
-      async () => !(await getDeveloperDiagnosticsSnapshot(user.page)).session.isRestoringStartupState,
+      async () =>
+        !(await getDeveloperDiagnosticsSnapshot(user.page)).session.isRestoringStartupState,
       { timeout: 30_000 },
     )
     .toBe(true);
@@ -220,23 +241,30 @@ async function useEncryptedMediaServer(user: BootstrappedUser, serverUrl: string
   await expect(serverInput).toHaveValue(serverUrl);
 }
 
-// Picks a file through the composer; the encryption notice is expected unless it was dismissed.
-async function sendPrivateMedia(
-  page: Page,
-  file: { name: string; mimeType: string; buffer: Buffer },
-  options: { expectNotice: boolean; dontShowAgain?: boolean },
-) {
+async function useRegularServer(user: BootstrappedUser, serverUrl: string) {
+  await openMediaSettings(user.page);
+  const serverInput = user.page.getByTestId('settings-blossom-server-input');
+  await serverInput.fill(serverUrl);
+  await user.page.getByTestId('settings-blossom-save').click();
+  await expect(user.page.getByText('Blossom server saved.', { exact: true })).toBeVisible({
+    timeout: 12_000,
+  });
+}
+
+type MediaFile = { name: string; mimeType: string; buffer: Buffer };
+
+async function pickMedia(page: Page, file: MediaFile) {
   await page.getByTestId('message-composer-menu').click();
   const fileChooserPromise = page.waitForEvent('filechooser');
   await page.locator('.attachment-menu').getByRole('button', { name: 'Photo or Video' }).click();
   await (await fileChooserPromise).setFiles(file);
-  if (options.expectNotice) {
-    await expect(page.getByText(/end-to-end encrypted on your device/u)).toBeVisible();
-    if (options.dontShowAgain) await page.getByTestId('composer-media-notice-dont-show').check();
-    await page.getByTestId('composer-media-upload-confirm').click();
-  } else {
-    await expect(page.getByTestId('composer-media-notice-dont-show')).toHaveCount(0);
-  }
+}
+
+// Picks a file through the composer and confirms the encrypted upload.
+async function sendPrivateMedia(page: Page, file: MediaFile) {
+  await pickMedia(page, file);
+  await expect(page.getByText(/end-to-end encrypted on your device/u)).toBeVisible();
+  await page.getByTestId('composer-media-upload-confirm').click();
 }
 
 async function readDecryptedBytes(element: Locator) {
@@ -287,11 +315,7 @@ test('private images are encrypted before upload and decrypted by the recipient'
     await navigateToChat(alice.page, bob.session.publicKey);
 
     const png = buildPngWithMetadata();
-    await sendPrivateMedia(
-      alice.page,
-      { name: 'holiday.png', mimeType: 'image/png', buffer: png },
-      { expectNotice: true },
-    );
+    await sendPrivateMedia(alice.page, { name: 'holiday.png', mimeType: 'image/png', buffer: png });
     await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(1);
 
     // What the server received: ciphertext only, declared as an opaque blob.
@@ -309,7 +333,9 @@ test('private images are encrypted before upload and decrypted by the recipient'
     // as text, used as an image source, or offered as a link.
     await expectRenderedImage(alice.page);
     await expect(alice.page.locator(`img[src="${ciphertextUrl}"]`)).toHaveCount(0);
-    await expect(alice.page.getByTestId('message-url-link').filter({ hasText: BLOSSOM_ORIGIN })).toHaveCount(0);
+    await expect(
+      alice.page.getByTestId('message-url-link').filter({ hasText: BLOSSOM_ORIGIN }),
+    ).toHaveCount(0);
     const aliceBubble = alice.page
       .getByTestId('message-bubble')
       .filter({ has: alice.page.getByTestId('message-encrypted-image') })
@@ -338,11 +364,15 @@ test('private images are encrypted before upload and decrypted by the recipient'
     blossom.downloads.length = 0;
     await navigateToChat(bob.page, alice.session.publicKey);
     await expect(
-      bob.page.locator(`[data-testid="chat-item"][data-chat-public-key="${alice.session.publicKey}"]`),
+      bob.page.locator(
+        `[data-testid="chat-item"][data-chat-public-key="${alice.session.publicKey}"]`,
+      ),
     ).toContainText('Picture');
     const loadMedia = bob.page.getByRole('button', { name: 'Load media', exact: true }).last();
     await expect(loadMedia).toBeVisible({ timeout: 30_000 });
-    await expect(bob.page.getByTestId('message-url-link').filter({ hasText: BLOSSOM_ORIGIN })).toHaveCount(0);
+    await expect(
+      bob.page.getByTestId('message-url-link').filter({ hasText: BLOSSOM_ORIGIN }),
+    ).toHaveCount(0);
     await bob.page.waitForTimeout(1500);
     expect(blossom.downloads).toHaveLength(0);
     await loadMedia.click();
@@ -420,13 +450,9 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
     await useEncryptedMediaServer(alice, BLOSSOM_ORIGIN);
     await navigateToChat(alice.page, bob.session.publicKey);
 
-    // Audio: the notice is shown the first time and dismissed for good.
+    // Audio.
     const wav = buildWavTone();
-    await sendPrivateMedia(
-      alice.page,
-      { name: 'tone.wav', mimeType: 'audio/wav', buffer: wav },
-      { expectNotice: true, dontShowAgain: true },
-    );
+    await sendPrivateMedia(alice.page, { name: 'tone.wav', mimeType: 'audio/wav', buffer: wav });
     await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(1);
     const audioUpload = blossom.uploadAttempts.at(-1);
     expect(audioUpload?.contentType).toBe('application/octet-stream');
@@ -445,13 +471,9 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
       .toBeGreaterThan(0);
     await aliceAudio.evaluate((element: HTMLMediaElement) => element.pause());
 
-    // Video: the notice stays dismissed and the upload starts straight after picking the file.
+    // Video.
     const webm = await recordWebmClip(alice.page);
-    await sendPrivateMedia(
-      alice.page,
-      { name: 'clip.webm', mimeType: 'video/webm', buffer: webm },
-      { expectNotice: false },
-    );
+    await sendPrivateMedia(alice.page, { name: 'clip.webm', mimeType: 'video/webm', buffer: webm });
     await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(2);
     const videoUpload = blossom.uploadAttempts.at(-1);
     expect(videoUpload?.contentType).toBe('application/octet-stream');
@@ -477,21 +499,24 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
       .toBe(false);
     await bobVideo.evaluate((element: HTMLMediaElement) => element.pause());
 
-    // With the notice dismissed, upload failures still offer Retry, Change server and Cancel,
-    // and a retry re-sends the identical ciphertext. Plaintext is never offered or uploaded.
+    // A failure names its cause and offers Retry, Change server, Send without encryption and
+    // Cancel; a retry re-sends the identical ciphertext and nothing is uploaded as plaintext.
     blossom.failingOrigins.add(BLOSSOM_ORIGIN);
     const attemptsBeforeFailure = blossom.uploadAttempts.length;
-    await sendPrivateMedia(
-      alice.page,
-      { name: 'tone-again.wav', mimeType: 'audio/wav', buffer: wav },
-      { expectNotice: false },
-    );
+    await sendPrivateMedia(alice.page, {
+      name: 'tone-again.wav',
+      mimeType: 'audio/wav',
+      buffer: wav,
+    });
     await expect(alice.page.getByTestId('composer-media-upload-retry')).toBeVisible({
       timeout: 30_000,
     });
     await expect(alice.page.getByTestId('composer-media-upload-change-server')).toBeVisible();
     await expect(alice.page.getByTestId('composer-media-upload-cancel')).toBeVisible();
-    await expect(alice.page.getByText(/plaintext|unencrypted/iu)).toHaveCount(0);
+    await expect(alice.page.getByTestId('composer-media-upload-unencrypted')).toBeVisible();
+    await expect(alice.page.getByTestId('composer-media-upload-error')).toHaveText(
+      'blossom.e2e.test could not store the file (HTTP 503). The server said: unavailable',
+    );
     const failedAttempt = blossom.uploadAttempts.at(-1);
     expect(blossom.uploadAttempts.length).toBe(attemptsBeforeFailure + 1);
     expect(failedAttempt?.contentType).toBe('application/octet-stream');
@@ -505,11 +530,11 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
 
     // Cancel drops the failed upload without sending anything.
     blossom.failingOrigins.add(BLOSSOM_ORIGIN);
-    await sendPrivateMedia(
-      alice.page,
-      { name: 'tone-cancel.wav', mimeType: 'audio/wav', buffer: buildWavTone(2) },
-      { expectNotice: false },
-    );
+    await sendPrivateMedia(alice.page, {
+      name: 'tone-cancel.wav',
+      mimeType: 'audio/wav',
+      buffer: buildWavTone(2),
+    });
     await expect(alice.page.getByTestId('composer-media-upload-retry')).toBeVisible({
       timeout: 30_000,
     });
@@ -522,11 +547,11 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
 
     // Change server retries the same ciphertext on another server and saves that server only
     // after the kind 15 message has been sent.
-    await sendPrivateMedia(
-      alice.page,
-      { name: 'tone-moved.wav', mimeType: 'audio/wav', buffer: buildWavTone(3) },
-      { expectNotice: false },
-    );
+    await sendPrivateMedia(alice.page, {
+      name: 'tone-moved.wav',
+      mimeType: 'audio/wav',
+      buffer: buildWavTone(3),
+    });
     await expect(alice.page.getByTestId('composer-media-upload-change-server')).toBeVisible({
       timeout: 30_000,
     });
@@ -551,29 +576,9 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
       { timeout: 12_000 },
     );
 
-    // Settings shares the "Don't show this again" preference. Turning the notice back on shows
-    // it again; either way the upload is the same encrypted, ciphertext-only upload.
-    const noticeToggle = alice.page.getByTestId('settings-private-media-notice-toggle');
-    await expect(noticeToggle).not.toBeChecked();
-    await noticeToggle.check();
-    await navigateToChat(alice.page, bob.session.publicKey);
-    await sendPrivateMedia(
-      alice.page,
-      { name: 'tone-notice.wav', mimeType: 'audio/wav', buffer: buildWavTone(4) },
-      { expectNotice: true },
-    );
-    await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(5);
-    expect(blossom.uploadAttempts.at(-1)?.contentType).toBe('application/octet-stream');
-    await openMediaSettings(alice.page);
-    await expect(noticeToggle).toBeChecked();
-    await noticeToggle.uncheck();
-    await navigateToChat(alice.page, bob.session.publicKey);
-    await sendPrivateMedia(
-      alice.page,
-      { name: 'tone-quiet.wav', mimeType: 'audio/wav', buffer: buildWavTone(5) },
-      { expectNotice: false },
-    );
-    await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(6);
+    expect(
+      blossom.uploadAttempts.every((attempt) => attempt.contentType === 'application/octet-stream'),
+    ).toBe(true);
 
     await expectNoUnexpectedBrowserErrors([alice, bob], {
       allowPatterns: [/503/u, /unavailable/u],
@@ -583,34 +588,135 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
   }
 });
 
-test('unsupported private media is refused before anything is uploaded', async ({ browser }) => {
-  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.encryptedRefusalAlice);
-  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.encryptedRefusalBob);
+test('private media is sent without encryption only after the user chooses it', async ({
+  browser,
+}) => {
+  test.slow();
+  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.encryptedFallbackAlice);
+  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.encryptedFallbackBob);
   const blossom = createFakeBlossom();
+  const png = buildPngWithMetadata();
+  const heic = {
+    name: 'photo.heic',
+    mimeType: 'image/heic',
+    buffer: Buffer.from('not encryptable'),
+  };
+  const plaintextUploads = () =>
+    blossom.uploadAttempts.filter(({ origin }) => origin === PLAIN_ORIGIN);
+  const warning = alice.page.getByTestId('composer-media-plaintext-warning');
+  const dialog = alice.page.getByRole('dialog', { name: 'upload' });
 
   try {
     await blossom.install(alice.context);
+    await blossom.install(bob.context);
     await establishAcceptedDirectChat(alice, bob);
     await useEncryptedMediaServer(alice, BLOSSOM_ORIGIN);
+    await useRegularServer(alice, PLAIN_ORIGIN);
     await navigateToChat(alice.page, bob.session.publicKey);
+    blossom.rejectingEncrypted.add(BLOSSOM_ORIGIN);
+    const bubbles = alice.page.getByTestId('message-bubble');
+    const bubblesBefore = await bubbles.count();
 
-    for (const file of [
-      {
-        name: 'drawing.svg',
-        mimeType: 'image/svg+xml',
-        buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
-      },
-      { name: 'clip.mov', mimeType: 'video/quicktime', buffer: Buffer.from('not a real movie') },
-    ]) {
-      await alice.page.getByTestId('message-composer-menu').click();
-      const fileChooserPromise = alice.page.waitForEvent('filechooser');
-      await alice.page.locator('.attachment-menu').getByRole('button', { name: 'Photo or Video' }).click();
-      await (await fileChooserPromise).setFiles(file);
-      await expect(alice.page.getByText(/can be sent encrypted/u).last()).toBeVisible();
-      await expect(alice.page.getByRole('dialog', { name: 'upload' })).toHaveCount(0);
-    }
-    expect(blossom.uploadAttempts).toHaveLength(0);
-    await expectNoUnexpectedBrowserErrors([alice, bob]);
+    // The encrypted upload is refused for its content type, and that is what the card says.
+    await sendPrivateMedia(alice.page, { name: 'plain.png', mimeType: 'image/png', buffer: png });
+    await expect(alice.page.getByTestId('composer-media-upload-error')).toHaveText(
+      'blossom.e2e.test does not accept encrypted files. The server said: File type not allowed',
+      { timeout: 30_000 },
+    );
+    await expect(alice.page.getByTestId('composer-media-upload-retry')).toBeVisible();
+    await expect(alice.page.getByTestId('composer-media-upload-change-server')).toBeVisible();
+    expect(plaintextUploads()).toHaveLength(0);
+
+    // Choosing plaintext explains the privacy impact first; cancelling uploads nothing.
+    await alice.page.getByTestId('composer-media-upload-unencrypted').click();
+    await expect(warning).toHaveText(
+      'The message remains end-to-end encrypted through NIP-17, but the media file itself will be uploaded without encryption. The Blossom server operator and anyone with access to the file URL may be able to view the file.',
+    );
+    await expect(dialog).toContainText('plain-blossom.e2e.test');
+    await alice.page.waitForTimeout(500);
+    expect(plaintextUploads()).toHaveLength(0);
+    await alice.page.getByTestId('composer-media-upload-cancel').click();
+    await expect(dialog).toBeHidden();
+    await alice.page.waitForTimeout(500);
+    expect(plaintextUploads()).toHaveLength(0);
+    await expect(bubbles).toHaveCount(bubblesBefore);
+
+    // Confirming uploads the original file to the regular server and sends kind 14 + imeta.
+    await sendPrivateMedia(alice.page, { name: 'plain.png', mimeType: 'image/png', buffer: png });
+    await alice.page.getByTestId('composer-media-upload-unencrypted').click({ timeout: 30_000 });
+    await alice.page.getByTestId('composer-media-plaintext-dont-ask').check();
+    await alice.page.getByTestId('composer-media-plaintext-confirm').click();
+    await expect(dialog).toBeHidden({ timeout: 30_000 });
+    expect(plaintextUploads()).toHaveLength(1);
+    expect(plaintextUploads()[0].contentType).toBe('image/png');
+    expect(plaintextUploads()[0].body.equals(png)).toBe(true);
+    const plainUrl = `${PLAIN_ORIGIN}/${createHash('sha256').update(png).digest('hex')}`;
+    const bubble = alice.page.getByTestId('message-bubble').last();
+    await expect(bubble.locator(`img[src="${plainUrl}"]`)).toBeVisible({ timeout: 30_000 });
+    await bubble.locator('.message-content').click({ position: { x: 5, y: 5 } });
+    await alice.page.getByRole('menuitem', { name: 'Nostr info', exact: true }).click();
+    await alice.page.getByText('Event JSON', { exact: true }).click();
+    const eventJson = JSON.parse(await alice.page.locator('.event-json').innerText()) as {
+      kind: number;
+      tags: string[][];
+    };
+    expect(eventJson.kind).toBe(14);
+    expect(eventJson.tags.some(([name]) => name === 'imeta')).toBe(true);
+    expect(eventJson.tags.some(([name]) => name.startsWith('decryption'))).toBe(false);
+    await alice.page.getByRole('button', { name: 'Close dialog' }).click();
+
+    // The recipient reads it like any existing unencrypted attachment.
+    await navigateToChat(bob.page, alice.session.publicKey);
+    await bob.page.getByRole('button', { name: 'Load media', exact: true }).last().click({
+      timeout: 30_000,
+    });
+    await expect(bob.page.locator(`img[src="${plainUrl}"]`)).toBeVisible({ timeout: 30_000 });
+
+    // "Don't ask again" never chooses plaintext by itself: the next upload is encrypted, and
+    // its failure waits for the user.
+    const encryptedAttempts = blossom.uploadAttempts.length;
+    await sendPrivateMedia(alice.page, { name: 'again.png', mimeType: 'image/png', buffer: png });
+    await expect(alice.page.getByTestId('composer-media-upload-unencrypted')).toBeVisible({
+      timeout: 30_000,
+    });
+    expect(blossom.uploadAttempts.at(-1)?.contentType).toBe('application/octet-stream');
+    expect(blossom.uploadAttempts.length).toBe(encryptedAttempts + 1);
+    await alice.page.waitForTimeout(500);
+    expect(plaintextUploads()).toHaveLength(1);
+    await alice.page.getByTestId('composer-media-upload-cancel').click();
+
+    // A file that cannot be encrypted is offered without encryption, and nothing is uploaded
+    // until the user chooses it. With "don't ask again" set, that choice uploads straight away.
+    const attemptsBeforeHeic = blossom.uploadAttempts.length;
+    await pickMedia(alice.page, heic);
+    await expect(alice.page.getByTestId('composer-media-upload-error')).toHaveText(
+      'Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.',
+    );
+    await expect(alice.page.getByTestId('composer-media-upload-retry')).toHaveCount(0);
+    await expect(alice.page.getByTestId('composer-media-upload-change-server')).toHaveCount(0);
+    await alice.page.waitForTimeout(500);
+    expect(blossom.uploadAttempts.length).toBe(attemptsBeforeHeic);
+    await alice.page.getByTestId('composer-media-upload-unencrypted').click();
+    await expect(dialog).toBeHidden({ timeout: 30_000 });
+    await expect(warning).toHaveCount(0);
+    expect(plaintextUploads()).toHaveLength(2);
+    expect(plaintextUploads()[1].contentType).toBe('image/heic');
+
+    // Settings resets the preference, so the confirmation is shown again.
+    await openMediaSettings(alice.page);
+    const askToggle = alice.page.getByTestId('settings-plaintext-media-ask-toggle');
+    await expect(askToggle).not.toBeChecked();
+    await askToggle.check();
+    await expect(askToggle).toBeChecked();
+    await navigateToChat(alice.page, bob.session.publicKey);
+    await pickMedia(alice.page, heic);
+    await alice.page.getByTestId('composer-media-upload-unencrypted').click();
+    await expect(warning).toBeVisible();
+    await alice.page.getByTestId('composer-media-upload-cancel').click();
+    await alice.page.waitForTimeout(500);
+    expect(plaintextUploads()).toHaveLength(2);
+
+    await expectNoUnexpectedBrowserErrors([alice, bob], { allowPatterns: [/415/u] });
   } finally {
     await disposeUsers(alice, bob);
   }

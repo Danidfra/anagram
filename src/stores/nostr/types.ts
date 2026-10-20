@@ -223,6 +223,7 @@ export interface PrivatePreferences {
   contactSecret: string;
   blossomServerUrl?: string;
   privateMediaBlossomServerUrl?: string;
+  skipPlaintextMediaConfirmation?: true;
   irohRelaySettings?: import('#src/utils/irohRelays.ts').IrohRelaySettings;
   [key: string]: unknown;
 }

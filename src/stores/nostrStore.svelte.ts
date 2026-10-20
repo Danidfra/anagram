@@ -2003,8 +2003,10 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
   const {
     getBlossomServerUrl,
     getPrivateMediaBlossomServerUrl,
+    isPlaintextMediaConfirmationSkipped,
     saveBlossomServerUrl,
     savePrivateMediaBlossomServerUrl,
+    setPlaintextMediaConfirmationSkipped,
   } = createBlossomSettingsRuntime({
     ensurePrivatePreferences,
     publishPrivatePreferences,
@@ -2864,8 +2866,10 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     ensureBlossomUploadAuthentication,
     getBlossomServerUrl,
     getPrivateMediaBlossomServerUrl,
+    isPlaintextMediaConfirmationSkipped,
     saveBlossomServerUrl,
     savePrivateMediaBlossomServerUrl,
+    setPlaintextMediaConfirmationSkipped,
     getIrohRelays,
     getIrohRelaySettings,
     saveIrohRelaySettings,

@@ -14,10 +14,6 @@
   } from '#src/utils/blossomServer.ts';
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { toStore } from 'svelte/store';
-  import {
-    isPrivateMediaNoticeDismissed,
-    setPrivateMediaNoticeDismissed,
-  } from '#src/utils/privateMediaNoticePreference.ts';
   import Icon from '../Icon.svelte';
   import { THEME_ACCENTS, readThemeAccent, saveThemeAccent } from '#src/utils/themeAccent.ts';
   export let section: string;
@@ -57,9 +53,23 @@
     privateBusy = false,
     privateError = '',
     privateNotice = '';
-  // Same preference as the upload notice's "Don't show this again". It only controls that
-  // informational notice; private media is always encrypted either way.
-  let showPrivateMediaNotice = !isPrivateMediaNoticeDismissed();
+  // Reset for "Don't ask again" on the plaintext media confirmation. It never sends anything
+  // without encryption by itself.
+  let askBeforePlaintext = !nostr.isPlaintextMediaConfirmationSkipped(),
+    askBusy = false;
+  $: if (!$startup && !askBusy) askBeforePlaintext = !nostr.isPlaintextMediaConfirmationSkipped();
+  async function setAskBeforePlaintext(ask: boolean) {
+    askBusy = true;
+    privateError = '';
+    try {
+      await nostr.setPlaintextMediaConfirmationSkipped(!ask);
+    } catch {
+      privateError = $translate('mediaDataStorage.settingSaveFailed');
+    } finally {
+      askBeforePlaintext = !nostr.isPlaintextMediaConfirmationSkipped();
+      askBusy = false;
+    }
+  }
   $: privateNormalized = normalizeBlossomServerUrl(privateServer);
   $: if (!$startup && !privateBusy && privateServer === privateSaved) {
     privateSaved = nostr.getPrivateMediaBlossomServerUrl();
@@ -90,7 +100,7 @@
       privateSaved = nostr.getPrivateMediaBlossomServerUrl();
       privateServer = privateSaved;
     }
-    showPrivateMediaNotice = !isPrivateMediaNoticeDismissed();
+    if (!askBusy) askBeforePlaintext = !nostr.isPlaintextMediaConfirmationSkipped();
   }
   onMount(() => {
     window.addEventListener('storage', sync);
@@ -226,16 +236,14 @@
       </div>
     </form>
     <label class="settings-switch"
-      ><span>{$translate('mediaDataStorage.showPrivateMediaNotice')}</span><input
+      ><span>{$translate('mediaDataStorage.askBeforePlaintextMedia')}</span><input
         type="checkbox"
         role="switch"
-        data-testid="settings-private-media-notice-toggle"
-        aria-label={$translate('mediaDataStorage.showPrivateMediaNotice')}
-        checked={showPrivateMediaNotice}
-        onchange={(e) => {
-          setPrivateMediaNoticeDismissed(!e.currentTarget.checked);
-          showPrivateMediaNotice = !isPrivateMediaNoticeDismissed();
-        }}
+        data-testid="settings-plaintext-media-ask-toggle"
+        aria-label={$translate('mediaDataStorage.askBeforePlaintextMedia')}
+        checked={askBeforePlaintext}
+        disabled={askBusy || $startup}
+        onchange={(e) => void setAskBeforePlaintext(e.currentTarget.checked)}
       /></label
     >
     <div class="settings-actions settings-caption">

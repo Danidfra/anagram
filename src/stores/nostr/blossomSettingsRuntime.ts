@@ -71,7 +71,32 @@ export function createBlossomSettingsRuntime({
     );
   }
 
+  // Set by "Don't ask again" on the plaintext media confirmation. It only skips that confirmation
+  // after the user chooses to send without encryption; it never chooses plaintext by itself.
+  function isPlaintextMediaConfirmationSkipped(): boolean {
+    return readPrivatePreferencesFromStorage()?.skipPlaintextMediaConfirmation === true;
+  }
+
+  async function setPlaintextMediaConfirmationSkipped(skip: boolean): Promise<void> {
+    const preferences = await ensurePrivatePreferences();
+    if ((preferences.skipPlaintextMediaConfirmation === true) === skip) {
+      return;
+    }
+
+    const nextPreferences: PrivatePreferences = { ...preferences };
+    if (skip) {
+      nextPreferences.skipPlaintextMediaConfirmation = true;
+    } else {
+      delete nextPreferences.skipPlaintextMediaConfirmation;
+    }
+
+    await publishPrivatePreferences(nextPreferences);
+    writePrivatePreferencesToStorage(nextPreferences);
+  }
+
   return {
+    isPlaintextMediaConfirmationSkipped,
+    setPlaintextMediaConfirmationSkipped,
     getBlossomServerUrl,
     getPrivateMediaBlossomServerUrl,
     saveBlossomServerUrl,

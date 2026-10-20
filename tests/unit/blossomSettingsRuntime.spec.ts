@@ -149,4 +149,32 @@ describe('Blossom settings runtime', () => {
       expect(publishPrivatePreferences).not.toHaveBeenCalled();
     });
   });
+
+  it('stores "don\'t ask again" for plaintext media only as true, and resets it', async () => {
+    const { publishPrivatePreferences, runtime } = createHarness({ contactSecret: CONTACT_SECRET });
+    expect(runtime.isPlaintextMediaConfirmationSkipped()).toBe(false);
+
+    await runtime.setPlaintextMediaConfirmationSkipped(true);
+    expect(publishPrivatePreferences).toHaveBeenLastCalledWith({
+      contactSecret: CONTACT_SECRET,
+      skipPlaintextMediaConfirmation: true,
+    });
+    expect(runtime.isPlaintextMediaConfirmationSkipped()).toBe(true);
+
+    await runtime.setPlaintextMediaConfirmationSkipped(true);
+    expect(publishPrivatePreferences).toHaveBeenCalledTimes(1);
+
+    await runtime.setPlaintextMediaConfirmationSkipped(false);
+    expect(publishPrivatePreferences).toHaveBeenLastCalledWith({ contactSecret: CONTACT_SECRET });
+    expect(runtime.isPlaintextMediaConfirmationSkipped()).toBe(false);
+  });
+
+  it('keeps asking when the stored value is anything other than true', () => {
+    const { runtime } = createHarness({
+      contactSecret: CONTACT_SECRET,
+      skipPlaintextMediaConfirmation: 'yes' as unknown as true,
+    });
+
+    expect(runtime.isPlaintextMediaConfirmationSkipped()).toBe(false);
+  });
 });

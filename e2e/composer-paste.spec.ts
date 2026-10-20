@@ -13,9 +13,7 @@ test('existing image paste opens upload confirmation in private and public chats
   try {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await openDirectChatFromIdentifier(page, user.session.npub, 'My Self');
-    // The encryption notice is dismissed, but pasted media still needs explicit confirmation,
-    // and cancelling it uploads nothing.
-    await page.evaluate(() => localStorage.setItem('ui-private-media-notice-dismissed', '1'));
+    // Pasted media needs explicit confirmation, and cancelling it uploads nothing.
     let uploadRequests = 0;
     await page.route('**/upload', async (route) => {
       uploadRequests += 1;
@@ -37,7 +35,6 @@ test('existing image paste opens upload confirmation in private and public chats
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByRole('button', { name: 'Upload', exact: true })).toBeVisible();
       await expect(dialog).toContainText('image.png');
-      await expect(page.getByTestId('composer-media-notice')).toHaveCount(0);
       await expect(input).toHaveValue('Draft kept while pasting');
       await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
       await expect(dialog).toHaveCount(0);
@@ -99,7 +96,7 @@ test('Linux native fallback opens the existing confirmation without sending', as
     });
     const input = page.getByTestId('message-composer-input');
     await input.fill('Native caption');
-    await input.press('ControlOrMeta+v');
+    await input.press('Control+v');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('button', { name: 'Upload', exact: true })).toBeVisible();
     await expect(dialog).toContainText('image.png');
@@ -108,7 +105,7 @@ test('Linux native fallback opens the existing confirmation without sending', as
     await expect(page.getByTestId('message-bubble')).toHaveCount(0);
     expect(uploadRequests).toBe(0);
     await page.evaluate(() => navigator.clipboard.writeText(' plus text'));
-    await input.press('ControlOrMeta+v');
+    await input.press('Control+v');
     await expect(input).toHaveValue('Native caption plus text');
     await expect(dialog).toHaveCount(0);
     expect(user.browserErrors).toEqual([]);
@@ -117,9 +114,7 @@ test('Linux native fallback opens the existing confirmation without sending', as
   }
 });
 
-test('confirmed pasted media is sent encrypted as kind 15 even with the notice dismissed', async ({
-  browser,
-}) => {
+test('confirmed pasted media is sent encrypted as kind 15', async ({ browser }) => {
   const user = await bootstrapUser(browser, TEST_ACCOUNTS.PasteEncryptedSend);
   const { page, context } = user;
   const server = 'https://paste-media.example.org';
@@ -151,7 +146,6 @@ test('confirmed pasted media is sent encrypted as kind 15 even with the notice d
     });
     await openDirectChatFromIdentifier(page, user.session.npub, 'My Self');
     await page.evaluate(async (server) => {
-      localStorage.setItem('ui-private-media-notice-dismissed', '1');
       const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
       await useNostrStore().savePrivateMediaBlossomServerUrl(server);
     }, server);
