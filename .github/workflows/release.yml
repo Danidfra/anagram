@@ -30,11 +30,6 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-      # Check the checkout before any step can overwrite stale committed versions.
-      - name: Check committed versions against the release tag
-        run: npm run release:check
-        env:
-          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
       - run: npm ci
       - name: Set build version
         id: version
@@ -43,6 +38,7 @@ jobs:
         run: |
           export RELEASE_TAG="${REQUESTED_VERSION:-v$(node -p 'require("./package.json").version')}"
           npm run release:version
+          npm run release:check
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
       - name: Determine release visibility
         id: policy
@@ -153,7 +149,9 @@ jobs:
           key: ${{ matrix.target }}
       - run: npm ci
       - name: Set version from tag
-        run: npm run release:version
+        run: |
+          npm run release:version
+          npm run release:check
         env:
           RELEASE_TAG: ${{ needs.verify.outputs.tag }}
       - run: npm run verify:iroh

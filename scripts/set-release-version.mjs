@@ -83,7 +83,7 @@ export function checkReleaseVersion(tag, root = repositoryRoot) {
   if (mismatches.length)
     throw new Error(
       `Release version mismatch:\n${mismatches.join('\n')}\n` +
-        `Run npm run release:version -- ${version} and commit the version files before tagging.`,
+        `Run npm run release:version -- ${version} before checking the build versions.`,
     );
   console.log(`Release versions match: ${version}`);
   return version;

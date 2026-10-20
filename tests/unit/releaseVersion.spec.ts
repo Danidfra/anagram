@@ -168,4 +168,26 @@ describe('tagged release versions', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(checkReleaseVersion('v1.2.3', root)).toBe('1.2.3');
   });
+
+  it('builds a tagged RC from older checkout versions, including numeric mobile versions', () => {
+    cpSync(
+      new URL('../../scripts/mobile-version.mjs', import.meta.url),
+      join(dir, 'scripts/mobile-version.mjs'),
+    );
+    const env = { ...process.env, RELEASE_TAG: 'v0.9.7-rc3', GITHUB_RUN_NUMBER: '42' };
+    for (const args of [
+      ['scripts/set-release-version.mjs'],
+      ['scripts/set-release-version.mjs', '--check'],
+      ['scripts/mobile-version.mjs'],
+      ['scripts/set-release-version.mjs', '--check'],
+    ]) {
+      const result = spawnSync(process.execPath, args, { cwd: dir, env, encoding: 'utf8' });
+      expect(result.status, result.stderr).toBe(0);
+    }
+    expect(checkReleaseVersion(env.RELEASE_TAG, root)).toBe('0.9.7-rc3');
+    expect(JSON.parse(read('src-tauri/mobile-version.json'))).toEqual({
+      version: '0.9.7',
+      bundle: { android: { versionCode: 42 }, iOS: { bundleVersion: '42' } },
+    });
+  });
 });

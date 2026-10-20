@@ -21,10 +21,6 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-      - name: Check committed app versions
-        run: npm run release:check
-        env:
-          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -47,6 +43,10 @@ jobs:
         run: npm run release:version
         env:
           RELEASE_TAG: ${{ (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag }}
+      - name: Check build versions
+        run: npm run release:check
+        env:
+          RELEASE_TAG: ${{ (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag || '' }}
       - run: npm run verify:iroh
       - name: Install NDK
         run: |
