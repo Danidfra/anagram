@@ -1,5 +1,72 @@
 import { test, expect } from '@playwright/test';
 
+test('packet audio resumes after context suspension and closes after its last owner hangs up', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.evaluate(async () => {
+    const Original = window.AudioContext;
+    let context: AudioContext;
+    window.AudioContext = class extends Original {
+      constructor(options?: AudioContextOptions) {
+        super(options);
+        context = this;
+      }
+    };
+    try {
+      const { prepareCallPacketAudio } = await import('/src/services/callPacketAudio.ts');
+      const first = await prepareCallPacketAudio();
+      const second = await prepareCallPacketAudio();
+      if (!first || !second) throw new Error('Packet audio unavailable');
+      (window as any).__callRecovery = { context: context!, first, second };
+      await context!.suspend();
+    } finally {
+      window.AudioContext = Original;
+    }
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__callRecovery.context.state))
+    .toBe('running');
+  await page.evaluate(() => (window as any).__callRecovery.first());
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__callRecovery.context.state))
+    .toBe('running');
+  await page.evaluate(() => (window as any).__callRecovery.second());
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__callRecovery.context.state))
+    .toBe('closed');
+});
+
+test('remote call playback resumes when returning to the app', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(async () => {
+    const { mount } = await import('/src/lib/dev/mountFixture.ts');
+    const { default: CallAudio } = await import('/src/lib/components/CallAudio.svelte');
+    const { registerCallStream } = await import('/src/services/callStreamRegistry.ts');
+    const context = new AudioContext();
+    const oscillator = context.createOscillator();
+    const output = context.createMediaStreamDestination();
+    oscillator.connect(output);
+    oscillator.start();
+    await context.resume();
+    const target = document.createElement('div');
+    document.body.append(target);
+    const stream = registerCallStream(output.stream);
+    mount(CallAudio, { target, props: { url: stream.url } });
+  });
+  const playing = () =>
+    page.evaluate(
+      () =>
+        !(document.querySelector('[data-testid="call-remote-audio"]') as HTMLAudioElement).paused,
+    );
+  await expect.poll(playing).toBe(true);
+  await page.evaluate(() => {
+    (document.querySelector('[data-testid="call-remote-audio"]') as HTMLAudioElement).pause();
+    window.dispatchEvent(new Event('pageshow'));
+  });
+  await expect.poll(playing).toBe(true);
+});
+
 for (const variant of [
   { agent: 'Android', room: false },
   { agent: 'iPhone', room: false },

@@ -14,6 +14,7 @@ function media(currentTime: number, ranges: number[][], seeking = false) {
       end: (index: number) => ranges[index][1],
     },
     seeking,
+    playbackRate: 1,
     get currentTime() {
       return currentTime;
     },
@@ -43,25 +44,63 @@ describe('live call playback recovery', () => {
     stop();
   });
 
-  it('brings audio closer to live without repeatedly seeking or changing video policy', () => {
+  it('drains modest audio backlog without seeking or changing video policy', () => {
     const audio = media(9.5, [[0, 10]]);
     const video = media(9.5, [[0, 10]]);
     followCallLive(audio.element, 'audio');
     followCallLive(video.element);
-    expect(audio.element.currentTime).toBeCloseTo(9.8);
+    expect(audio.element.playbackRate).toBe(1.1);
+    expect(audio.seek).not.toHaveBeenCalled();
+    expect(video.element.playbackRate).toBe(1);
     expect(video.seek).not.toHaveBeenCalled();
-    for (let i = 0; i < 10; i++) followCallLive(audio.element, 'audio');
-    expect(audio.seek).toHaveBeenCalledOnce();
-    for (const time of [9.7, 9.57]) {
-      const jitter = media(time, [[0, 10]]);
-      followCallLive(jitter.element, 'audio');
-      expect(jitter.seek).not.toHaveBeenCalled();
+    // Keep draining through the hysteresis band, then restore normal speed.
+    audio.element.currentTime = 9.7;
+    followCallLive(audio.element, 'audio');
+    expect(audio.element.playbackRate).toBe(1.1);
+    audio.element.currentTime = 9.8;
+    followCallLive(audio.element, 'audio');
+    expect(audio.element.playbackRate).toBe(1);
+    audio.element.currentTime = 9.7;
+    followCallLive(audio.element, 'audio');
+    expect(audio.element.playbackRate).toBe(1);
+  });
+
+  it('seeks a large audio backlog immediately and restores normal speed', () => {
+    const ranges = [[0, 10]];
+    const { element, seek } = media(9.5, ranges);
+    followCallLive(element, 'audio');
+    expect(element.playbackRate).toBe(1.1);
+    ranges[0][1] = 11;
+    followCallLive(element, 'audio');
+    expect(seek).toHaveBeenCalledExactlyOnceWith(10.8);
+    expect(element.playbackRate).toBe(1);
+    followCallLive(element, 'audio');
+    expect(seek).toHaveBeenCalledOnce();
+  });
+
+  it('restores normal audio speed on pause, seek, buffer loss and detach', () => {
+    vi.useFakeTimers();
+    for (const reason of ['pause', 'seek', 'empty', 'detach']) {
+      const { element } = media(9.5, [[0, 10]]);
+      const stop = watchCallLive(element, 'audio');
+      vi.advanceTimersByTime(250);
+      expect(element.playbackRate).toBe(1.1);
+      if (reason === 'detach') stop();
+      else {
+        if (reason === 'pause') Object.defineProperty(element, 'paused', { value: true });
+        if (reason === 'seek') Object.defineProperty(element, 'seeking', { value: true });
+        if (reason === 'empty') Object.defineProperty(element.buffered, 'length', { value: 0 });
+        followCallLive(element, 'audio');
+      }
+      expect(element.playbackRate).toBe(1);
+      stop();
     }
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('uses the audio cushion on stalled-event recovery and preserves seek/gap guards', () => {
     vi.useFakeTimers();
-    const { element } = media(9.5, [[0, 10]]);
+    const { element } = media(9, [[0, 10]]);
     const stop = watchCallLive(element, 'audio');
     vi.advanceTimersByTime(250);
     expect(element.currentTime).toBeCloseTo(9.8);
@@ -70,8 +109,8 @@ describe('live call playback recovery', () => {
     const seeking = media(8, [[0, 10]], true);
     followCallLive(seeking.element, 'audio');
     expect(seeking.seek).not.toHaveBeenCalled();
-    const gap = media(5, [
-      [0, 6],
+    const gap = media(9.7, [
+      [0, 9.8],
       [9.9, 10],
     ]);
     followCallLive(gap.element, 'audio');

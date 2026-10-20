@@ -87,6 +87,33 @@ test('long personal replies collapse and logout clears them without database enu
     );
     await personal.getByRole('button', { name: 'Show more', exact: true }).click();
     await expect(personal.getByRole('button', { name: 'Second action' })).toBeVisible();
+    // A late relay acknowledgement can refresh the same saved answer after it
+    // has been expanded. Wait for that read to finish before checking the view.
+    await page.evaluate(async () => {
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
+      const runtime = useNostrStore().botKeyboards;
+      const read = runtime.read;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          runtime.read = async (...args) => {
+            try {
+              return await read(...args);
+            } catch (error) {
+              reject(error);
+              throw error;
+            } finally {
+              resolve();
+            }
+          };
+          runtime.changes.set({ key: null });
+        });
+        await new Promise(requestAnimationFrame);
+      } finally {
+        runtime.read = read;
+      }
+    });
+    await expect(personal.getByRole('button', { name: 'Show less', exact: true })).toBeVisible();
+    await expect(personal.getByRole('button', { name: 'Second action' })).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
     await personal.getByRole('button', { name: 'Show less', exact: true }).click();
     await expect(personal.getByRole('button', { name: 'Second action' })).toHaveCount(0);

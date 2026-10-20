@@ -66,9 +66,12 @@
     generation++;
   });
   const personal = $derived(saved?.answer ?? saved?.previous);
+  // IndexedDB refreshes return new objects for the same answer. Only a new
+  // event should reset the reader's choice to expand the reply.
+  const personalEventId = $derived(personal?.eventId);
   let personalExpanded = $state(false);
   $effect(() => {
-    personal?.eventId;
+    personalEventId;
     personalExpanded = false;
   });
   const personalFormatted = $derived(formatMessage(personal?.text ?? ''));
