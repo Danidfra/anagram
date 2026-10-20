@@ -208,7 +208,12 @@ test('encrypted DM, reaction, edit, reload and private group', async ({ browser 
   ).toBeVisible();
   // Accepted private groups retain numeric badges independently of notification opt-in.
   await b.getByTestId('chat-item').filter({ hasText: 'My Self' }).click();
+  await expect(b.getByTestId('chat-thread')).toHaveAttribute('data-chat-public-key', bob.pubkey);
   const groupRow = b.getByTestId('chat-item').filter({ hasText: 'Private test group' });
+  // Read cursors use Nostr's whole-second timestamps. This badge test needs
+  // activity strictly newer than the messages Bob just read.
+  const nextMessageSecond = (Math.floor(Date.now() / 1000) + 1) * 1000;
+  await expect.poll(() => Date.now()).toBeGreaterThanOrEqual(nextMessageSecond);
   await a.getByTestId('message-composer-input').fill('Unread private group message');
   await a.getByTestId('message-send-button').click();
   await expect(groupRow.getByLabel('1 unread messages')).toBeVisible();
@@ -494,6 +499,9 @@ test('switching cached groups renders and positions messages before history chec
       nostr.prioritizeThreadHistory(null);
       (window as any).__historyChecks = [];
       nostr.prioritizeThreadHistory = (id) => {
+        // Startup may still request history for an unrelated empty chat.
+        // Only these fixture groups are expected to contain cached messages.
+        if (id && !groups.includes(id)) return;
         if (!id) {
           nostr.groupHistoryState.loading = false;
           nostr.groupHistoryState.chat = '';
@@ -502,6 +510,8 @@ test('switching cached groups renders and positions messages before history chec
         const thread = document.querySelector('[data-testid="chat-thread"]');
         (window as any).__historyChecks.push({
           id,
+          threadId: thread?.getAttribute('data-chat-public-key'),
+          count: thread?.querySelectorAll('.message-row').length,
           rendered:
             thread?.getAttribute('data-chat-public-key') === id &&
             thread.querySelectorAll('.message-row').length > 0,
@@ -558,11 +568,12 @@ test('switching cached groups renders and positions messages before history chec
       )
       .toBeLessThanOrEqual(1);
   }
-  expect(
-    await page.evaluate(() =>
-      (window as any).__historyChecks.every((entry: { rendered: boolean }) => entry.rendered),
-    ),
-  ).toBe(true);
+  const historyChecks = await page.evaluate(() => (window as any).__historyChecks);
+  expect(historyChecks.map((entry: { id: string }) => entry.id)).toEqual(
+    expect.arrayContaining(groups),
+  );
+  for (const entry of historyChecks)
+    expect(entry, JSON.stringify(entry)).toMatchObject({ rendered: true });
   // A cache load finishing after another selection must not start stale relay work.
   await page.evaluate(async (key) => {
     const { useMessageStore } = await import('/src/stores/messageStore.svelte.ts');
