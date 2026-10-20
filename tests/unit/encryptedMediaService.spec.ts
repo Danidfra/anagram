@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const MIB = 1024 * 1024;
 // Plaintext limit plus the 16-byte AES-GCM tag.
 const MAX_IMAGE_BLOB_BYTES = 20 * MIB + 16;
-const MAX_AUDIO_BLOB_BYTES = 10 * MIB + 16;
+const MAX_AUDIO_BLOB_BYTES = 20 * MIB + 16;
 const PLAINTEXT = new Uint8Array(new TextEncoder().encode('decrypted-image-bytes'));
 
 async function createEncryptedFixture(mimeType = 'image/png') {
@@ -94,7 +94,7 @@ describe('encryptedMediaService', () => {
     'image/svg+xml',
     'text/html',
     'application/xhtml+xml',
-    'video/quicktime',
+    'video/x-matroska',
   ])('never turns %s into a renderable object URL', async (mimeType) => {
     const { attachment, ciphertext } = await createEncryptedFixture(mimeType);
     const { service, fetch, createObjectURL } = createHarness(ciphertext);
@@ -216,7 +216,6 @@ describe('encryptedMediaService', () => {
     });
 
     it.each([
-      ['video/quicktime'],
       ['video/x-matroska'],
       ['audio/x-ms-wma'],
       ['image/svg+xml'],

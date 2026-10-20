@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { crc32, deflateSync } from 'node:zlib';
 import {
   type BrowserContext,
@@ -575,6 +576,25 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
       BACKUP_ORIGIN,
       { timeout: 12_000 },
     );
+
+    // iPhone video (H.264 QuickTime) is encrypted too and plays from the decrypted blob.
+    const mov = readFileSync('e2e/fixtures/h264-clip.mov');
+    await navigateToChat(alice.page, bob.session.publicKey);
+    await sendPrivateMedia(alice.page, {
+      name: 'clip.mov',
+      mimeType: 'video/quicktime',
+      buffer: mov,
+    });
+    await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(5);
+    expect(blossom.uploadAttempts.at(-1)?.body.includes(mov.subarray(4, 12))).toBe(false);
+    await expect(alice.page.getByTestId('message-encrypted-video')).toHaveCount(2, {
+      timeout: 30_000,
+    });
+    const movPlayer = alice.page.getByTestId('message-encrypted-video').last();
+    expect((await readDecryptedBytes(movPlayer)).type).toBe('video/quicktime');
+    await expect
+      .poll(() => movPlayer.evaluate((element: HTMLMediaElement) => element.videoWidth))
+      .toBe(64);
 
     expect(
       blossom.uploadAttempts.every((attempt) => attempt.contentType === 'application/octet-stream'),

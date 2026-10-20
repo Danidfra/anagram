@@ -314,7 +314,7 @@ describe('message attachment helpers', () => {
     it('only treats allowlisted raster types as inline encrypted images', () => {
       const svg = { ...encryptedAttachment, mimeType: 'image/svg+xml' };
       const html = { ...encryptedAttachment, mimeType: 'text/html' };
-      const video = { ...encryptedAttachment, mimeType: 'video/quicktime' };
+      const video = { ...encryptedAttachment, mimeType: 'video/x-matroska' };
       const meta = { attachments: [encryptedAttachment, svg, html, video] };
 
       expect(readImageAttachmentsFromMeta(meta)).toEqual([encryptedAttachment]);
@@ -336,11 +336,12 @@ describe('message attachment helpers', () => {
       const mp3 = { ...encryptedAttachment, mimeType: 'audio/mpeg' };
       const mov = { ...encryptedAttachment, mimeType: 'video/quicktime' };
       const mkv = { ...encryptedAttachment, mimeType: 'video/x-matroska' };
-      const meta = { attachments: [encryptedAttachment, mp4, webm, mp3, mov, mkv] };
+      const wma = { ...encryptedAttachment, mimeType: 'audio/x-ms-wma' };
+      const meta = { attachments: [encryptedAttachment, mp4, webm, mp3, mov, mkv, wma] };
 
-      expect(readPlayableEncryptedAttachmentsFromMeta(meta)).toEqual([mp4, webm, mp3]);
+      expect(readPlayableEncryptedAttachmentsFromMeta(meta)).toEqual([mp4, webm, mp3, mov]);
       expect(readImageAttachmentsFromMeta(meta)).toEqual([encryptedAttachment]);
-      for (const unsupported of [mov, mkv]) {
+      for (const unsupported of [mkv, wma]) {
         expect(isImageAttachment(unsupported)).toBe(false);
         expect(isPlayableEncryptedAttachment(unsupported)).toBe(false);
       }
@@ -356,13 +357,13 @@ describe('message attachment helpers', () => {
       const meta = { attachments: [encryptedAttachment] };
       const videoMeta = { attachments: [{ ...encryptedAttachment, mimeType: 'video/mp4' }] };
       const audioMeta = { attachments: [{ ...encryptedAttachment, mimeType: 'audio/mpeg' }] };
-      const movMeta = { attachments: [{ ...encryptedAttachment, mimeType: 'video/quicktime' }] };
+      const mkvMeta = { attachments: [{ ...encryptedAttachment, mimeType: 'video/x-matroska' }] };
 
       expect(readHiddenAttachmentUrls(meta)).toEqual([blobUrl]);
       expect(buildImageAttachmentPreviewText(blobUrl, meta)).toBe('Picture');
       expect(buildImageAttachmentPreviewText(blobUrl, videoMeta)).toBe('Video');
       expect(buildImageAttachmentPreviewText(blobUrl, audioMeta)).toBe('Audio');
-      expect(buildImageAttachmentPreviewText(blobUrl, movMeta)).toBe('File');
+      expect(buildImageAttachmentPreviewText(blobUrl, mkvMeta)).toBe('File');
     });
 
     it('keeps reply previews of encrypted images text-only, without a blob URL or decryption data', () => {

@@ -92,12 +92,12 @@ export function validateBlossomMediaFile(file: File): string | null {
 
 const UNSUPPORTED_ENCRYPTED_MEDIA_MESSAGES: Record<EncryptedMediaKind, string> = {
   image: 'Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.',
-  video: 'Only MP4 and WebM videos can be sent encrypted.',
+  video: 'Only MP4, MOV, and WebM videos can be sent encrypted.',
   audio: 'Only MP3, MP4/AAC, Ogg, WebM, WAV, and FLAC audio can be sent encrypted.',
 };
 
-// Validates image, video and audio for private (encrypted) sending: type allowlist and the
-// per-kind size limit from the central resolver.
+// Validates image, video and audio for private (encrypted) sending: the general media checks and
+// the type allowlist from the central resolver.
 export function validateEncryptedMediaFile(file: File): string | null {
   const baseError = validateBlossomMediaFile(file);
   if (baseError) {
@@ -108,10 +108,6 @@ export function validateEncryptedMediaFile(file: File): string | null {
   if (!info) {
     const category = file.type.split('/')[0].toLowerCase() as EncryptedMediaKind;
     return UNSUPPORTED_ENCRYPTED_MEDIA_MESSAGES[category];
-  }
-
-  if (file.size > info.maxBytes) {
-    return `Encrypted ${info.kind} uploads are limited to ${info.maxBytes / (1024 * 1024)} MiB.`;
   }
 
   return null;

@@ -523,6 +523,7 @@ describe('blossomUploadService', () => {
         for (const type of [
           'video/mp4',
           'video/webm',
+          'video/quicktime',
           'audio/mpeg',
           'audio/mp4',
           'audio/aac',
@@ -536,8 +537,8 @@ describe('blossomUploadService', () => {
       });
 
       it('rejects unsupported video and audio instead of sending them in plaintext', () => {
-        expect(validateEncryptedMediaFile(sized('video/quicktime', 10))).toBe(
-          'Only MP4 and WebM videos can be sent encrypted.'
+        expect(validateEncryptedMediaFile(sized('video/x-matroska', 10))).toBe(
+          'Only MP4, MOV, and WebM videos can be sent encrypted.'
         );
         expect(validateEncryptedMediaFile(sized('audio/x-ms-wma', 10))).toBe(
           'Only MP3, MP4/AAC, Ogg, WebM, WAV, and FLAC audio can be sent encrypted.'
@@ -547,24 +548,23 @@ describe('blossomUploadService', () => {
         );
       });
 
-      it('applies per-kind send limits', () => {
+      it('applies the 20 MiB media limit to every kind', () => {
         expect(validateEncryptedMediaFile(sized('image/png', 20 * MIB))).toBeNull();
         expect(validateEncryptedMediaFile(sized('video/mp4', 20 * MIB))).toBeNull();
-        expect(validateEncryptedMediaFile(sized('audio/mpeg', 10 * MIB))).toBeNull();
-        expect(validateEncryptedMediaFile(sized('audio/mpeg', 10 * MIB + 1))).toBe(
-          'Encrypted audio uploads are limited to 10 MiB.'
-        );
-        expect(validateEncryptedMediaFile(sized('video/mp4', 20 * MIB + 1))).toBe(
-          'Media uploads are limited to 20 MiB.'
-        );
+        expect(validateEncryptedMediaFile(sized('audio/mpeg', 20 * MIB))).toBeNull();
+        for (const type of ['audio/mpeg', 'video/mp4']) {
+          expect(validateEncryptedMediaFile(sized(type, 20 * MIB + 1))).toBe(
+            'Media uploads are limited to 20 MiB.'
+          );
+        }
       });
 
       it('refuses to prepare unsupported or oversized media', async () => {
-        await expect(prepareEncryptedMedia(sized('video/quicktime', 10))).rejects.toThrow(
-          'Only MP4 and WebM videos can be sent encrypted.'
+        await expect(prepareEncryptedMedia(sized('video/x-matroska', 10))).rejects.toThrow(
+          'Only MP4, MOV, and WebM videos can be sent encrypted.'
         );
-        await expect(prepareEncryptedMedia(sized('audio/mpeg', 10 * MIB + 1))).rejects.toThrow(
-          'limited to 10 MiB'
+        await expect(prepareEncryptedMedia(sized('audio/mpeg', 20 * MIB + 1))).rejects.toThrow(
+          'limited to 20 MiB'
         );
       });
     });

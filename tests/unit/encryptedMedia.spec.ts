@@ -15,27 +15,29 @@ describe('encrypted media kinds', () => {
     ['image/webp', 'image', 20 * MIB],
     ['image/avif', 'image', 20 * MIB],
     ['video/mp4', 'video', 20 * MIB],
+    ['video/quicktime', 'video', 20 * MIB],
     ['video/webm', 'video', 20 * MIB],
-    ['audio/mpeg', 'audio', 10 * MIB],
-    ['audio/mp4', 'audio', 10 * MIB],
-    ['audio/aac', 'audio', 10 * MIB],
-    ['audio/ogg', 'audio', 10 * MIB],
-    ['audio/webm', 'audio', 10 * MIB],
-    ['audio/wav', 'audio', 10 * MIB],
-    ['audio/flac', 'audio', 10 * MIB],
+    ['audio/mpeg', 'audio', 20 * MIB],
+    ['audio/mp4', 'audio', 20 * MIB],
+    ['audio/aac', 'audio', 20 * MIB],
+    ['audio/ogg', 'audio', 20 * MIB],
+    ['audio/webm', 'audio', 20 * MIB],
+    ['audio/wav', 'audio', 20 * MIB],
+    ['audio/flac', 'audio', 20 * MIB],
   ])('resolves %s as %s with a %d byte limit', (mime, kind, maxBytes) => {
     expect(resolveEncryptedMediaKind(mime)).toEqual({ kind, maxBytes, canonicalMime: mime });
   });
 
-  it('normalizes case, parameters and the image/jpg alias', () => {
+  it('normalizes case, parameters and common aliases', () => {
     expect(resolveEncryptedMediaKind(' Video/WebM; codecs=vp9 ')?.canonicalMime).toBe('video/webm');
     expect(resolveEncryptedMediaKind('image/jpg')?.canonicalMime).toBe('image/jpeg');
+    expect(resolveEncryptedMediaKind('audio/x-m4a')?.canonicalMime).toBe('audio/mp4');
+    expect(resolveEncryptedMediaKind('audio/mp3')?.canonicalMime).toBe('audio/mpeg');
+    expect(resolveEncryptedMediaKind('audio/x-wav')?.canonicalMime).toBe('audio/wav');
   });
 
   it.each([
-    'video/quicktime',
     'video/x-matroska',
-    'audio/x-m4a',
     'image/svg+xml',
     'image/heic',
     'text/html',
@@ -54,7 +56,7 @@ describe('encrypted media kinds', () => {
     const audio = resolveEncryptedMediaKind('audio/mpeg');
 
     expect(video && getMaxEncryptedBlobBytes(video)).toBe(20 * MIB + 16);
-    expect(audio && getMaxEncryptedBlobBytes(audio)).toBe(10 * MIB + 16);
+    expect(audio && getMaxEncryptedBlobBytes(audio)).toBe(20 * MIB + 16);
   });
 });
 
