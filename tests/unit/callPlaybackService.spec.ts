@@ -25,6 +25,24 @@ function media(currentTime: number, ranges: number[][], seeking = false) {
 }
 
 describe('live call playback recovery', () => {
+  it('waits for playback to resume before catching up a paused stream', () => {
+    vi.useFakeTimers();
+    const ranges = [[0, 10]];
+    const { element, seek } = media(9.5, ranges);
+    Object.defineProperty(element, 'paused', { value: true, writable: true });
+    const stop = watchCallLive(element, 'audio');
+    for (let i = 0; i < 4; i++) {
+      ranges[0][1] += 0.25;
+      followCallLive(element, 'audio');
+      vi.advanceTimersByTime(250);
+    }
+    expect(seek).not.toHaveBeenCalled();
+    Object.defineProperty(element, 'paused', { value: false });
+    vi.advanceTimersByTime(250);
+    expect(seek).toHaveBeenCalledExactlyOnceWith(10.8);
+    stop();
+  });
+
   it('brings audio closer to live without repeatedly seeking or changing video policy', () => {
     const audio = media(9.5, [[0, 10]]);
     const video = media(9.5, [[0, 10]]);

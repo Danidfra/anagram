@@ -26,7 +26,9 @@ export function followCallLive(
   element: HTMLMediaElement | null,
   kind: 'audio' | 'video' = 'video',
 ) {
-  if (!element?.buffered.length || element.seeking) return;
+  // A pause can keep receiving chunks. Catch up once playback resumes instead
+  // of repeatedly moving the paused cursor on every timer/progress event.
+  if (!element || element.paused || element.seeking || !element.buffered.length) return;
   const latest = element.buffered.length - 1;
   const end = element.buffered.end(latest);
   // Audio can recover closer to live; video (including legacy combined media)
