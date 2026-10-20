@@ -3,6 +3,7 @@ import { getPublicKey, generateSecretKey, nip19 } from 'nostr-tools';
 import {
   bootstrapUser,
   disposeUsers,
+  navigateToChat,
   openDirectChatFromIdentifier,
   sendMessage,
   TEST_ACCOUNTS,
@@ -13,8 +14,9 @@ test('Escape after a message action keeps focus where the user is typing', async
   const user = await bootstrapUser(browser, TEST_ACCOUNTS.escapeFocusUser);
   try {
     const { page } = user;
-    const peer = nip19.npubEncode(getPublicKey(generateSecretKey()));
-    await openDirectChatFromIdentifier(page, peer, 'Escape focus peer');
+    const peer = getPublicKey(generateSecretKey());
+    await openDirectChatFromIdentifier(page, nip19.npubEncode(peer), 'Escape focus peer');
+    await navigateToChat(page, peer);
     await sendMessage(page, 'Escape focus fixture');
     const composer = page.getByTestId('message-composer-input');
     // Opening the menu from the message and choosing Reply closes the menu and

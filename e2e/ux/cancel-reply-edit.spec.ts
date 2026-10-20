@@ -4,6 +4,7 @@ import {
   action,
   bootstrapUser,
   disposeUsers,
+  navigateToChat,
   openDirectChatFromIdentifier,
   sendMessage,
   TEST_ACCOUNTS,
@@ -15,8 +16,9 @@ test('Escape and the cancel button end a reply or edit and keep the composer foc
   const user = await bootstrapUser(browser, TEST_ACCOUNTS.cancelContextUser);
   try {
     const { page } = user;
-    const peer = nip19.npubEncode(getPublicKey(generateSecretKey()));
-    await openDirectChatFromIdentifier(page, peer, 'Cancel context peer');
+    const peer = getPublicKey(generateSecretKey());
+    await openDirectChatFromIdentifier(page, nip19.npubEncode(peer), 'Cancel context peer');
+    await navigateToChat(page, peer);
     await sendMessage(page, 'Cancel context fixture');
     const composer = page.getByTestId('message-composer-input');
     const banner = page.locator('.composer-context');
