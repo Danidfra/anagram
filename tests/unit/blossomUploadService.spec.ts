@@ -5,7 +5,6 @@ import {
   uploadPreparedEncryptedMedia,
   validateBlossomMediaFile,
   validateEncryptedMediaFile,
-  verifyPrivateMediaServer,
 } from '#src/services/blossomUploadService.ts';
 import { decryptMediaBytes, sha256Hex } from '#src/utils/mediaCrypto.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -306,104 +305,6 @@ describe('blossomUploadService', () => {
         uploadEncryptedMedia(imageFile('image/svg+xml', 'x.svg'), UPLOAD_OPTIONS)
       ).rejects.toThrow('Only JPEG, PNG, GIF, WebP, and AVIF images can be sent encrypted.');
       expect(fetchMock).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('private media server verification', () => {
-    // A Blossom server that stores blobs by hash and optionally mutates or refuses deletion.
-    function createStoringServer(options: { mutate?: boolean; allowDelete?: boolean } = {}) {
-      const blobs = new Map<string, Uint8Array>();
-      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-        if (init?.method === 'PUT') {
-          const body = readRequestBody(init);
-          const sha256 = await sha256Hex(body);
-          blobs.set(
-            sha256,
-            options.mutate ? new Uint8Array([...body.subarray(1), 0]) : new Uint8Array(body)
-          );
-          return descriptorResponse(sha256, body.byteLength);
-        }
-        const sha256 = url.split('/').pop() ?? '';
-        if (init?.method === 'DELETE') {
-          if (!options.allowDelete) {
-            return new Response('', { status: 405 });
-          }
-          blobs.delete(sha256);
-          return new Response('', { status: 200 });
-        }
-        const blob = blobs.get(sha256);
-        return blob
-          ? new Response(blob as Uint8Array<ArrayBuffer>)
-          : new Response('', { status: 404 });
-      });
-      return { blobs, fetchMock };
-    }
-
-    it('uploads, downloads, compares hashes and deletes the random probe', async () => {
-      const { blobs, fetchMock } = createStoringServer({ allowDelete: true });
-      const signUploadAuthHeader = vi.fn(
-        async (_input: { serverUrl: string; sha256: string; action?: string }) =>
-          'Nostr signed-auth'
-      );
-      vi.stubGlobal('fetch', fetchMock);
-
-      await expect(
-        verifyPrivateMediaServer({ ...UPLOAD_OPTIONS, signUploadAuthHeader })
-      ).resolves.toEqual({ cleanedUp: true });
-
-      const [putUrl, putInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-      expect(putUrl).toBe('https://media.example.com/upload');
-      expect(new Headers(putInit.headers).get('Content-Type')).toBe('application/octet-stream');
-      expect(readRequestBody(putInit).byteLength).toBe(32);
-      expect(fetchMock.mock.calls.map(([, init]) => init?.method ?? 'GET')).toEqual([
-        'PUT',
-        'GET',
-        'DELETE',
-      ]);
-      expect(signUploadAuthHeader.mock.calls.map(([input]) => input.action)).toEqual([
-        undefined,
-        'delete',
-      ]);
-      expect(blobs.size).toBe(0);
-    });
-
-    it('still passes when the server refuses deletion and reports that', async () => {
-      const { fetchMock } = createStoringServer({ allowDelete: false });
-      vi.stubGlobal('fetch', fetchMock);
-
-      await expect(verifyPrivateMediaServer(UPLOAD_OPTIONS)).resolves.toEqual({
-        cleanedUp: false,
-      });
-    });
-
-    it('fails when the server returns different bytes than were uploaded', async () => {
-      const { fetchMock } = createStoringServer({ mutate: true, allowDelete: true });
-      vi.stubGlobal('fetch', fetchMock);
-
-      await expect(verifyPrivateMediaServer(UPLOAD_OPTIONS)).rejects.toThrow(
-        'media.example.com altered the test blob'
-      );
-    });
-
-    it('fails when the upload is rejected', async () => {
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async () => new Response('', { status: 415, headers: { 'X-Reason': 'nope' } }))
-      );
-
-      await expect(verifyPrivateMediaServer(UPLOAD_OPTIONS)).rejects.toThrow('nope');
-    });
-
-    it('fails when the blob cannot be downloaded', async () => {
-      const { fetchMock } = createStoringServer({ allowDelete: true });
-      const withoutDownload = vi.fn(async (url: string, init?: RequestInit) =>
-        init?.method === 'PUT' ? fetchMock(url, init) : new Response('', { status: 404 })
-      );
-      vi.stubGlobal('fetch', withoutDownload);
-
-      await expect(verifyPrivateMediaServer(UPLOAD_OPTIONS)).rejects.toThrow(
-        'could not return the test blob (HTTP 404)'
-      );
     });
   });
 

@@ -10,12 +10,10 @@
   import {
     DEFAULT_BLOSSOM_SERVER_URL,
     DEFAULT_PRIVATE_MEDIA_BLOSSOM_SERVER_URL,
-    getBlossomServerHost,
     normalizeBlossomServerUrl,
   } from '#src/utils/blossomServer.ts';
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import { toStore } from 'svelte/store';
-  import { verifyPrivateMediaServer } from '#src/services/blossomUploadService.ts';
   import {
     isPrivateMediaNoticeDismissed,
     setPrivateMediaNoticeDismissed,
@@ -58,8 +56,7 @@
     privateServer = privateSaved,
     privateBusy = false,
     privateError = '',
-    privateNotice = '',
-    testing = false;
+    privateNotice = '';
   // Same preference as the upload notice's "Don't show this again". It only controls that
   // informational notice; private media is always encrypted either way.
   let showPrivateMediaNotice = !isPrivateMediaNoticeDismissed();
@@ -81,34 +78,6 @@
       privateError = $translate('mediaDataStorage.privateMediaServerSaveFailed');
     } finally {
       privateBusy = false;
-    }
-  }
-  // Tests whichever URL is in the field, so a server can be verified before it is saved.
-  async function testPrivateServer() {
-    const serverUrl = privateNormalized;
-    if (!serverUrl || testing) return;
-    testing = true;
-    privateError = '';
-    privateNotice = '';
-    try {
-      await nostr.ensureBlossomUploadAuthentication();
-      const { cleanedUp } = await verifyPrivateMediaServer({
-        serverUrl,
-        signUploadAuthHeader: nostr.signBlossomUploadAuthHeader,
-      });
-      privateNotice = $translate(
-        cleanedUp
-          ? 'mediaDataStorage.testServerPassed'
-          : 'mediaDataStorage.testServerPassedNoCleanup',
-        { server: getBlossomServerHost(serverUrl) },
-      );
-    } catch (e) {
-      const detail = e instanceof Error ? e.message.trim() : '';
-      privateError = [$translate('mediaDataStorage.testServerFailed'), detail]
-        .filter(Boolean)
-        .join(' ');
-    } finally {
-      testing = false;
     }
   }
   function sync() {
@@ -227,7 +196,7 @@
           spellcheck="false"
           autocapitalize="none"
         /></label
-      ><small class="settings-caption">{$translate('mediaDataStorage.testServerHint')}</small>
+      >
       {#if !privateNormalized}<p class="error">
           {$translate(
             privateServer.trim()
@@ -237,15 +206,6 @@
         </p>{/if}
       <div class="settings-actions end">
         <button
-          type="button"
-          class="outline"
-          data-testid="settings-private-media-test"
-          disabled={testing || privateBusy || $startup || !privateNormalized}
-          onclick={testPrivateServer}
-          >{$translate(
-            testing ? 'mediaDataStorage.testingServer' : 'mediaDataStorage.testServer',
-          )}</button
-        ><button
           type="button"
           class="outline"
           data-testid="settings-private-media-restore-default"

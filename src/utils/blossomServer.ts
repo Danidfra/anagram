@@ -50,13 +50,10 @@ export function getBlossomServerHost(serverUrl: string): string {
   return new URL(requireBlossomServerUrl(serverUrl)).host;
 }
 
-export type BlossomAuthAction = 'upload' | 'delete';
-
 export function buildBlossomUploadAuthorization(
   serverUrl: string,
   sha256: string,
-  createdAt: number,
-  action: BlossomAuthAction = 'upload'
+  createdAt: number
 ): { content: string; tags: string[][] } {
   const serverHost = getBlossomServerHost(serverUrl);
   const normalizedSha256 = sha256.trim().toLowerCase();
@@ -65,12 +62,9 @@ export function buildBlossomUploadAuthorization(
   }
 
   return {
-    content:
-      action === 'delete'
-        ? `Authorize media delete from ${serverHost}`
-        : `Authorize media upload to ${serverHost}`,
+    content: `Authorize media upload to ${serverHost}`,
     tags: [
-      ['t', action],
+      ['t', 'upload'],
       ['expiration', String(createdAt + 15 * 60)],
       ['server', serverHost],
       ['x', normalizedSha256],
