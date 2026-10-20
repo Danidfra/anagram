@@ -71,7 +71,15 @@ public final class CallAudioDeviceTest {
             instrumentation.runOnMainSync(() -> service[0].release());
             assertFalse(service[0].isActive());
             android.app.NotificationManager notifications = context.getSystemService(android.app.NotificationManager.class);
-            assertFalse(java.util.Arrays.stream(notifications.getActiveNotifications())
+            // stopForeground queues notification removal in Android's system process.
+            long notificationDeadline = android.os.SystemClock.elapsedRealtime() + 5000;
+            while (java.util.Arrays.stream(notifications.getActiveNotifications())
+                    .anyMatch(n -> n.getId() == CallAudioService.NOTIFICATION_ID)
+                    && android.os.SystemClock.elapsedRealtime() < notificationDeadline) {
+                Thread.sleep(50);
+            }
+            assertFalse("Call notification remained after hangup for 5 seconds",
+                java.util.Arrays.stream(notifications.getActiveNotifications())
                 .anyMatch(n -> n.getId() == CallAudioService.NOTIFICATION_ID));
         } finally {
             if (recorder != null) { recorder.stop(); recorder.release(); }
