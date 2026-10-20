@@ -1159,8 +1159,33 @@ test('all 1,200 DM and group threads remain available after reload', async ({ pa
   await expect(page.getByRole('button', { name: 'Contact profile', exact: true })).toBeVisible();
   await page.getByPlaceholder('Search', { exact: true }).fill('Group 1199');
   await expect(page.getByTestId('chat-item')).toHaveCount(1);
+  // Reproduce editing the persistent sidebar while a chat navigation commits.
+  // A navigation-wide focus reset must not steal the selection before Delete.
+  const target = (1200).toString(16).padStart(64, '0');
+  await page.evaluate((target) => {
+    const pushState = history.pushState;
+    history.pushState = function (...args) {
+      pushState.apply(this, args);
+      if (new URL(String(args[2]), location.href).pathname !== `/chats/${target}`) return;
+      history.pushState = pushState;
+      const search = document.querySelector<HTMLInputElement>('[data-testid="chat-search-input"]')!;
+      search.focus();
+      search.select();
+    };
+  }, target);
   await page.getByTestId('chat-item').click();
-  await page.getByPlaceholder('Search', { exact: true }).fill('');
+  await expect(page.getByTestId('chat-thread')).toHaveAttribute('data-chat-public-key', target);
+  const search = page.getByTestId('chat-search-input');
+  await expect(search).toBeFocused();
+  expect(
+    await search.evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd]),
+  ).toEqual([0, 'Group 1199'.length]);
+  await page.keyboard.press('Delete');
+  await expect(search).toHaveValue('');
+  await expect(page.getByTestId('chat-item')).toHaveCount(1202);
+  await search.fill('DM 0000');
+  await expect(page.getByTestId('chat-item')).toHaveCount(1);
+  await search.fill('');
   await expect(page.getByTestId('chat-item')).toHaveCount(1202);
 });
 

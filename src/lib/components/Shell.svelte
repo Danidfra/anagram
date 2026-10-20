@@ -692,7 +692,9 @@
     }
     if (chat.id !== visibleChatId) cancelScheduledHistory();
     showRequests = false;
-    await goto(`/chats/${chat.id}`);
+    // The desktop sidebar stays mounted while the thread changes. Preserve any
+    // search input/selection made during navigation; mobile opens a new screen.
+    await goto(`/chats/${chat.id}`, { reset: mobileViewport });
     chats.selectChat(chat.id);
     nostr.setAppLifecycleRouteChatId(chat.id);
     mobileThread = true;
