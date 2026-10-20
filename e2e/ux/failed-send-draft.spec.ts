@@ -26,7 +26,7 @@ test('a failed send keeps the typed text as the chat draft', async ({ browser })
     const composer = page.getByTestId('message-composer-input');
     await composer.fill('Draft that fails to send');
     await page.getByTestId('message-send-button').click();
-    await expect(page.locator('.notices')).toContainText('Relay offline');
+    await expect(page.getByTestId('action-feedback')).toContainText('Relay offline');
     await expect(composer).toHaveValue('Draft that fails to send');
     await navigateToChat(page, second);
     await expect(composer).toHaveValue('');
