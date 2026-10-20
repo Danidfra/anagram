@@ -1,10 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
 
-for (const width of [1280, 390, 320]) {
-  test(`group invitation banner loads public metadata above usable login at ${width}px`, async ({
-    page,
-  }) => {
+for (const [width, height] of [
+  [1280, 844],
+  [390, 844],
+  [320, 844],
+  [320, 568],
+]) {
+  test(`group invitation banner preserves usable login at ${width}x${height}`, async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     const key = generateSecretKey();
@@ -28,7 +31,7 @@ for (const width of [1280, 390, 320]) {
       },
       key,
     );
-    await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
+    await page.setViewportSize({ width, height });
     await page.route(picture, (route) =>
       route.fulfill({ path: 'static/anagram.png', contentType: 'image/png' }),
     );
@@ -59,10 +62,19 @@ for (const width of [1280, 390, 320]) {
     await expect(banner).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await expect(banner.locator('img')).toHaveAttribute('src', picture);
     await expect(page.getByTestId('auth-create-account-button')).toBeEnabled();
-    const bounds = await banner.boundingBox();
     const card = await page.locator('.auth-card').boundingBox();
     expect(card!.y).toBe(originalCard!.y);
     expect(card!.height).toBe(originalCard!.height);
+    if (height === 568) {
+      await expect(banner).toBeHidden();
+      await expect(page.getByTestId('auth-create-account-button')).toBeInViewport();
+      await page.getByTestId('auth-open-key-button').click();
+      await expect(page.getByTestId('auth-private-key-input')).toBeVisible();
+      await expect(page).toHaveURL(new RegExp(`/public/${naddr}$`));
+      expect(errors).toEqual([]);
+      return;
+    }
+    const bounds = await banner.boundingBox();
     expect(bounds!.y).toBeGreaterThanOrEqual(0);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(card!.y);
     const pictureBounds = await banner.locator('img').boundingBox();

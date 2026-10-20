@@ -20,8 +20,8 @@
 </script>
 
 {#if target && preview?.name}
-  <div class="invite-banner" data-testid="auth-link-banner" role="status">
-    <div class="banner-content">
+  <div class="invite-banner">
+    <div class="banner-content" data-testid="auth-link-banner" role="status">
       <span class="prefix">{target.type === 'group' ? 'Join the chat:' : 'Chat with:'}</span>
       <span class="name" title={preview.name}>{shortName}</span>
       <span class="picture" aria-hidden="true"
@@ -40,15 +40,16 @@
   .invite-banner {
     position: absolute;
     bottom: 100%;
-    height: max(32px, calc((var(--app-viewport-height, 100dvh) - 100%) / 2));
+    height: max(0px, calc((var(--app-viewport-height, 100dvh) - 100%) / 2));
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    width: max-content;
+    width: 100%;
     max-width: 100%;
+    container-type: size;
     color: #fff;
     text-align: center;
     font-size: 15px;
@@ -81,5 +82,10 @@
     font-size: 28px;
     font-weight: 700;
     line-height: 1.1;
+  }
+  @container (max-height: 31px) {
+    .banner-content {
+      display: none;
+    }
   }
 </style>

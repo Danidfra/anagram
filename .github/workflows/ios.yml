@@ -33,8 +33,6 @@ jobs:
       - name: Test iPhone layout and WebKit streaming media
         # Browser tests cover viewport/codec behavior, not native permissions,
         # Keychain, audio routing or delivery while the device is locked.
-        env:
-          ANAGRAM_MEDIA_DIAGNOSTICS: '1'
         run: npm run test:e2e:local -- --browser webkit e2e/ios-layout.spec.ts e2e/call-playback.spec.ts
       - uses: actions/upload-artifact@v4
         if: failure()

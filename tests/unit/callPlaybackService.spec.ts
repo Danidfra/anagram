@@ -78,6 +78,29 @@ describe('live call playback recovery', () => {
     expect(seek).toHaveBeenCalledOnce();
   });
 
+  it('drains a sub-threshold audio backlog over several seconds without a seek', () => {
+    vi.useFakeTimers();
+    const ranges = [[0, 10]];
+    const { element, seek } = media(9.3, ranges);
+    const stop = watchCallLive(element, 'audio');
+    const advance = (steps: number) => {
+      for (let i = 0; i < steps; i++) {
+        ranges[0][1] += 0.1;
+        element.currentTime += 0.1 * element.playbackRate;
+        seek.mockClear(); // The assignment above models the playback clock.
+        vi.advanceTimersByTime(100);
+        expect(seek).not.toHaveBeenCalled();
+      }
+    };
+    advance(10);
+    expect(ranges[0][1] - element.currentTime).toBeGreaterThan(0.45);
+    advance(50);
+    expect(ranges[0][1] - element.currentTime).toBeLessThanOrEqual(0.25);
+    expect(element.playbackRate).toBe(1);
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('restores normal audio speed on pause, seek, buffer loss and detach', () => {
     vi.useFakeTimers();
     for (const reason of ['pause', 'seek', 'empty', 'detach']) {

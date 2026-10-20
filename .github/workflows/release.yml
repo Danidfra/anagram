@@ -69,7 +69,10 @@ jobs:
         if: failure()
         with:
           name: release-web-browser-failures
-          path: test-results/
+          path: |
+            test-results/
+            .artifacts/pwa-results/
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
       - uses: actions/upload-artifact@v4

@@ -27,6 +27,8 @@ async function contact(page: Page, pubkey: string, name: string) {
   await page.getByLabel('Name (optional)').fill(name);
   await page.getByRole('button', { name: 'Add contact', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
+  // The previous chat's composer can remain visible while navigation commits.
+  await expect(page.getByTestId('chat-thread')).toHaveAttribute('data-chat-public-key', pubkey);
   await expect(page.getByTestId('message-composer-input')).toBeVisible();
 }
 // Fresh sessions can learn older epoch keys after the initial message page.
