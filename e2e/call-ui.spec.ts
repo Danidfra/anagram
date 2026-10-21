@@ -874,3 +874,221 @@ test('microphone menu keeps system default first and removes only redundant entr
   await page.getByTestId('call-microphone-source-1').click();
   expect(await page.evaluate(() => (window as any).__microphone)).toBe('headset');
 });
+
+test('call avatars follow participant profiles and speaking rings follow live audio levels', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.route('https://call-profile.example/**', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#326a99"/></svg>',
+    }),
+  );
+  await setup(page);
+  await page.evaluate(() => (window as any).__testCall.dismiss());
+  const peer = 'b'.repeat(64),
+    quiet = 'c'.repeat(64);
+  await page.evaluate(
+    async ({ peer, quiet }) => {
+      const { useCallRoomStore } = await import('/src/stores/callRoomStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
+      const { rememberPublicProfile } = await import('/src/lib/state/publicProfiles.ts');
+      const { registerCallStream } = await import('/src/services/callStreamRegistry.ts');
+      const nostr = useNostrStore();
+      const retained = new Map<string, number>();
+      const retain = nostr.retainVisibleProfileTarget;
+      nostr.retainVisibleProfileTarget = (key: string) => {
+        retained.set(key, (retained.get(key) ?? 0) + 1);
+        const release = retain(key);
+        return () => {
+          retained.set(key, retained.get(key)! - 1);
+          release();
+        };
+      };
+      rememberPublicProfile(
+        peer,
+        { name: 'Profile peer', picture: 'https://call-profile.example/peer.svg' },
+        1,
+      );
+      // Synthetic speech: a tone whose gain the test switches on and off.
+      const audio = new AudioContext();
+      const tone = () => {
+        const gain = audio.createGain();
+        gain.gain.value = 0;
+        const oscillator = audio.createOscillator();
+        const output = audio.createMediaStreamDestination();
+        oscillator.connect(gain).connect(output);
+        oscillator.start();
+        return { gain, stream: output.stream };
+      };
+      const local = tone(),
+        remote = tone();
+      const canvas = document.createElement('canvas');
+      canvas.getContext('2d')!.fillRect(0, 0, 300, 150);
+      const own = {
+        pubkey: nostr.getLoggedInPublicKeyHex()!,
+        sessionId: 'local-speaking',
+        name: 'Host',
+        relays: [],
+      };
+      const member = (pubkey: string, name: string) => ({
+        pubkey,
+        sessionId: `${name}-session`,
+        name,
+        relays: [],
+      });
+      const rooms = useCallRoomStore();
+      const remoteUrl = registerCallStream(remote.stream).url;
+      const tile = (pubkey: string, name: string, audioUrl = '') => ({
+        ...member(pubkey, name),
+        phase: 'active',
+        microphoneMuted: false,
+        audioUrl,
+        videoUrl: '',
+        screenUrl: '',
+      });
+      // UI fixture only: no call transport or signalling is replaced in production.
+      Object.defineProperty(rooms, 'participants', {
+        configurable: true,
+        writable: true,
+        value: [tile(peer, 'Guest', remoteUrl), tile(quiet, 'Quiet guest')],
+      });
+      rooms.localStream = new MediaStream([
+        ...local.stream.getAudioTracks(),
+        ...canvas.captureStream(5).getVideoTracks(),
+      ]);
+      rooms.cameraMuted = true;
+      rooms.microphoneMuted = false;
+      rooms.session = {
+        own,
+        members: [own, member(peer, 'Guest'), member(quiet, 'Quiet guest')],
+        phase: 'active',
+        revision: 1,
+        link: {
+          id: 'speaking-ui',
+          host: own.pubkey,
+          secret: '',
+          relays: [],
+          expiresAt: new Date(Date.now() + 60000).toISOString(),
+        },
+      };
+      (window as any).__speech = {
+        retained,
+        own: own.pubkey,
+        local: local.gain.gain,
+        remote: remote.gain.gain,
+        remoteUrl,
+        rooms,
+        // Participants are a fixture property; a session update re-reads them.
+        leaveQuiet() {
+          rooms.participants = rooms.participants.filter((entry: any) => entry.pubkey !== quiet);
+          rooms.session = { ...rooms.session };
+        },
+      };
+    },
+    { peer, quiet },
+  );
+  const speech = (expression: string) => page.evaluate(`window.__speech.${expression}`);
+  const retained = (key: string) =>
+    page.evaluate((key) => (window as any).__speech.retained.get(key) ?? 0, key);
+  const local = page.getByTestId('room-local');
+  const remote = page.getByTestId(`room-peer-${peer}`);
+  const silent = page.getByTestId(`room-peer-${quiet}`);
+
+  // Cameras off: real profile pictures, initials as the fallback, no generic icon.
+  await expect(remote.locator('.call-person .avatar img')).toHaveAttribute(
+    'src',
+    'https://call-profile.example/peer.svg',
+  );
+  await expect
+    .poll(() => remote.locator('.avatar img').evaluate((img: HTMLImageElement) => img.naturalWidth))
+    .toBeGreaterThan(0);
+  await expect(silent.locator('.call-person .avatar')).toHaveText('QG');
+  await expect(local.locator('.call-person .avatar')).toBeVisible();
+  // Visible participants are hydrated once each; the account's own profile already is.
+  expect(await retained(peer)).toBe(1);
+  expect(await retained(quiet)).toBe(1);
+  expect(await retained(await speech('own'))).toBe(0);
+  await speech('leaveQuiet()');
+  await expect(silent).toHaveCount(0);
+  expect(await retained(quiet)).toBe(0);
+  expect(await retained(peer)).toBe(1);
+
+  // Gallery view: rings follow speech and clear after a pause.
+  await expect(page.locator('.room-tile--speaking')).toHaveCount(0);
+  await speech('remote.value = 0.5');
+  await expect(remote).toHaveClass(/room-tile--speaking/);
+  await expect(local).not.toHaveClass(/room-tile--speaking/);
+  await page.screenshot({ path: 'test-results/call-room-speaking.png' });
+  await speech('remote.value = 0');
+  await expect(remote).not.toHaveClass(/room-tile--speaking/);
+  await speech('local.value = 0.5');
+  await expect(local).toHaveClass(/room-tile--speaking/);
+  // The ring stays on the tile when its camera turns on.
+  await speech('rooms.cameraMuted = false');
+  await expect(local.locator('video')).toBeVisible();
+  await expect(local).toHaveClass(/room-tile--speaking/);
+  await speech('rooms.microphoneMuted = true');
+  await expect(local).not.toHaveClass(/room-tile--speaking/);
+  await speech('rooms.cameraMuted = true');
+
+  // Speaker view still promotes the person speaking, and the ring works beside a shared screen.
+  await page.getByTestId('room-view-toggle').click();
+  await expect(page.locator('.room-grid--speaker')).toHaveCount(1);
+  await expect(local).toHaveClass(/room-tile--speaker/);
+  await speech('remote.value = 0.5');
+  await expect(remote).toHaveClass(/room-tile--speaker/);
+  await expect(remote).toHaveClass(/room-tile--speaking/);
+  await speech('rooms.localScreenStream = new MediaStream()');
+  await expect(page.locator('.room-grid--sharing')).toHaveCount(1);
+  await expect(remote).toHaveClass(/room-tile--speaking/);
+  await speech('remote.value = 0');
+  await expect(remote).not.toHaveClass(/room-tile--speaking/);
+  await speech('rooms.localScreenStream = null');
+
+  // Leaving releases every retained profile.
+  await speech('rooms.session = null');
+  await expect(page.getByTestId('room-panel')).toHaveCount(0);
+  expect(await retained(peer)).toBe(0);
+
+  // Direct calls: the caller's avatar rings while they speak, not while they are muted.
+  await page.evaluate((peer) => {
+    const call = (window as any).__testCall;
+    call.remoteMediaUrl = (window as any).__speech.remoteUrl;
+    call.session = {
+      id: 'speaking-direct',
+      peerPubkey: peer,
+      peerName: 'Guest',
+      direction: 'incoming',
+      mode: 'audio',
+      phase: 'active',
+      startedAt: new Date().toISOString(),
+      microphoneMuted: false,
+      cameraMuted: true,
+      mediaVersion: 2,
+      peerConfirmed: true,
+    };
+  }, peer);
+  const avatar = page.locator('.call-peer-avatar');
+  await expect(avatar.locator('.avatar img')).toBeVisible();
+  expect(await retained(peer)).toBe(1);
+  await expect(avatar).not.toHaveClass(/call-speaking/);
+  await speech('remote.value = 0.5');
+  await expect(avatar).toHaveClass(/call-speaking/);
+  await page.screenshot({ path: 'test-results/call-direct-speaking.png' });
+  await page.evaluate(() => {
+    const call = (window as any).__testCall;
+    call.session = { ...call.session, remoteMicrophoneMuted: true };
+  });
+  await expect(avatar).not.toHaveClass(/call-speaking/);
+  await page.evaluate(() => {
+    const call = (window as any).__testCall;
+    call.remoteMediaUrl = '';
+    call.session = null;
+  });
+  await expect(page.getByTestId('call-panel')).toHaveCount(0);
+  expect(await retained(peer)).toBe(0);
+  expect(errors).toEqual([]);
+});

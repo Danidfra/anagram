@@ -14,7 +14,10 @@
   import { canShareCallScreen, callMediaSupported } from '#src/services/callMediaService.ts';
   import { createCallRingtone } from '#src/services/callRingtone.ts';
   import { observeCallActivity } from '#src/services/callActivityService.ts';
-  import { createActiveSpeakerSelector } from '#src/utils/callActiveSpeaker.ts';
+  import {
+    createActiveSpeakerSelector,
+    createSpeakingTracker,
+  } from '#src/utils/callActiveSpeaker.ts';
   import { toStore } from 'svelte/store';
   import { translate } from '#src/i18n.ts';
   import CallRelayPrompt from './CallRelayPrompt.svelte';
@@ -91,6 +94,9 @@
   const levels = new Map<string, number>();
   let selector = createActiveSpeakerSelector(),
     activeSpeaker = 'local';
+  let speakingTracker = createSpeakingTracker(),
+    speaking: ReadonlySet<string> = new Set();
+  const retainedProfiles = new Map<string, () => void>();
   let stopActivity: (() => void) | undefined;
   const canShareScreen = canShareCallScreen();
   const canSelectSpeaker = typeof HTMLMediaElement.prototype.setSinkId === 'function';
@@ -178,7 +184,24 @@
   $: if (ended) minimized = false;
   $: if (!$state.busy) invite = false;
   $: if ($state.local) void refreshDevices();
-  $: watchActivity($state.local, speakerView && room && !$state.muted);
+  // Meter only while tiles or the peer are on screen; muted inputs are not metered.
+  $: metering = active && !minimized;
+  $: watchActivity($state.local, room && metering && !$state.muted);
+  $: remoteSpeaking = !room && speaking.has('remote') && !$state.session?.remoteMicrophoneMuted;
+  // The own profile is already hydrated with the account; retain everyone else shown.
+  $: retainProfiles(
+    room ? $state.participants.map((peer) => peer.pubkey) : peerKey ? [peerKey] : [],
+  );
+  function retainProfiles(keys: string[]) {
+    for (const [key, release] of retainedProfiles)
+      if (!keys.includes(key)) {
+        release();
+        retainedProfiles.delete(key);
+      }
+    for (const key of keys)
+      if (!retainedProfiles.has(key))
+        retainedProfiles.set(key, useNostrStore().retainVisibleProfileTarget(key));
+  }
   function duration(ms: number) {
     const seconds = Math.max(0, Math.floor(ms / 1000));
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -194,13 +217,22 @@
     levels.clear();
     selector = createActiveSpeakerSelector();
     activeSpeaker = 'local';
+    speakingTracker = createSpeakingTracker();
+    speaking = new Set();
   }
   function updateLevel(id: string, level: number) {
     levels.set(id, level);
     for (const key of levels.keys())
-      if (key !== 'local' && !$state.participants.some((peer) => peer.pubkey === key))
+      if (
+        key !== 'local' &&
+        key !== 'remote' &&
+        !$state.participants.some((peer) => peer.pubkey === key)
+      )
         levels.delete(key);
-    activeSpeaker = selector(levels, performance.now());
+    const at = performance.now();
+    activeSpeaker = selector(levels, at);
+    const next = speakingTracker(levels, id, at);
+    if (next !== speaking) speaking = next;
   }
   function watchActivity(stream: MediaStream | null, enabled: boolean) {
     if (stream === activityStream && enabled === activityEnabled) return;
@@ -301,6 +333,7 @@
     disposed = true;
     ringtone.dispose();
     stopActivity?.();
+    retainProfiles([]);
     calls.reset();
     rooms.reset();
   });
@@ -519,6 +552,8 @@
     url={audioUrl}
     muted={speakerMuted}
     sink={speaker}
+    activity={!room && metering && !$state.session?.remoteMicrophoneMuted}
+    onlevel={(level) => updateLevel('remote', level)}
     onoutputerror={() => (outputError = 'call.error.speaker')}
   />
   {#each $state.participants as peer (`${peer.pubkey}:${peer.sessionId}`)}<CallAudio
@@ -527,7 +562,7 @@
       testid={`room-audio-${peer.pubkey}`}
       muted={speakerMuted}
       sink={speaker}
-      activity={speakerView && !peer.microphoneMuted}
+      activity={metering && !peer.microphoneMuted}
       onlevel={(level) => updateLevel(peer.pubkey, level)}
       onoutputerror={() => (outputError = 'call.error.speaker')}
     />{/each}
@@ -561,7 +596,7 @@
       </header>
       <div class="call-panel__identity">
         <Icon name={hasVideo || $state.session?.mode === 'video' ? 'video' : 'phone'} />
-        <div class="call-peer-avatar">
+        <div class="call-peer-avatar" class:call-speaking={remoteSpeaking}>
           <Avatar name={peerName} publicKey={peerKey} size={104} eager />
         </div>
         <h2>{peerName}</h2>
@@ -591,12 +626,15 @@
               class="room-tile"
               data-testid="room-local"
               class:room-tile--speaker={focusedSpeaker === 'local'}
+              class:room-tile--speaking={speaking.has('local') && !$state.muted}
             >
               <div class="room-tile__content" use:callVideoAspect>
                 {#if !$state.cameraMuted}<CallVideo
                     stream={$state.local}
                     label={$translate('You')}
-                  />{:else}<div class="call-person"><Icon name="person" /></div>{/if}
+                  />{:else}<div class="call-person">
+                    <Avatar name={localName} publicKey={nameAccount} eager />
+                  </div>{/if}
                 {#if localName && $namePreferences.cssEnabled}<CustomCallName
                     name={localName}
                     css={$namePreferences.css}
@@ -620,13 +658,16 @@
             <div
               class="room-tile"
               class:room-tile--speaker={focusedSpeaker === peer.pubkey}
+              class:room-tile--speaking={speaking.has(peer.pubkey) && !peer.microphoneMuted}
               data-testid={`room-peer-${peer.pubkey}`}
             >
               <div class="room-tile__content" use:callVideoAspect>
                 {#if peer.videoUrl}<CallVideo
                     url={peer.videoUrl}
                     label={displayName || peer.name}
-                  />{:else}<div class="call-person"><Icon name="person" /></div>{/if}
+                  />{:else}<div class="call-person">
+                    <Avatar name={displayName} publicKey={peer.pubkey} eager />
+                  </div>{/if}
                 {#if displayName && $namePreferences.cssEnabled}<CustomCallName
                     name={displayName}
                     css={$namePreferences.css}
@@ -656,7 +697,7 @@
             </div>{/each}
         </div>
       {:else if hasVideo}<div class="call-panel__media">
-          {#if videoUrl}<div class="call-panel__remote">
+          {#if videoUrl}<div class="call-panel__remote" class:call-speaking={remoteSpeaking}>
               <CallVideo
                 bind:this={remoteVideo}
                 url={videoUrl}
@@ -844,6 +885,7 @@
     overflow: hidden;
   }
   .call-panel__remote {
+    position: relative;
     width: 100%;
     height: 100%;
     object-fit: contain;
@@ -1149,9 +1191,32 @@
     width: 40px;
     height: 40px;
   }
-  .call-person :global(svg) {
-    width: 64px;
-    height: 64px;
+  /* Scale with the tile; the avatar's inline size is a fixed default. */
+  .call-person :global(.avatar) {
+    width: clamp(40px, 40cqmin, 128px) !important;
+    height: clamp(40px, 40cqmin, 128px) !important;
+    font-size: clamp(16px, 15cqmin, 50px) !important;
+  }
+  /* A speaking ring drawn inside the frame, so tile layout and name fitting never move. */
+  .room-tile__content::after,
+  .call-panel__remote::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 3px solid rgb(79 169 230);
+    opacity: 0;
+    transition: opacity 150ms;
+    pointer-events: none;
+  }
+  .room-tile--speaking .room-tile__content::after,
+  .call-panel__remote.call-speaking::after {
+    opacity: 1;
+  }
+  .call-peer-avatar :global(.avatar) {
+    transition: box-shadow 150ms;
+  }
+  .call-peer-avatar.call-speaking :global(.avatar) {
+    box-shadow: 0 0 0 4px rgb(79 169 230);
   }
   .call-panel__device {
     display: flex;
