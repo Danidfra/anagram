@@ -1,4 +1,6 @@
 // Turns message text into a command and a price quote into reply text.
+import { currencies } from './price.js';
+
 export const HELP =
   'Ask for the Bitcoin price with "price" or "btc", optionally followed by a currency, for example "price EUR".';
 export const UNAVAILABLE = 'The Bitcoin price is temporarily unavailable. Please try again soon.';
@@ -38,7 +40,7 @@ export async function priceReply(content, feed, defaultCurrency = 'USD', { help 
   const currency = command.currency ?? defaultCurrency;
   const value = quote.prices.get(currency);
   if (value === undefined)
-    return `Unsupported currency ${currency}. Available: ${[...quote.prices.keys()].sort().slice(0, 30).join(', ')}.`;
+    return `Unsupported currency ${currency}. Available: ${currencies(quote.prices)}.`;
   const text = formatPrice(currency, value);
   if (!quote.stale) return text;
   const minutes = Math.floor(quote.ageSeconds / 60);

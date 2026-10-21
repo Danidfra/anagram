@@ -13,16 +13,20 @@ const RETRY_AFTER_FAILURE_MS = 10000;
 // older than this would be treated as fresh yet never shown.
 export const MAX_PRICE_AGE_SECONDS = 300;
 
+function cacheRange(seconds) {
+  if (!Number.isInteger(seconds) || seconds < 0 || seconds > MAX_PRICE_AGE_SECONDS)
+    throw new ConfigurationError(
+      `PRICE_CACHE_SECONDS must be a whole number from 0 to ${MAX_PRICE_AGE_SECONDS}.`,
+    );
+  return seconds;
+}
+
 // PRICE_CACHE_SECONDS from the environment. Unset or blank uses the default; anything else
 // must be a whole number of seconds from 0 to 300. Forms like "1e2" or "0x10" are refused.
 export function parseCacheSeconds(value, fallback = 60) {
   const text = String(value ?? '').trim();
   if (!text) return fallback;
-  if (!/^[0-9]{1,4}$/.test(text) || Number(text) > MAX_PRICE_AGE_SECONDS)
-    throw new ConfigurationError(
-      `PRICE_CACHE_SECONDS must be a whole number from 0 to ${MAX_PRICE_AGE_SECONDS}.`,
-    );
-  return Number(text);
+  return cacheRange(/^[0-9]+$/.test(text) ? Number(text) : NaN);
 }
 
 // The URL comes from the operator's configuration, never from a chat message.
@@ -113,6 +117,11 @@ export function parsePrices(text) {
   return prices;
 }
 
+// The codes a provider returned, for messages. Keys are already three uppercase letters.
+export function currencies(prices) {
+  return [...prices.keys()].sort().slice(0, 30).join(', ');
+}
+
 export class PriceFeed {
   constructor({
     url = DEFAULT_PRICE_URL,
@@ -124,14 +133,7 @@ export class PriceFeed {
     now = () => performance.now(),
     log = console.log,
   } = {}) {
-    if (
-      !Number.isInteger(cacheSeconds) ||
-      cacheSeconds < 0 ||
-      cacheSeconds > MAX_PRICE_AGE_SECONDS
-    )
-      throw new ConfigurationError(
-        `PRICE_CACHE_SECONDS must be a whole number from 0 to ${MAX_PRICE_AGE_SECONDS}.`,
-      );
+    cacheRange(cacheSeconds);
     // A price still cached but too old to show would make every reply "unavailable".
     if (!Number.isFinite(staleSeconds) || staleSeconds < cacheSeconds)
       throw new ConfigurationError('The stale price window must not be shorter than the cache.');
@@ -184,4 +186,24 @@ export class PriceFeed {
       return false;
     }
   }
+}
+
+// PRICE_DEFAULT_CURRENCY, checked once at startup against the provider's currencies.
+// A provider that is down cannot prove the code wrong, so that case only warns.
+export async function defaultCurrency(value, feed, warn = console.error) {
+  const currency = String(value || 'USD')
+    .trim()
+    .toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency))
+    throw new ConfigurationError('PRICE_DEFAULT_CURRENCY must be a three-letter code.');
+  const quote = await feed.get();
+  if (!quote)
+    warn(
+      `Could not check PRICE_DEFAULT_CURRENCY ${currency}: the price provider is not responding.`,
+    );
+  else if (!quote.prices.has(currency))
+    throw new ConfigurationError(
+      `PRICE_DEFAULT_CURRENCY ${currency} is not offered by the price provider. Available: ${currencies(quote.prices)}.`,
+    );
+  return currency;
 }

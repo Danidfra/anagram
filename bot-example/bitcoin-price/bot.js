@@ -17,7 +17,7 @@ import { directMessage } from './direct-messages.js';
 import { acceptTicket, privateMessage, readTicket } from './private-groups.js';
 import { acceptRoom, joinPublic, parseRoom, publicMessage } from './public-groups.js';
 import { priceReply, UNAVAILABLE } from './commands.js';
-import { DEFAULT_PRICE_URL, parseCacheSeconds, PriceFeed } from './price.js';
+import { DEFAULT_PRICE_URL, defaultCurrency, parseCacheSeconds, PriceFeed } from './price.js';
 
 export const DEFAULT_RELAYS = [
   'wss://relay.nostr.com',
@@ -389,15 +389,14 @@ export async function main() {
         .map((r) => r.trim())
         .filter(Boolean),
     );
-    const defaultCurrency = (process.env.PRICE_DEFAULT_CURRENCY || 'USD').trim().toUpperCase();
-    if (!/^[A-Z]{3}$/.test(defaultCurrency))
-      throw new ConfigurationError('PRICE_DEFAULT_CURRENCY must be a three-letter code.');
     const feed = new PriceFeed({
       url: process.env.PRICE_URL || DEFAULT_PRICE_URL,
       allowHttp: process.env.PRICE_ALLOW_HTTP === '1',
       cacheSeconds: parseCacheSeconds(process.env.PRICE_CACHE_SECONDS),
       log: console.error,
     });
+    // Also fetches the first price, so a bad PRICE_URL shows up in the log at startup.
+    const currency = await defaultCurrency(process.env.PRICE_DEFAULT_CURRENCY, feed);
     const cooldown = Number(process.env.COOLDOWN_SECONDS ?? 5);
     if (!Number.isFinite(cooldown) || cooldown < 0)
       throw new Error('COOLDOWN_SECONDS must be non-negative.');
@@ -412,7 +411,7 @@ export async function main() {
       store,
       net,
       feed,
-      defaultCurrency,
+      defaultCurrency: currency,
       cooldown,
       name: process.env.NAME,
       onFatal: fatal,

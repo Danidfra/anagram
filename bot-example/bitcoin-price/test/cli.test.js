@@ -148,25 +148,49 @@ test(
   },
 );
 
-test('CLI refuses an out-of-range or malformed PRICE_CACHE_SECONDS at startup', async (t) => {
+test('CLI refuses invalid price settings at startup', async (t) => {
   const cwd = fileURLToPath(new URL('../', import.meta.url));
   const dir = mkdtempSync(join(tmpdir(), 'price-bot-config-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const provider = createServer((request, response) => response.end('{"USD":67123,"EUR":58234}'));
+  await new Promise((resolve) => provider.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    provider.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const local = {
+    PRICE_URL: `http://127.0.0.1:${provider.address().port}/prices`,
+    PRICE_ALLOW_HTTP: '1',
+  };
+  const cache = /PRICE_CACHE_SECONDS must be a whole number from 0 to 300\./;
+  const cases = [
+    [{ PRICE_CACHE_SECONDS: '3600' }, cache],
+    [{ PRICE_CACHE_SECONDS: '301' }, cache],
+    [{ PRICE_CACHE_SECONDS: 'abc' }, cache],
+    [{ PRICE_DEFAULT_CURRENCY: 'euro' }, /PRICE_DEFAULT_CURRENCY must be a three-letter code\./],
+    [
+      { ...local, PRICE_DEFAULT_CURRENCY: 'GBP' },
+      /PRICE_DEFAULT_CURRENCY GBP is not offered by the price provider\. Available: EUR, USD\./,
+    ],
+  ];
   const env = { ...process.env };
   delete env.NSEC;
-  for (const value of ['3600', '301', 'abc']) {
+  delete env.PRICE_URL;
+  delete env.PRICE_ALLOW_HTTP;
+  delete env.PRICE_CACHE_SECONDS;
+  delete env.PRICE_DEFAULT_CURRENCY;
+  for (const [settings, message] of cases) {
     let output = '';
     const child = spawn(process.execPath, ['bot.js'], {
       cwd,
       // Unreachable relay: configuration fails before any connection is attempted.
-      env: { ...env, DATA_DIR: dir, RELAYS: 'wss://127.0.0.1:9', PRICE_CACHE_SECONDS: value },
+      env: { ...env, DATA_DIR: dir, RELAYS: 'wss://127.0.0.1:9', ...settings },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.on('data', (data) => (output += data));
     child.stderr.on('data', (data) => (output += data));
     const [code] = await once(child, 'exit');
-    assert.equal(code, 1, value);
-    assert.match(output, /PRICE_CACHE_SECONDS must be a whole number from 0 to 300\./, value);
+    assert.equal(code, 1, JSON.stringify(settings));
+    assert.match(output, message, JSON.stringify(settings));
     assert.ok(!output.includes('nsec1'), 'private key must never be logged');
   }
 });

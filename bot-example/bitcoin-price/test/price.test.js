@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import {
   DEFAULT_PRICE_URL,
+  defaultCurrency,
   httpGet,
   MAX_PRICE_AGE_SECONDS,
   parseCacheSeconds,
@@ -130,6 +131,29 @@ test('PRICE_CACHE_SECONDS from the environment accepts only whole seconds from 0
   assert.equal(parseCacheSeconds('045'), 45);
   for (const bad of ['301', '600', '3600', '-1', '1.5', '1e2', '0x10', 'abc', 'Infinity', '60s'])
     assert.throws(() => parseCacheSeconds(bad), ConfigurationError, bad);
+});
+
+test('PRICE_DEFAULT_CURRENCY must be offered by the provider; USD stays the default', async () => {
+  assert.equal(await defaultCurrency(undefined, setup([GOOD]).feed), 'USD');
+  assert.equal(await defaultCurrency(' eur ', setup([GOOD]).feed), 'EUR');
+  for (const bad of ['euro', 'US', '€', '1EU'])
+    await assert.rejects(defaultCurrency(bad, setup([GOOD]).feed), /three-letter code/, bad);
+  await assert.rejects(
+    defaultCurrency('GBP', setup([GOOD]).feed),
+    (error) =>
+      error instanceof ConfigurationError &&
+      error.message ===
+        'PRICE_DEFAULT_CURRENCY GBP is not offered by the price provider. Available: EUR, JPY, USD.',
+  );
+});
+
+test('an unreachable provider cannot prove PRICE_DEFAULT_CURRENCY wrong, so startup only warns', async () => {
+  const warnings = [];
+  const { feed } = setup([new Error('down')]);
+  assert.equal(await defaultCurrency('GBP', feed, (line) => warnings.push(line)), 'GBP');
+  assert.deepEqual(warnings, [
+    'Could not check PRICE_DEFAULT_CURRENCY GBP: the price provider is not responding.',
+  ]);
 });
 
 test('concurrent requests share one provider call', async () => {
