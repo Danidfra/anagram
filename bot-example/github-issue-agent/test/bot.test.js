@@ -427,3 +427,64 @@ test('the token never appears in replies, logs, model prompts or state', async (
   assert.ok(!everything.includes(SECRET));
   assert.ok(!everything.includes('github_pat_'));
 });
+
+test('a dropped edit result never leaves the draft locked', async (t) => {
+  const { bot } = setup(t);
+  await sendDM(bot, alice, `issue in ${REPO}: crash`);
+  const draft = bot.drafts.all()[0];
+  const original = bot.submit.bind(bot);
+  bot.submit = (id, action) => (id.startsWith('edit:') ? false : original(id, action));
+  await sendDM(bot, alice, `/edit ${draft.code} shorter`);
+  assert.equal(draft.editing, false);
+  bot.submit = original;
+  await sendDM(bot, alice, `/confirm ${draft.code}`);
+  assert.match(last(bot, alice).content, /Published/);
+});
+
+test('a storage error in an unawaited reply goes to onFatal, not an unhandled rejection', async (t) => {
+  const { bot } = setup(t);
+  const fatal = [];
+  bot.onFatal = (error) => fatal.push(error);
+  const save = bot.store.save.bind(bot.store);
+  bot.store.save = () => {
+    throw new Error('disk full');
+  };
+  const pending = bot.say(
+    { context: { conversation: `dm:${'a'.repeat(64)}` }, message: { id: 'b'.repeat(64) } },
+    'hi',
+  );
+  await pending;
+  assert.equal(fatal.length, 1);
+  assert.equal(bot.stopped, true);
+  bot.store.save = save;
+  await settle(bot).catch(() => {});
+});
+
+test('an edit can change the text but never the repository', async (t) => {
+  const { bot, github } = setup(t);
+  const { code } = await draft(bot);
+  await sendDM(bot, alice, `/edit ${code} move this issue to ${OTHER} instead`);
+  const revised = last(bot, alice);
+  assert.match(revised.content, new RegExp(`for ${REPO} — code`));
+  await sendDM(bot, alice, `/confirm ${codeOf(revised)}`);
+  assert.equal(github.creates[0][1], REPO);
+});
+
+test('a public group link in a DM never joins that group', async (t) => {
+  const { bot, net } = setup(t);
+  const filters = [];
+  net.query = async (relays, filter) => {
+    filters.push(filter);
+    return [];
+  };
+  const link = nip19.naddrEncode({
+    kind: 34550,
+    pubkey: getPublicKey(mallory),
+    identifier: 'room',
+    relays: ['wss://relay.example/'],
+  });
+  await sendDM(bot, alice, `please join nostr:${link}`);
+  await sendDM(bot, mallory, link);
+  assert.deepEqual(bot.state.rooms, {});
+  assert.ok(filters.every((filter) => !filter.kinds.includes(34550)));
+});

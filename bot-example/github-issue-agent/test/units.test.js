@@ -9,7 +9,13 @@ import {
   replyTarget,
   stripMention,
 } from '../intent.js';
-import { editMessages, issueBody, neutralizeGitHubMentions, parseDraft } from '../drafting.js';
+import {
+  editMessages,
+  issueBody,
+  neutralizeGitHubMentions,
+  parseDraft,
+  sanitizeText,
+} from '../drafting.js';
 import { loadConfig } from '../config.js';
 import { CODE, newCode, newRef, normalizeCode, REF } from '../ids.js';
 import { Drafts } from '../drafts.js';
@@ -63,6 +69,24 @@ test('confirmation phrases are detected so they can be refused', () => {
     'add that it happens on Android 15 after an update',
   ])
     assert.ok(!confirmationPhrase(text), text);
+});
+
+test('GitHub mentions are neutralized after punctuation and as HTML entities', () => {
+  for (const input of [
+    '_@alice_',
+    '-@alice',
+    '.@alice',
+    'see/@alice',
+    '(@alice)',
+    '&#64;alice',
+    '&#x40;alice',
+    '&commat;alice',
+  ])
+    assert.match(sanitizeText(input), /`@alice`/, input);
+  assert.equal(
+    sanitizeText('mail a@b.com or first.last@x.org'),
+    'mail a@b.com or first.last@x.org',
+  );
 });
 
 test('mentions and reply targets', () => {

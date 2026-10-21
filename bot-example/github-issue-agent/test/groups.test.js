@@ -196,3 +196,32 @@ test('repository visibility comes from GitHub and anything unclear counts as pri
   await bot.checkRepos();
   assert.deepEqual([...bot.publicRepos], []);
 });
+
+test('groups get links to similar issues but never their titles', async (t) => {
+  const { bot, github } = setup(t);
+  github.searchResults = [
+    {
+      number: 7,
+      title: 'Mobile login fails SECRET-PRIVATE-TITLE',
+      state: 'open',
+      url: 'https://github.com/lnbits/anagram/issues/7',
+    },
+  ];
+  for (const g of [publicGroup(bot), privateGroup(bot)]) {
+    await g.say(alice, `${at(bot)} issue in ${REPO}: mobile login fails`);
+    const draft = g.replies().at(-1).content;
+    assert.match(draft, /#7 \(open\) — https:\/\/github.com\/lnbits\/anagram\/issues\/7/);
+    assert.ok(!draft.includes('SECRET-PRIVATE-TITLE'));
+  }
+});
+
+test('issues published in a DM are not linked to the requester in a group', async (t) => {
+  const { bot } = setup(t);
+  await sendDM(bot, alice, `issue in ${REPO}: mobile login fails`);
+  await sendDM(bot, alice, `/confirm ${codeOf(last(bot, alice))}`);
+  const ref = bot.state.issues[0].ref;
+  const room = publicGroup(bot);
+  await room.say(alice, `${at(bot)} issue in ${REPO}: mobile login fails`);
+  assert.ok(!room.replies().at(-1).content.includes(ref));
+  assert.ok(!room.replies().at(-1).content.includes('You already published'));
+});
