@@ -8,6 +8,8 @@
   import { applyThemeAccent, readThemeAccent, ACCENT_STORAGE_KEY } from '#src/utils/themeAccent.ts';
   import { incomingMessageBanner } from '#src/lib/platform/ui.ts';
   import { updateAppBadge } from '#src/lib/platform/appBadge.ts';
+  import { isNativeSecureStorage } from '#src/lib/platform/secureKeys.ts';
+  import { withDeadline } from '#src/utils/withDeadline.ts';
   import '#src/app.css';
   import '#src/lib/components/shell.css';
   let authenticated = false;
@@ -15,8 +17,53 @@
   let cleaning = false;
   let cleanupBusy = false;
   let cleanupError = '';
+  let sessionBusy = false;
+  let sessionError = '';
+  let sessionCheck: Promise<boolean> | undefined;
+  let mounted = false;
+  let sessionGeneration = 0;
+  async function restoreSession() {
+    if (sessionBusy) return;
+    const generation = ++sessionGeneration;
+    sessionBusy = true;
+    sessionError = '';
+    ready = true;
+    try {
+      const hasAccount = Boolean(localStorage.getItem('npub'));
+      if (hasAccount && isNativeSecureStorage()) {
+        // WebView account metadata can outlive a deleted OS credential after
+        // a forced exit. Validate before mounting Shell or starting its sync.
+        // Retain a slow read across retries rather than queueing more OS work.
+        const storage = await import('#src/services/electronSecurePrivateKeyStorage.ts');
+        if (!mounted || generation !== sessionGeneration) return;
+        sessionCheck ??= storage.hasUsableElectronPrivateKeySession().finally(() => {
+          sessionCheck = undefined;
+        });
+        const usable = await withDeadline(sessionCheck, 8000, 'Session storage is still waiting.');
+        if (!mounted || generation !== sessionGeneration) return;
+        if (!usable) {
+          // The credential is confirmed missing. Finish clearing account
+          // caches before allowing another account to log in.
+          void resumeLogout();
+          return;
+        }
+      }
+      authenticated = hasAccount && !localStorage.getItem('anagram-onboarding-pending');
+      if (!authenticated) void updateAppBadge(0);
+    } catch {
+      if (mounted && generation === sessionGeneration)
+        sessionError =
+          'Unable to restore your saved session. Check your credential storage and retry.';
+    } finally {
+      if (mounted && generation === sessionGeneration) sessionBusy = false;
+    }
+  }
   async function resumeLogout() {
     if (cleanupBusy) return;
+    sessionGeneration += 1;
+    sessionBusy = false;
+    sessionError = '';
+    ready = true;
     cleaning = true;
     authenticated = false;
     cleanupBusy = true;
@@ -33,6 +80,7 @@
     }
   }
   onMount(() => {
+    mounted = true;
     applyThemeAccent(readThemeAccent());
     const syncAccent = (event: StorageEvent) => {
       if (event.key === ACCENT_STORAGE_KEY || event.key === null)
@@ -49,13 +97,12 @@
       const target = publicGroupLinkTarget(window.location.href);
       if (target) void goto(target, { replace: true });
     }
-    authenticated =
-      Boolean(localStorage.getItem('npub')) && !localStorage.getItem('anagram-onboarding-pending');
-    if (!authenticated) void updateAppBadge(0);
-    ready = true;
     window.addEventListener('anagram-logout', resumeLogout);
     if (hasPendingLogoutCleanup()) void resumeLogout();
+    else void restoreSession();
     return () => {
+      mounted = false;
+      sessionGeneration += 1;
       window.removeEventListener('storage', syncAccent);
       window.removeEventListener('anagram-logout', resumeLogout);
     };
@@ -69,6 +116,11 @@
     <main class="logout-cleanup" aria-live="polite">
       <p>{cleanupBusy ? 'Logging out…' : cleanupError}</p>
       {#if !cleanupBusy}<button onclick={resumeLogout}>Retry logout</button>{/if}
+    </main>
+  {:else if sessionBusy || sessionError}
+    <main class="logout-cleanup" aria-live="polite">
+      <p>{sessionBusy ? 'Opening account…' : sessionError}</p>
+      {#if !sessionBusy}<button onclick={restoreSession}>Retry session</button>{/if}
     </main>
   {:else if authenticated}
     {#await import('#src/lib/components/Shell.svelte') then module}<module.default />{/await}

@@ -691,7 +691,8 @@
       if (!reopened) return;
       chat = reopened;
     }
-    if (chat.id !== visibleChatId) cancelScheduledHistory();
+    const alreadyVisible = chat.id === visibleChatId;
+    if (!alreadyVisible) cancelScheduledHistory();
     showRequests = false;
     // The desktop sidebar stays mounted while the thread changes. Preserve any
     // search input/selection made during navigation; mobile opens a new screen.
@@ -703,6 +704,10 @@
     // Commit the recipient and draft before exposing the composer. The thread
     // effects already load history and mark it read without blocking navigation.
     await tick();
+    // Reselecting the visible chat does not rerun the selection effect. Refresh
+    // its bounded history scan too, including newly available older replies.
+    if (alreadyVisible && visibleChatId === chat.id)
+      void prioritizeVisibleThread(chat.id).catch(fail);
   }
   async function loadContacts() {
     const revision = ++contactLoadRevision;

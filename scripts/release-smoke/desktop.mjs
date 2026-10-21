@@ -405,7 +405,7 @@ try {
   );
   if (session) {
     await execute(
-      'return {url: location.href, alerts:[...document.querySelectorAll("[role=alert]")].map(e=>e.textContent), inputs:[...document.querySelectorAll("textarea")].map(e=>({value:e.value, disabled:e.disabled}))}',
+      'return {url: location.href, session: {hasAccount: !!localStorage.getItem("npub"), authMethod: localStorage.getItem("auth-method"), pendingLogout: !!localStorage.getItem("nostr-chat-pending-logout-cleanup"), onboarding: !!localStorage.getItem("anagram-onboarding-pending")}, alerts:[...document.querySelectorAll("[role=alert]")].map(e=>e.textContent), inputs:[...document.querySelectorAll("textarea")].map(e=>({value:e.value, disabled:e.disabled}))}',
     )
       .then((data) => writeFile(`${output}/state.json`, JSON.stringify(data, null, 2)))
       .catch(() => {});
