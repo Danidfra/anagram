@@ -274,6 +274,12 @@ for (const kind of ['audio', 'video', 'combined'] as const) {
             () => errors.push('recorder error'),
           );
           stage('recorder started');
+          const playedSeconds = () => {
+            const ranges = element.played;
+            let seconds = 0;
+            for (let i = 0; i < ranges.length; i++) seconds += ranges.end(i) - ranges.start(i);
+            return seconds;
+          };
           const snapshot = () => ({
             kind,
             managed,
@@ -282,6 +288,9 @@ for (const kind of ['audio', 'video', 'combined'] as const) {
             errors,
             currentTime: element.currentTime,
             paused: element.paused,
+            seeking: element.seeking,
+            playedSeconds: playedSeconds(),
+            displayedFrames,
             readyState: element.readyState,
             buffered: Array.from({ length: element.buffered.length }, (_, i) => [
               element.buffered.start(i),
@@ -289,15 +298,23 @@ for (const kind of ['audio', 'video', 'combined'] as const) {
             ]),
           });
           const waitForPlayback = async (after: number) => {
+            const playedBefore = playedSeconds();
+            const framesBefore = displayedFrames;
             const deadline = performance.now() + 10000;
-            while (
-              (element.paused || element.currentTime <= after) &&
-              performance.now() < deadline
-            ) {
+            // Live catch-up can seek currentTime past `after` while play() is
+            // still pending. Require media actually played and video rendered
+            // before pausing or declaring recovery; a seek alone is not playback.
+            const progressing = () =>
+              !element.paused &&
+              !element.seeking &&
+              element.currentTime > after &&
+              playedSeconds() - playedBefore >= 0.25 &&
+              (kind === 'audio' || displayedFrames - framesBefore >= 3);
+            while (!progressing() && performance.now() < deadline) {
               if (errors.length) throw new Error(JSON.stringify(snapshot()));
               await delay(50);
             }
-            if (element.paused || element.currentTime <= after)
+            if (!progressing())
               throw new Error(`Media did not advance: ${JSON.stringify(snapshot())}`);
           };
           try {
