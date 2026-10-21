@@ -46,6 +46,7 @@ import {
   completePendingLogoutCleanup,
 } from '#src/utils/logoutState.ts';
 import { withDeadline } from '#src/utils/withDeadline.ts';
+import { isAndroidNative } from '#src/lib/platform/androidNotifications.ts';
 
 interface RestoreRuntimeState {
   restoreContactCursorStatePromise: Promise<void> | null;
@@ -239,8 +240,7 @@ export function createAuthSessionRuntime(state: AuthSessionRuntimeDeps) {
 
   function isSecurePrivateKeyStorageAvailable(): boolean {
     return (
-      isAndroidSecurePrivateKeyStorageAvailable() ||
-      isElectronSecurePrivateKeyStorageAvailable()
+      isAndroidSecurePrivateKeyStorageAvailable() || isElectronSecurePrivateKeyStorageAvailable()
     );
   }
 
@@ -263,8 +263,7 @@ export function createAuthSessionRuntime(state: AuthSessionRuntimeDeps) {
   function readSecurePrivateKeyHex(): Promise<string | null> {
     return queueSecureStorage(async () => {
       if (isAndroidSecurePrivateKeyStorageAvailable()) return readAndroidSecurePrivateKeyHex();
-      if (isElectronSecurePrivateKeyStorageAvailable())
-        return readElectronSecurePrivateKeyHex();
+      if (isElectronSecurePrivateKeyStorageAvailable()) return readElectronSecurePrivateKeyHex();
       return null;
     });
   }
@@ -627,7 +626,16 @@ export function createAuthSessionRuntime(state: AuthSessionRuntimeDeps) {
     // against a late keyring deletion, or enqueue another deletion on Retry.
     const results = await Promise.allSettled([
       removePersistedSecurePrivateKey(),
-      clearPersistedAppState({ botInteractionOwner, preservePendingLogoutCleanup: true }),
+      (async () => {
+        // The listener owns separate persisted decryption keys. Keep logout
+        // pending until it stops, including after a restart. Clear browser data
+        // afterwards so its final preference writes cannot recreate old state.
+        if (isAndroidNative()) {
+          const service = await import('#src/services/androidRelayNotificationService.ts');
+          await service.disableAndroidRelayNotifications();
+        }
+        await clearPersistedAppState({ botInteractionOwner, preservePendingLogoutCleanup: true });
+      })(),
     ]);
     const failed = results.find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected')

@@ -44,7 +44,7 @@ it('shares WebM encoding, resets late joiners in order, and isolates a stalled r
   const stopped = vi.fn();
   const a = recordCallMedia(
     stream(),
-    'audio/webm;codecs=opus',
+    'video/webm;codecs=vp8',
     async (bytes) => {
       first.push(String(bytes[1]));
     },
@@ -55,11 +55,12 @@ it('shares WebM encoding, resets late joiners in order, and isolates a stalled r
       },
     },
   );
+  await vi.advanceTimersByTimeAsync(100);
   recorders[0].ondataavailable({ data: new Blob([new Uint8Array([1])]) });
   await vi.advanceTimersByTimeAsync(0);
   const b = recordCallMedia(
     stream(),
-    'audio/webm;codecs=opus',
+    'video/webm;codecs=vp8',
     async (bytes) => {
       second.push(String(bytes[1]));
       await new Promise<void>((resolve) => {
@@ -83,7 +84,7 @@ it('shares WebM encoding, resets late joiners in order, and isolates a stalled r
   recorders[1].ondataavailable({ data: new Blob([new Uint8Array([3])]) });
   await vi.advanceTimersByTimeAsync(1750);
   expect(first).toEqual(['1', 'reset', '2', '3']);
-  expect(second).toEqual(['reset', '2']);
+  expect(second).toEqual(['2']);
   expect(stopped).toHaveBeenCalledOnce();
   expect(recorders[1].state).toBe('recording');
   expect(failure).not.toHaveBeenCalled();

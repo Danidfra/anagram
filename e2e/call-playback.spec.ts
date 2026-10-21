@@ -1,6 +1,111 @@
 import { expect, test, type ConsoleMessage } from '@playwright/test';
 
-for (const kind of ['audio', 'video'] as const) {
+test('shared WebM video gives staggered late joiners decodable headers', async ({ page }) => {
+  await page.route('**/__shared-video', (route) =>
+    route.fulfill({ contentType: 'text/html', body: '<button>Start</button>' }),
+  );
+  await page.goto('/__shared-video');
+  await page.getByRole('button').click();
+  const result = await page.evaluate(async () => {
+    const { recordCallMedia, createCallMediaReceiver } =
+      await import('/src/services/callMediaService.ts');
+    const { cloneCallTrack } = await import('/src/services/callSharedCapture.ts');
+    const { watchCallLive } = await import('/src/services/callPlaybackService.ts');
+    const mime = 'video/webm;codecs=vp8';
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 180;
+    document.body.append(canvas);
+    const paint = canvas.getContext('2d')!;
+    const draw = setInterval(() => {
+      paint.fillStyle = `hsl(${performance.now() % 360},90%,50%)`;
+      paint.fillRect(0, 0, 320, 180);
+    }, 50);
+    const source = canvas.captureStream(20).getVideoTracks()[0];
+    const errors: string[] = [];
+    const stops: Array<() => void> = [];
+    const players: Array<{ video: HTMLVideoElement; frames: number; resets: number }> = [];
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    try {
+      for (let i = 0; i < 5; i++) {
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        document.body.append(video);
+        const player = { video, frames: 0, resets: 0 };
+        players.push(player);
+        let frameCallback = 0;
+        const displayed = () => {
+          player.frames++;
+          frameCallback = video.requestVideoFrameCallback(displayed);
+        };
+        frameCallback = video.requestVideoFrameCallback(displayed);
+        video.onerror = () => errors.push(video.error?.message ?? 'video failed');
+        const createReceiver = () => {
+          const receiver = createCallMediaReceiver(mime, () => errors.push('decoder failed'));
+          video.src = receiver.url;
+          void video.play().catch(() => {});
+          return receiver;
+        };
+        let receiver = createReceiver();
+        const follow = watchCallLive(video, 'video');
+        const clone = cloneCallTrack(source);
+        const stop = recordCallMedia(
+          new MediaStream([clone]),
+          mime,
+          async (bytes) => receiver.append(bytes.subarray(1)),
+          () => errors.push('recorder failed'),
+          {
+            onStreamRestart: async () => {
+              player.resets++;
+              receiver.close();
+              receiver = createReceiver();
+            },
+          },
+        );
+        stops.push(() => {
+          stop();
+          follow();
+          clone.stop();
+          video.cancelVideoFrameCallback(frameCallback);
+          video.onerror = null;
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+          receiver.close();
+          video.remove();
+        });
+        await delay(600);
+      }
+      // Every participant must keep decoding after the last shared reset.
+      const before = players.map((p) => p.frames);
+      const deadline = performance.now() + 10000;
+      while (
+        players.some((p, i) => p.frames - before[i] < 5) &&
+        performance.now() < deadline &&
+        !errors.length
+      )
+        await delay(100);
+      return {
+        errors,
+        frames: players.map((p, i) => p.frames - before[i]),
+        resets: players.map((p) => p.resets),
+      };
+    } finally {
+      stops.forEach((stop) => stop());
+      source.stop();
+      clearInterval(draw);
+      canvas.remove();
+    }
+  });
+  expect(result.errors).toEqual([]);
+  expect(result.frames).toHaveLength(5);
+  expect(result.frames.every((frames) => frames >= 5)).toBe(true);
+  expect(result.resets).toEqual([4, 3, 2, 1, 0]);
+});
+
+for (const kind of ['audio', 'video', 'combined'] as const) {
   for (const { managed, slowSend, unevenSend } of [
     { managed: false, slowSend: false, unevenSend: false },
     { managed: true, slowSend: false, unevenSend: false },
@@ -94,13 +199,13 @@ for (const kind of ['audio', 'video'] as const) {
           const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
           const errors: string[] = [];
           stage('modules loaded');
-          const element = document.createElement(kind);
+          const element = document.createElement(kind === 'audio' ? 'audio' : 'video');
           if (managed) element.disableRemotePlayback = true;
           if (element instanceof HTMLVideoElement) element.playsInline = true;
           element.muted = true;
           document.body.append(element);
           // Recover even if a stalled WebView emits neither progress nor timeupdate.
-          const stopFollowing = watchCallLive(element, kind);
+          const stopFollowing = watchCallLive(element, kind === 'audio' ? 'audio' : 'video');
           element.onerror = () => errors.push(element.error?.message || 'media error');
           let seeks = 0;
           element.onseeking = () => seeks++;
@@ -117,8 +222,8 @@ for (const kind of ['audio', 'video'] as const) {
           let oscillator: OscillatorNode | undefined;
           let draw: ReturnType<typeof setInterval> | undefined;
           let canvas: HTMLCanvasElement | undefined;
-          let stream: MediaStream;
-          if (kind === 'audio') {
+          let stream = new MediaStream();
+          if (kind !== 'video') {
             context = new AudioContext();
             const destination = context.createMediaStreamDestination();
             oscillator = context.createOscillator();
@@ -126,7 +231,8 @@ for (const kind of ['audio', 'video'] as const) {
             oscillator.start();
             await context.resume();
             stream = destination.stream;
-          } else {
+          }
+          if (kind !== 'audio') {
             canvas = document.createElement('canvas');
             canvas.width = 640;
             canvas.height = 360;
@@ -137,10 +243,15 @@ for (const kind of ['audio', 'video'] as const) {
               paint.fillRect(0, 0, canvas!.width, canvas!.height);
             }, 1000 / 24);
             stage('canvas capture');
-            stream = canvas.captureStream(24);
+            stream.addTrack(canvas.captureStream(24).getVideoTracks()[0]);
             stage('canvas captured');
           }
-          const mime = kind === 'audio' ? 'audio/webm;codecs=opus' : CALL_VIDEO_MIME_TYPE;
+          const mime =
+            kind === 'audio'
+              ? 'audio/webm;codecs=opus'
+              : kind === 'combined'
+                ? 'video/webm;codecs=vp8,opus'
+                : CALL_VIDEO_MIME_TYPE;
           stage('create receiver');
           const receiver = createCallMediaReceiver(mime, () => errors.push('receiver error'));
           element.src = receiver.url;
@@ -321,7 +432,7 @@ for (const kind of ['audio', 'video'] as const) {
       expect(result.samples).toHaveLength(21);
       expect(result.lag).toBeLessThan(kind === 'audio' ? 0.45 : 0.75);
       expect(result.advanced).toBeGreaterThan(1.5);
-      if (kind === 'video') expect(result.displayedFrames).toBeGreaterThan(5);
+      if (kind !== 'audio') expect(result.displayedFrames).toBeGreaterThan(5);
     });
   }
 }

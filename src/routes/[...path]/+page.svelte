@@ -120,7 +120,11 @@
   {:else if sessionBusy || sessionError}
     <main class="logout-cleanup" aria-live="polite">
       <p>{sessionBusy ? 'Opening account…' : sessionError}</p>
-      {#if !sessionBusy}<button onclick={restoreSession}>Retry session</button>{/if}
+      {#if !sessionBusy}
+        <button onclick={restoreSession}>Retry session</button>
+        <p>To sign in again, log out and clear this device’s saved account data.</p>
+        <button onclick={resumeLogout}>Log out and clear local data</button>
+      {/if}
     </main>
   {:else if authenticated}
     {#await import('#src/lib/components/Shell.svelte') then module}<module.default />{/await}

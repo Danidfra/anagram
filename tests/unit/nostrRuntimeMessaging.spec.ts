@@ -34,6 +34,12 @@ const messageStoreMock = vi.hoisted(() => ({
 const logoutCleanupMock = vi.hoisted(() => ({
   clearPersistedAppState: vi.fn(async () => {}),
 }));
+const notificationCleanup = vi.hoisted(() => vi.fn(async () => {}));
+const isAndroidNative = vi.hoisted(() => vi.fn(() => false));
+vi.mock('#src/lib/platform/androidNotifications.ts', () => ({ isAndroidNative }));
+vi.mock('#src/services/androidRelayNotificationService.ts', () => ({
+  disableAndroidRelayNotifications: notificationCleanup,
+}));
 
 const androidSecurePrivateKeyStorageMock = vi.hoisted(() => ({
   clearAndroidPrivateKeyMemoryOnlySession: vi.fn(),
@@ -285,6 +291,8 @@ describe('nostr runtime messaging logic', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    notificationCleanup.mockReset().mockResolvedValue();
+    isAndroidNative.mockReturnValue(false);
     vi.useRealTimers();
     chatDataServiceMock.getMessageById.mockResolvedValue(null);
     chatDataServiceMock.getChatByPublicKey.mockResolvedValue(null);
@@ -835,6 +843,50 @@ describe('nostr runtime messaging logic', () => {
     await expect(runtime.logout()).rejects.toThrow('Logout cleanup failed');
     expect(storage.store.has('nostr-chat-pending-logout-cleanup')).toBe(true);
     await runtime.logout();
+    expect(storage.store.has('nostr-chat-pending-logout-cleanup')).toBe(false);
+  });
+
+  it('keeps Android logout pending through a slow notification stop and retries without another stop', async () => {
+    vi.useFakeTimers();
+    isAndroidNative.mockReturnValue(true);
+    const storage = createMockStorage({ [PUBLIC_KEY_STORAGE_KEY]: PUBKEY_A });
+    vi.stubGlobal('window', { localStorage: storage.api });
+    let finish!: () => void;
+    notificationCleanup.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { runtime } = createAuthSessionHarness();
+    const pending = expect(runtime.logout()).rejects.toThrow('still waiting');
+    await vi.advanceTimersByTimeAsync(8000);
+    await pending;
+    expect(notificationCleanup).toHaveBeenCalledOnce();
+    expect(logoutCleanupMock.clearPersistedAppState).not.toHaveBeenCalled();
+    expect(storage.store.get('nostr-chat-pending-logout-cleanup')).toBe('1');
+    await expect(
+      runtime.savePrivateKeyHex(NostrPrivateKeySigner.generate().privateKey),
+    ).rejects.toThrow('Finish logging out');
+    const retry = runtime.logout();
+    finish();
+    await retry;
+    expect(notificationCleanup).toHaveBeenCalledOnce();
+    expect(logoutCleanupMock.clearPersistedAppState).toHaveBeenCalledOnce();
+    expect(storage.store.has('nostr-chat-pending-logout-cleanup')).toBe(false);
+  });
+
+  it('retries failed Android notification-key deletion after restarting logout', async () => {
+    isAndroidNative.mockReturnValue(true);
+    const storage = createMockStorage({ [PUBLIC_KEY_STORAGE_KEY]: PUBKEY_A });
+    vi.stubGlobal('window', { localStorage: storage.api });
+    notificationCleanup.mockRejectedValueOnce(new Error('Native listener unavailable'));
+    await expect(createAuthSessionHarness().runtime.logout()).rejects.toThrow(
+      'Logout cleanup failed',
+    );
+    expect(storage.store.get('nostr-chat-pending-logout-cleanup')).toBe('1');
+    await createAuthSessionHarness().runtime.logout();
+    expect(notificationCleanup).toHaveBeenCalledTimes(2);
     expect(storage.store.has('nostr-chat-pending-logout-cleanup')).toBe(false);
   });
 

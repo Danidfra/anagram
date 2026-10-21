@@ -7,8 +7,9 @@ type Listener = { chunk(blob: Blob): void; reset(): void; error(): void; ready: 
 type Capture = { listeners: Set<Listener>; restart(): void; close(): void };
 const captures = new WeakMap<MediaStreamTrack, Map<string, Capture>>();
 
-// Only split streams with an ordered receiver-reset callback can share. A late
-// join restarts the capture once for everyone; no partial WebM header replay.
+// Share split video with ordered receiver resets; never replay partial WebM
+// headers. Legacy audio stays per peer so late joins cannot interrupt speech or
+// spend every peer's media-change budget. Packet audio has its own shared encoder.
 export function subscribeLegacyCapture(
   stream: MediaStream,
   mimeType: string,
@@ -17,7 +18,9 @@ export function subscribeLegacyCapture(
 ): () => void {
   const tracks = stream.getTracks?.() ?? [];
   const original =
-    tracks.length === 1 && options?.onStreamRestart ? callCaptureTrack(tracks[0]) : undefined;
+    mimeType === CALL_VIDEO_MIME_TYPE && tracks.length === 1 && options?.onStreamRestart
+      ? callCaptureTrack(tracks[0])
+      : undefined;
   const key = `${mimeType}:${options?.videoBitsPerSecond ?? 600000}:${options?.videoFrameRate ?? 24}:${options?.videoMaxWidth ?? 0}:${options?.videoMaxHeight ?? 0}`;
   let profiles = original ? captures.get(original) : undefined;
   if (original && !profiles) {
@@ -30,6 +33,7 @@ export function subscribeLegacyCapture(
     const listeners = new Set([listener]);
     let recorder: MediaRecorder;
     let closed = false;
+    let started = false;
     let joining: ReturnType<typeof setTimeout> | undefined;
     let keyframe: ReturnType<typeof setTimeout> | undefined;
     const timeslice = mimeType === CALL_MIME_TYPES[1] ? 50 : 100;
@@ -90,10 +94,15 @@ export function subscribeLegacyCapture(
           try {
             stopRecorder();
             for (const peer of [...listeners]) {
-              peer.reset();
+              // A new subscriber already has an empty receiver. Only peers
+              // that received the previous generation need another reset.
+              if (started && peer.ready) peer.reset();
               peer.ready = true;
             }
-            if (!closed) start();
+            if (!closed) {
+              start();
+              started = true;
+            }
           } catch {
             fail();
           }
@@ -109,7 +118,10 @@ export function subscribeLegacyCapture(
     };
     profiles?.set(key, capture);
     try {
-      start();
+      // Batch the first subscribers too: quality changes replace all peer
+      // subscriptions together and must not immediately reset a fresh stream.
+      if (original) capture.restart();
+      else start();
     } catch (error) {
       capture.close();
       throw error;
