@@ -72,6 +72,7 @@ export function fakeGitHub() {
       return { login: 'issue-bot' };
     },
     async repository(repo) {
+      github.calls.push(['repository', repo]);
       return {
         fullName: repo,
         hasIssues: true,

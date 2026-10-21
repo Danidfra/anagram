@@ -87,7 +87,8 @@ test('crash before sending: nothing can exist, so it is failed without asking Gi
   const { bot, github } = setup(t, { dir });
   await bot.start();
   await settle(bot);
-  assert.equal(github.calls.length, 0);
+  // Only the startup visibility check; no issue was created, listed or searched.
+  assert.ok(github.calls.every((call) => call[0] === 'repository'));
   assert.equal(bot.state.issues[0].state, 'failed');
   assert.match(last(bot, alice).content, /was not published.*bot restarted/);
 });

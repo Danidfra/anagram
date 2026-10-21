@@ -214,13 +214,14 @@ export class IssueAgent extends BotTransport {
     switch (name) {
       case 'new':
         return this.newCommand(args, request);
-      case 'drafts':
-        return this.say(
+      case 'drafts': {
+        const drafts = this.drafts.list(conversation, sender);
+        const visible = await this.visibleNow(
+          drafts.map((d) => d.repo),
           request,
-          draftList(
-            this.drafts.list(conversation, sender).filter((d) => this.shown(d.repo, request)),
-          ),
         );
+        return this.say(request, draftList(drafts.filter((d) => visible.has(d.repo))));
+      }
       case 'edit': {
         const { id, rest } = splitId(args);
         const draft = this.ownDraft(id, request, 'edit');
@@ -238,11 +239,14 @@ export class IssueAgent extends BotTransport {
         this.drafts.remove(draft);
         return this.say(request, `Cancelled draft ${draft.ref} (code ${draft.code}).`);
       }
-      case 'issues':
-        return this.say(
+      case 'issues': {
+        const records = this.issues.recent(conversation);
+        const visible = await this.visibleNow(
+          records.map((r) => r.repo),
           request,
-          issueList(this.issues.recent(conversation).filter((r) => this.shown(r.repo, request))),
         );
+        return this.say(request, issueList(records.filter((r) => visible.has(r.repo))));
+      }
       case 'who':
         return this.who(splitId(args).id, request);
       default:
@@ -266,8 +270,32 @@ export class IssueAgent extends BotTransport {
   // Group members are not necessarily allowed users, and public groups are readable by
   // anyone. In groups the bot names, drafts and links only repositories GitHub reports as
   // public; everything about other repositories stays in direct messages.
+  // shown(): the cached answer, for refusing early (a cached "private" only withholds).
   shown(repo, { context }) {
     return context.type === 'dm' || this.publicRepos.has(repo);
+  }
+  // visibleNow(): the repositories whose details may be sent here right now. In groups a
+  // cached "public" may be stale, so GitHub is asked again just before sending; a cached
+  // "private" is trusted without a request. Errors count as private and update the cache.
+  // Callers send immediately afterwards, on the message chain, with no await in between.
+  async visibleNow(repos, request) {
+    const visible = new Set();
+    for (const repo of new Set(repos)) {
+      if (request.context.type === 'dm') {
+        visible.add(repo);
+        continue;
+      }
+      if (!this.publicRepos.has(repo)) continue;
+      let info;
+      try {
+        info = await this.github.repository(repo);
+      } catch {
+        /* Unknown counts as private. */
+      }
+      if (info?.public === true) visible.add(repo);
+      else this.publicRepos.delete(repo);
+    }
+    return visible;
   }
 
   // /new owner/repo <description>. Without a repository, behaves like a plain request.
@@ -277,7 +305,7 @@ export class IssueAgent extends BotTransport {
     if (validRepo(id)) {
       const repo = this.access.repo(request.sender, id);
       if (!repo) return this.say(request, this.deniedText([id], request));
-      if (!rest) return this.say(request, `Describe the issue too: /new ${repo} <description>`);
+      if (!rest) return this.say(request, 'Describe the issue too: /new owner/repo <description>');
       return this.startDraft(repo, rest, request);
     }
     return this.newRequest(args, request);
@@ -313,7 +341,7 @@ export class IssueAgent extends BotTransport {
       else if (record.state === 'published')
         this.say(
           request,
-          `Draft ${code} was already published as ${record.ref}: ${record.url}. Nothing was changed.`,
+          `Draft ${code} was already published as ${record.ref}${request.context.type === 'dm' ? `: ${record.url}` : ''}. Nothing was changed.`,
         );
       else if (record.state === 'publishing')
         this.say(request, `${record.ref} is already being published. Please wait for the result.`);
@@ -340,7 +368,8 @@ export class IssueAgent extends BotTransport {
     const record = this.issues.inConversation(ref, conversation);
     const draft = !record && this.drafts.findByRef(ref);
     const repo = record?.repo ?? (draft?.conversation === conversation && draft.repo);
-    if (repo && !this.shown(repo, request)) return this.say(request, NOT_SHOWN);
+    if (repo && !(await this.visibleNow([repo], request)).has(repo))
+      return this.say(request, NOT_SHOWN);
     if (record) return this.say(request, whoText(record));
     if (repo)
       return this.say(
@@ -359,7 +388,7 @@ export class IssueAgent extends BotTransport {
     if (target?.kind === 'draft') {
       const draft = this.ownDraft(target.code, request, 'edit');
       if (!draft) return;
-      if (confirmationPhrase(text)) return this.say(request, confirmHint([draft]));
+      if (confirmationPhrase(text)) return this.say(request, confirmHint([draft], request));
       return this.startEdit(draft, text, request);
     }
     // Approval in plain words never publishes.
@@ -370,7 +399,7 @@ export class IssueAgent extends BotTransport {
       return this.say(
         request,
         drafts.length
-          ? confirmHint(drafts)
+          ? confirmHint(drafts, request)
           : 'There is no draft of yours to confirm in this conversation.',
       );
     }
@@ -467,7 +496,8 @@ export class IssueAgent extends BotTransport {
     this.submit(`draft:${request.message.id}`, async () => {
       if (failure) return this.reply(request, modelFailureText(failure, this.ollama.model));
       // The repository may have stopped being public while the model was working.
-      if (!this.shown(repo, request)) return this.reply(request, NOT_SHOWN);
+      if (!(await this.visibleNow([repo], request)).has(repo))
+        return this.reply(request, NOT_SHOWN);
       if (!this.drafts.room(request.sender))
         return this.reply(request, `You already have ${this.drafts.maxPerUser} pending drafts.`);
       const draft = this.drafts.create({
@@ -512,7 +542,8 @@ export class IssueAgent extends BotTransport {
           request,
           `Draft ${draft.ref} was cancelled, published or expired before the edit finished. The edit was discarded.`,
         );
-      if (!this.shown(draft.repo, request)) return this.reply(request, NOT_SHOWN);
+      if (!(await this.visibleNow([draft.repo], request)).has(draft.repo))
+        return this.reply(request, NOT_SHOWN);
       this.drafts.revise(draft, this.freshCode(), content);
       this.log(`Draft revised (${request.context.type}, ${draft.repo}).`);
       await this.reply(
@@ -742,7 +773,7 @@ export class IssueAgent extends BotTransport {
     this.submit(`notice:${record.attempt}:${record.state}:${record.checks ?? 0}`, async () => {
       const message = { id: record.messageId, pubkey: record.requester };
       const context = { type: record.conversation.split(':')[0] };
-      if (!this.shown(record.repo, { context })) {
+      if (!(await this.visibleNow([record.repo], { context })).has(record.repo)) {
         await this.deliverTo(`dm:${record.requester}`, message, text);
         text = `${record.ref}: I sent the result to the requester by direct message.`;
       }
@@ -1094,10 +1125,14 @@ function bound(map, max = 1000) {
   while (map.size > max) map.delete(map.keys().next().value);
 }
 
-function confirmHint(drafts) {
+// Repositories and titles only in DMs: this hint is not re-checked against GitHub.
+function confirmHint(drafts, { context }) {
   return [
     'Plain-text replies never publish anything. To publish, send the command with the code:',
-    ...drafts.map((d) => `/confirm ${d.code} — ${d.ref} ${d.repo}: ${d.title}`),
+    ...drafts.map(
+      (d) =>
+        `/confirm ${d.code} — ${d.ref}${context.type === 'dm' ? ` ${d.repo}: ${d.title}` : ''}`,
+    ),
   ].join('\n');
 }
 

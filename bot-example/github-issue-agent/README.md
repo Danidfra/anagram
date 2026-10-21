@@ -79,7 +79,7 @@ Plain messages work too: "create an issue in lnbits/anagram about the login bug"
 
 ## Groups and private repositories
 
-Group members are not necessarily allowed users, and anyone can read a public group. The bot therefore checks with GitHub which allowed repositories are **public** (at startup and every ten minutes; any error counts as private). In private and public groups it drafts, lists and links only public repositories; your repository list and refused repository names appear only in your DM. If a repository is not public when a publication result is sent, the group is told only that the requester was informed, and the result goes to the requester's DM. Similar-issue warnings in groups show numbers and links, not titles.
+Group members are not necessarily allowed users, and anyone can read a public group. In private and public groups the bot drafts, lists and links only repositories that are **public** on GitHub; your repository list and refused repository names appear only in your DM. It checks visibility at startup and every ten minutes, and **asks GitHub again right before** sending a draft, `/drafts`, `/issues`, `/who` or a publication result to a group. Any error counts as private. Requests for repositories already known to be private are refused without asking GitHub. If a repository is not public when a publication result is sent, the group is told only that the requester was informed, and the result goes to the requester's DM. Similar-issue warnings in groups show numbers and links, not titles.
 
 `/issues` and `/who` only show issues created in the current conversation. In a group, everyone who can read the group sees drafts, results and, through `/who`, the requester's npub.
 
@@ -140,7 +140,8 @@ Run `npm run check` and `npm test`. Tests use a mock Ollama, a mock GitHub API a
 ## Limitations
 
 - Drafts are lost on restart, and replies to bot messages sent before a restart are no longer recognized; use the commands.
-- After startup, groups are served once the first repository check answers. A repository made private is still shown in groups for up to ten minutes.
+- After startup, groups are served once the first repository check answers. A repository made public again is served in groups after the next ten-minute check.
+- A repository made private between the check and the moment relays deliver the message can still leak that one message. In groups, each message with repository details waits for one GitHub request (at most 20 seconds), during which the bot handles no other messages.
 - An allowed public group that cannot be found at startup is not retried; restart the bot.
 - The model may write something inaccurate. The requester reviews the draft before confirming.
 - Similar-issue search uses GitHub search, which can lag and has its own rate limit.

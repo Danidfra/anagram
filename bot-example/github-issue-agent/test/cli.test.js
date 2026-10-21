@@ -78,10 +78,14 @@ test(
       await github.close();
       rmSync(dir, { recursive: true, force: true });
     });
-    await until(() => /lnbits\/anagram: ok/.test(output()), 'startup checks', 15000);
+    // The repository check (start) and the service checks run concurrently.
+    const checks = [
+      /lnbits\/anagram: ok/,
+      /model test-model is installed/,
+      /GitHub token accepted \(account issue-bot\)/,
+    ];
+    await until(() => checks.every((line) => line.test(output())), 'startup checks', 15000);
     assert.match(output(), /GitHub Issue Agent \(Example Anagram Bot\): npub1/);
-    assert.match(output(), /model test-model is installed/);
-    assert.match(output(), /GitHub token accepted \(account issue-bot\)/);
     child.kill('SIGTERM');
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);

@@ -165,8 +165,9 @@ test('groups never show private repositories, their drafts or their issues', asy
   await g.say(alice, `${at(bot)} create an issue in ${REPO} about the login bug`);
   const code = codeOf(g.replies().at(-1));
   const ref = refOf(g.replies().at(-1));
+  // GitHub now says private; the bot's cache still says public.
   github.onCreate = (repo, issue) => {
-    bot.publicRepos.delete(REPO);
+    github.privateRepos.add(REPO);
     return github.create(repo, issue.title, issue.body);
   };
   await g.say(alice, `/confirm ${code}`);
@@ -224,4 +225,74 @@ test('issues published in a DM are not linked to the requester in a group', asyn
   await room.say(alice, `${at(bot)} issue in ${REPO}: mobile login fails`);
   assert.ok(!room.replies().at(-1).content.includes(ref));
   assert.ok(!room.replies().at(-1).content.includes('You already published'));
+});
+
+// The cached visibility is refreshed only every ten minutes. Group messages with repository
+// details must not rely on a cached "public".
+async function groupWithDraft(t) {
+  const fixture = setup(t, { publicRepos: [REPO] });
+  const g = privateGroup(fixture.bot);
+  await g.say(alice, `${at(fixture.bot)} create an issue in ${REPO} about the login bug`);
+  const draftEvent = g.replies().at(-1);
+  assert.match(draftEvent.content, /^Draft AG-/);
+  return { ...fixture, g, draftEvent, code: codeOf(draftEvent), ref: refOf(draftEvent) };
+}
+// Everything the group received after `from`, as text.
+const since = (g, from) =>
+  g
+    .replies()
+    .slice(from)
+    .map((e) => e.content)
+    .join('\n');
+
+test('a public repository that becomes private is withheld from groups at once', async (t) => {
+  const { bot, github, ollama, g, draftEvent, code, ref } = await groupWithDraft(t);
+  await g.say(alice, `/confirm ${code}`);
+  assert.match(g.replies().at(-1).content, /#1: https:\/\/github.com/);
+  const before = g.replies().length;
+  github.privateRepos.add(REPO); // made private on GitHub; the cache is not refreshed
+  assert.ok(bot.publicRepos.has(REPO));
+
+  await g.say(alice, `${at(bot)} create an issue in ${REPO} about a crash`);
+  assert.match(g.replies().at(-1).content, /not public/);
+  assert.equal(ollama.calls.length, 2, 'the cache let the model run once more');
+  assert.equal(bot.publicRepos.has(REPO), false, 'the failed check updated the cache');
+  await g.say(alice, `${at(bot)} create an issue in ${REPO} about another crash`);
+  assert.equal(ollama.calls.length, 2, 'now refused before the model');
+  for (const command of ['/issues', '/drafts', `/who ${ref}`])
+    await g.say(alice, `${at(bot)} ${command}`);
+  await g.say(alice, `/confirm ${code}`);
+  await g.say(alice, 'yes', [replyTag(draftEvent.id)]);
+
+  const text = since(g, before);
+  assert.ok(!text.includes(REPO) && !text.includes('github.com') && !text.includes('Mobile login'));
+  assert.equal(bot.drafts.all().length, 0, 'no hidden draft was created');
+});
+
+test('a failing visibility check counts as private', async (t) => {
+  const { bot, github, g } = await groupWithDraft(t);
+  const before = g.replies().length;
+  github.repository = async () => {
+    throw new Error('GitHub unavailable');
+  };
+  await g.say(alice, `${at(bot)} /drafts`);
+  assert.match(g.replies().at(-1).content, /no drafts/);
+  await g.say(alice, `${at(bot)} create an issue in ${REPO} about a crash`);
+  assert.match(g.replies().at(-1).content, /not public/);
+  assert.ok(!since(g, before).includes(REPO));
+  assert.equal(bot.publicRepos.size, 0);
+});
+
+test('visibility is asked only for group messages with details of a cached public repository', async (t) => {
+  const { bot, github } = setup(t, { publicRepos: [REPO] });
+  const lookups = () => github.calls.filter((c) => c[0] === 'repository').length;
+  await sendDM(bot, alice, `create an issue in ${OTHER} about a crash`);
+  await sendDM(bot, alice, '/issues');
+  assert.equal(lookups(), 0, 'DMs never ask');
+  const g = privateGroup(bot);
+  await g.say(alice, `${at(bot)} create an issue in ${OTHER} about a crash`);
+  await g.say(alice, `${at(bot)} /help`);
+  assert.equal(lookups(), 0, 'a cached "private" is trusted');
+  await g.say(alice, `${at(bot)} create an issue in ${REPO} about a crash`);
+  assert.equal(lookups(), 1, 'one fresh check before sending the draft');
 });
