@@ -284,11 +284,13 @@ export function createCallRoomRuntime(deps: Deps) {
           if (phase === 'incoming') {
             await runtime.accept('audio');
           }
-          if (phase === 'active' && !peer.started) {
-            peer.started = true;
-            if (runtime.session?.microphoneMuted !== microphoneMuted) runtime.toggleMicrophone();
-            if (!cameraMuted && runtime.session?.cameraMuted) await runtime.toggleCamera();
-            if (current(s) && localScreenStream) await runtime.startScreenSharing();
+          if (phase === 'active') {
+            // Every (re)activation applies controls changed while the link was down.
+            await syncPeerMedia(runtime);
+            if (!peer.started) {
+              peer.started = true;
+              if (current(s) && localScreenStream) await runtime.startScreenSharing();
+            }
           }
           if (phase === 'ended') {
             if (s.own.pubkey === s.link.host) removeMember(member.pubkey);
@@ -299,8 +301,11 @@ export function createCallRoomRuntime(deps: Deps) {
       if (s.own.pubkey < member.pubkey) void runtime.start(member.pubkey, 'audio');
     }
     clearTimeout(qualityTimer);
+    // A quality refresh briefly blocks camera changes; reapply any it skipped.
     qualityTimer = setTimeout(() => {
-      void refreshRoomVideoQuality();
+      void refreshRoomVideoQuality().then(() => {
+        if (current(s)) return Promise.all(peers.map(({ runtime }) => syncPeerMedia(runtime)));
+      });
     }, 150);
     const buffered = pending;
     pending = [];
@@ -582,6 +587,13 @@ export function createCallRoomRuntime(deps: Deps) {
       if (runtime.session?.microphoneMuted !== microphoneMuted) runtime.toggleMicrophone();
     });
   }
+  // Idempotent: align one peer link with the room's microphone and camera controls.
+  async function syncPeerMedia(runtime: PeerRuntime) {
+    const media = runtime.session;
+    if (!media) return;
+    if (media.microphoneMuted !== microphoneMuted) runtime.toggleMicrophone();
+    if (media.cameraMuted !== cameraMuted) await runtime.toggleCamera();
+  }
   async function selectCamera(deviceId: string) {
     if (!busy || !localStream || changingMedia) return;
     if (cameraMuted) {
@@ -631,13 +643,18 @@ export function createCallRoomRuntime(deps: Deps) {
       }
       await Promise.all(
         peers.map(({ runtime }) =>
-          runtime.session?.phase !== 'active'
+          !runtime.session
             ? undefined
-            : runtime.session.cameraMuted !== cameraMuted
-              ? runtime.toggleCamera()
-              : deviceId !== undefined && !cameraMuted
-                ? runtime.selectCamera(deviceId)
-                : undefined,
+            : runtime.session.phase !== 'active'
+              ? // A link that is down drops its camera clone now; reactivation recaptures.
+                runtime.session.cameraMuted
+                ? undefined
+                : runtime.toggleCamera()
+              : runtime.session.cameraMuted !== cameraMuted
+                ? runtime.toggleCamera()
+                : deviceId !== undefined && !cameraMuted
+                  ? runtime.selectCamera(deviceId)
+                  : undefined,
         ),
       );
     } catch (cause) {
