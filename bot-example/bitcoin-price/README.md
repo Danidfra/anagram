@@ -2,6 +2,8 @@
 
 A standalone Node daemon that answers Anagram messages with the current Bitcoin price. It is based on the [Dad Jokes](../dad-jokes) example, so it works in DMs, private groups and public groups, and it talks to Anagram only through Nostr relays. No Anagram installation, browser, web server or database is needed.
 
+The folder is self-contained: its dependencies, lockfile, configuration example, Nostr helpers and [license](LICENSE) are all inside it. Copy it anywhere and run it from there.
+
 ```text
 You: price
 Bot: BTC: $67,123 USD
@@ -14,11 +16,11 @@ Bot: BTC: €58,234 EUR
 
 ## Install and run
 
-Use **Node 24 or later**:
+Use **Node 24 or later**. From this folder, or from a copy of it anywhere:
 
 ```sh
-cd bot-example/bitcoin-price
 npm ci
+cp .env.example .env
 npm start
 ```
 
@@ -38,7 +40,7 @@ Copy `.env.example` to `.env` and uncomment what you need. Restart to apply chan
 | ------------------------------ | ------------------------------------- | ------------------------------------------------------- |
 | `PRICE_URL`                    | `https://mempool.space/api/v1/prices` | Price provider. HTTPS only.                             |
 | `PRICE_CACHE_SECONDS`          | `60`                                  | Seconds a price is reused: whole number, 0 to 300.      |
-| `PRICE_DEFAULT_CURRENCY`       | `USD`                                 | Currency when a message names none.                     |
+| `PRICE_DEFAULT_CURRENCY`       | `USD`                                 | Currency when a message names none. Checked at startup. |
 | `PRICE_ALLOW_HTTP`             | unset                                 | `1` allows `http://` and private addresses (local use). |
 | `RELAYS`                       | Anagram's app relays                  | Should overlap your users' relays.                      |
 | `NAME`, `PICTURE_URL`, `NIP05` | see `.env.example`                    | Profile fields.                                         |
@@ -68,7 +70,23 @@ Supported currencies are whatever the provider returns. mempool.space currently 
 
 Help is not sent in answer to replies, such as a reply to the bot or another bot's answer. This stops two bots that answer everything from messaging each other forever. Commands are always answered.
 
-If the provider fails, the bot shows its last price for up to 5 minutes with a line saying it is stale. For the same reason `PRICE_CACHE_SECONDS` cannot exceed 300. With nothing recent it replies that the price is temporarily unavailable.
+## Caching and provider outages
+
+A successful price is reused for `PRICE_CACHE_SECONDS`. After that, the next command asks the provider again; concurrent commands share that one request.
+
+If the provider fails (error, timeout, bad response):
+
+- The bot replies with its last good price, if it is at most 5 minutes old, followed by `Stale price from N min ago: the price provider is not responding.`
+- With nothing that recent, it replies `The Bitcoin price is temporarily unavailable. Please try again soon.`
+- It does not ask the provider again for 10 seconds. Messages are handled one at a time, so a provider that times out delays all chats by up to 5 seconds per attempt.
+
+`PRICE_CACHE_SECONDS` cannot exceed 300, because a cached price must never be older than the oldest price the bot will show.
+
+`PRICE_CACHE_SECONDS=0` disables the cache: every price command makes a provider request. The per-sender cooldown does not limit many different senders, so a busy or abused bot can then exceed the provider's rate limits and get the server's IP blocked, after which users see stale or unavailable prices. Keep the default 60 seconds for public bots, and use 0 only for testing or a provider you control. The stale fallback works the same with 0: the last good price is still shown, marked as stale, for 5 minutes.
+
+## Default currency
+
+`PRICE_DEFAULT_CURRENCY` must be three letters. At startup the bot fetches one price and stops with an error if the provider does not offer that currency, for example `PRICE_DEFAULT_CURRENCY GBP is not offered by the price provider. Available: EUR, USD.` If the provider cannot be reached at startup, the bot logs a warning and starts anyway; a plain `price` then answers that the currency is unsupported until you fix the setting.
 
 ## Change the price provider
 
@@ -83,7 +101,7 @@ To test against a local or self-hosted provider, set `PRICE_ALLOW_HTTP=1`. This 
 - The address is checked again when the connection is made, so a hostname that later resolves to a private address (DNS rebinding) is refused.
 - Redirects are never followed. Any answer other than HTTP 200, a response over 64 KB (counted in bytes), or a request over 5 seconds is a failure.
 - Prices must be finite numbers above zero and below 1e12. Anything else is rejected.
-- Many users asking at once cause one provider request per cache period. Failures are not retried for 10 seconds, so an outage cannot stall message handling.
+- Many users asking at once cause one provider request per cache period (unless `PRICE_CACHE_SECONDS=0`, see above). Failures are not retried for 10 seconds, so an outage cannot stall message handling.
 - Logs never contain the provider URL, since it may hold an API token.
 - Prices are informational. Do not use them to settle payments.
 - All the protections of the Dad Jokes bot apply: signed and encrypted messages are verified, replies are saved before sending and retried, duplicates and old messages are ignored, and relay hints from strangers cannot reach private networks.
@@ -107,8 +125,8 @@ The bot is a copy of Dad Jokes with three changes. `reply()` in **bot.js** is no
 ## Checks
 
 ```sh
-npm run check
-npm test
+npm run check   # syntax only, instant
+npm test        # full suite, about two minutes
 ```
 
 Tests use mocked or local providers and never contact mempool.space. They cover price parsing and validation, caching, request sharing, stale fallback, URL and private-address rules, command parsing, provider failures in DMs, private groups and public groups, and everything the Dad Jokes tests cover. When this folder is inside the Anagram repository, the optional browser test drives the real client. From the repository root, with Chromium installed:
