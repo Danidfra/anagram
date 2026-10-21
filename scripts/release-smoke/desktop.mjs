@@ -279,7 +279,7 @@ try {
   assert.equal(videoVerified, true, 'packaged WebView must display a decoded video frame');
   assert.deepEqual(
     media.decoded,
-    ['audio/webm;codecs=opus', 'video/webm;codecs=vp8,opus'],
+    ['audio/webm;codecs=opus', 'video/webm;codecs=vp8'],
     `packaged WebView must record and stream call media: ${JSON.stringify(media)}`,
   );
   await execute('delete window.__callMediaSmoke');
@@ -338,9 +338,32 @@ try {
   if (process.env.ANAGRAM_RESOURCE_ROOT_PID) {
     const { checkLinuxIdleResources } = await import('./linux-resources.mjs');
     const rootPid = Number(process.env.ANAGRAM_RESOURCE_ROOT_PID);
-    resources = [await checkLinuxIdleResources(execute, rootPid),
-      await checkLinuxIdleResources(execute, rootPid, false)];
+    resources = [
+      await checkLinuxIdleResources(execute, rootPid),
+      await checkLinuxIdleResources(execute, rootPid, false),
+    ];
   }
+  await fill('button[aria-label="settings"]', '\uE007');
+  await click(testid('settings-logout-item'));
+  await click(testid('settings-logout-confirm'));
+  await until(() => exists(testid('auth-open-key-button')), 'packaged logout completes', 15000);
+  assert.equal(await execute('return localStorage.getItem("npub")'), null);
+  assert.equal(
+    await execute('return localStorage.getItem("nostr-chat-pending-logout-cleanup")'),
+    null,
+  );
+  const keyRemoved = await request(`/session/${session}/execute/async`, {
+    script:
+      'const done = arguments[arguments.length - 1]; window.__TAURI_INTERNALS__.invoke("read_private_key").then(key => done(key === null), () => done(false));',
+    args: [],
+  });
+  assert.equal(keyRemoved, true, 'packaged logout removed the native key');
+  await quit();
+  await open();
+  await until(
+    () => exists(testid('auth-open-key-button')),
+    'logged-out state survives process restart',
+  );
   await writeFile(
     `${output}/result.json`,
     JSON.stringify(
@@ -359,6 +382,8 @@ try {
           'reconnect',
           'cold-restart',
           'secure-relay-read',
+          'native-logout-key-removal',
+          'logged-out-cold-restart',
         ],
         relay: relay.stats,
       },

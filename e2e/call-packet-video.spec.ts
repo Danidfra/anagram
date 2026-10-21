@@ -76,11 +76,16 @@ for (const capture of [
         };
       }
       let observing = true;
+      const bitrates: number[] = [];
       let created = 0,
         closed = 0,
         encoded = 0;
       const Original = VideoEncoder;
       window.VideoEncoder = class extends Original {
+        configure(config: VideoEncoderConfig) {
+          if (config.bitrate) bitrates.push(config.bitrate);
+          super.configure(config);
+        }
         constructor(init: VideoEncoderInit) {
           super(init);
           created++;
@@ -197,6 +202,7 @@ for (const capture of [
           errors,
           created,
           encoded,
+          bitrates,
         };
       } finally {
         observing = false;
@@ -225,6 +231,7 @@ for (const capture of [
     });
     expect(result.errors).toEqual([]);
     expect(result.created).toBe(capture === 'video-element-restart' ? 2 : 1);
+    if (capture !== 'all-congested') expect(Math.min(...result.bitrates!)).toBe(600000);
     expect(result.fastPeerFrames).toBeGreaterThan(capture === 'all-congested' ? 2 : 30);
     expect(result.counts![1]).toBeGreaterThan(2);
     expect(result.pictureChanges!.every((count) => count > 2)).toBe(true);

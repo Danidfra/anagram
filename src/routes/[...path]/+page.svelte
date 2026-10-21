@@ -4,8 +4,7 @@
   import { publicGroupLinkTarget } from '#src/utils/publicGroupLink.ts';
   import PwaControls from '#src/lib/components/PwaControls.svelte';
   import AppPrompts from '#src/lib/components/AppPrompts.svelte';
-  import Auth from '#src/lib/components/Auth.svelte';
-  import Shell from '#src/lib/components/Shell.svelte';
+  import { hasPendingLogoutCleanup } from '#src/utils/logoutState.ts';
   import { applyThemeAccent, readThemeAccent, ACCENT_STORAGE_KEY } from '#src/utils/themeAccent.ts';
   import { incomingMessageBanner } from '#src/lib/platform/ui.ts';
   import { updateAppBadge } from '#src/lib/platform/appBadge.ts';
@@ -13,6 +12,26 @@
   import '#src/lib/components/shell.css';
   let authenticated = false;
   let ready = false;
+  let cleaning = false;
+  let cleanupBusy = false;
+  let cleanupError = '';
+  async function resumeLogout() {
+    if (cleanupBusy) return;
+    cleaning = true;
+    authenticated = false;
+    cleanupBusy = true;
+    cleanupError = '';
+    try {
+      const { useNostrStore } = await import('#src/stores/nostrStore.svelte.ts');
+      await useNostrStore().logout();
+      window.location.replace('/');
+    } catch (error) {
+      cleanupError =
+        error instanceof Error ? error.message : 'Unable to finish logout. Please retry.';
+    } finally {
+      cleanupBusy = false;
+    }
+  }
   onMount(() => {
     applyThemeAccent(readThemeAccent());
     const syncAccent = (event: StorageEvent) => {
@@ -34,15 +53,42 @@
       Boolean(localStorage.getItem('npub')) && !localStorage.getItem('anagram-onboarding-pending');
     if (!authenticated) void updateAppBadge(0);
     ready = true;
-    return () => window.removeEventListener('storage', syncAccent);
+    window.addEventListener('anagram-logout', resumeLogout);
+    if (hasPendingLogoutCleanup()) void resumeLogout();
+    return () => {
+      window.removeEventListener('storage', syncAccent);
+      window.removeEventListener('anagram-logout', resumeLogout);
+    };
   });
 </script>
 
 <PwaControls />
 <AppPrompts />
-{#if ready}{#if authenticated}<Shell />{:else}<Auth
-      onlogin={() => (authenticated = true)}
-    />{/if}{/if}
+{#if ready}
+  {#if cleaning}
+    <main class="logout-cleanup" aria-live="polite">
+      <p>{cleanupBusy ? 'Logging out…' : cleanupError}</p>
+      {#if !cleanupBusy}<button onclick={resumeLogout}>Retry logout</button>{/if}
+    </main>
+  {:else if authenticated}
+    {#await import('#src/lib/components/Shell.svelte') then module}<module.default />{/await}
+  {:else}
+    {#await import('#src/lib/components/Auth.svelte') then module}<module.default
+        onlogin={() => (authenticated = true)}
+      />{/await}
+  {/if}
+{/if}
 {#if $incomingMessageBanner}<div class="message-banner" role="status">
     {$incomingMessageBanner}
   </div>{/if}
+
+<style>
+  .logout-cleanup {
+    min-height: 100dvh;
+    display: grid;
+    place-content: center;
+    gap: 1rem;
+    padding: 2rem;
+    text-align: center;
+  }
+</style>

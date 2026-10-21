@@ -2215,6 +2215,8 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     resetContactSubscriptionsRuntimeState,
     resetEventSinceForFreshLogin,
     resetCalls: () => {
+      publicGroups.stop();
+      resetAppLifecycleRuntimeStateRuntime();
       botKeyboards.reset();
       useCallStore().reset();
       useCallRoomStore().reset();

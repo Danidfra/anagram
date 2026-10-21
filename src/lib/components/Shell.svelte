@@ -1643,7 +1643,9 @@
         {#if searching}
           {#key $state.selected.id}
             <ThreadSearch
-              onsearch={(query) => messages.searchMessages($state.selected!.id, query)}
+              paged
+              onsearch={(query, signal, before) =>
+                messages.searchMessages($state.selected!.id, query, signal, before)}
               onselect={jump}
               onclear={() => (highlightedMessage = '')}
               onclose={() => (searching = false)}

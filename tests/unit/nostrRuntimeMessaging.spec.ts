@@ -306,9 +306,7 @@ describe('nostr runtime messaging logic', () => {
       false,
     );
     electronSecurePrivateKeyStorageMock.markElectronPrivateKeyMemoryOnlySession.mockClear();
-    electronSecurePrivateKeyStorageMock.readElectronSecurePrivateKeyHex.mockResolvedValue(
-      null,
-    );
+    electronSecurePrivateKeyStorageMock.readElectronSecurePrivateKeyHex.mockResolvedValue(null);
     electronSecurePrivateKeyStorageMock.removeElectronSecurePrivateKeyHex.mockResolvedValue();
     electronSecurePrivateKeyStorageMock.writeElectronSecurePrivateKeyHex.mockResolvedValue();
   });
@@ -465,10 +463,7 @@ describe('nostr runtime messaging logic', () => {
       syncContactProfile: vi.fn(async () => {}),
     };
     const ensureContactStoredAsGroup = vi.fn<
-      (
-        groupPublicKey: string,
-        options?: { fallbackName?: string },
-      ) => Promise<ContactRecord | null>
+      (groupPublicKey: string, options?: { fallbackName?: string }) => Promise<ContactRecord | null>
     >(async () =>
       buildContactRecord({
         public_key: GROUP_KEY,
@@ -544,9 +539,7 @@ describe('nostr runtime messaging logic', () => {
       },
     } as never);
 
-    subscribePrivateMessagesForLoggedInUser.mockRejectedValueOnce(
-      new Error('subscription failed'),
-    );
+    subscribePrivateMessagesForLoggedInUser.mockRejectedValueOnce(new Error('subscription failed'));
     refreshGroupContactByPublicKey.mockRejectedValueOnce(new Error('profile failed'));
     publishPrivateContactList.mockRejectedValueOnce(new Error('publish failed'));
     await runtime.ensureGroupInvitePubkeyIsContact(GROUP_KEY, 'Accepted Group');
@@ -797,6 +790,54 @@ describe('nostr runtime messaging logic', () => {
     expect(logoutCleanupMock.clearPersistedAppState).toHaveBeenCalledTimes(1);
   });
 
+  it('bounds a stalled keyring logout, blocks new login, and retries the same cleanup', async () => {
+    vi.useFakeTimers();
+    const storage = createMockStorage({ [PUBLIC_KEY_STORAGE_KEY]: PUBKEY_A });
+    vi.stubGlobal('window', { localStorage: storage.api });
+    let finish!: () => void;
+    electronSecurePrivateKeyStorageMock.removeElectronSecurePrivateKeyHex.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { runtime, deps } = createAuthSessionHarness();
+    try {
+      const pending = runtime.logout();
+      const rejected = expect(pending).rejects.toThrow('still waiting');
+      await vi.advanceTimersByTimeAsync(8000);
+      await rejected;
+      expect(deps.resetCalls).toHaveBeenCalledOnce();
+      expect(runtime.getPrivateKeyHex()).toBeNull();
+      expect(storage.store.has('nostr-chat-pending-logout-cleanup')).toBe(true);
+      await expect(
+        runtime.savePrivateKeyHex(NostrPrivateKeySigner.generate().privateKey),
+      ).rejects.toThrow('Finish logging out');
+      const retry = runtime.logout();
+      finish();
+      await retry;
+      expect(
+        electronSecurePrivateKeyStorageMock.removeElectronSecurePrivateKeyHex,
+      ).toHaveBeenCalledOnce();
+      expect(storage.store.has('nostr-chat-pending-logout-cleanup')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retains the logout marker on a keyring error and removes it only after a successful retry', async () => {
+    const storage = createMockStorage({ [PUBLIC_KEY_STORAGE_KEY]: PUBKEY_A });
+    vi.stubGlobal('window', { localStorage: storage.api });
+    electronSecurePrivateKeyStorageMock.removeElectronSecurePrivateKeyHex.mockRejectedValueOnce(
+      new Error('Keyring unavailable'),
+    );
+    const { runtime } = createAuthSessionHarness();
+    await expect(runtime.logout()).rejects.toThrow('Logout cleanup failed');
+    expect(storage.store.has('nostr-chat-pending-logout-cleanup')).toBe(true);
+    await runtime.logout();
+    expect(storage.store.has('nostr-chat-pending-logout-cleanup')).toBe(false);
+  });
+
   it('uses Android secure storage instead of localStorage for direct key logins', async () => {
     androidSecurePrivateKeyStorageMock.isAndroidSecurePrivateKeyStorageAvailable.mockReturnValue(
       true,
@@ -812,9 +853,9 @@ describe('nostr runtime messaging logic', () => {
 
     await expect(runtime.savePrivateKeyHex(privateKey)).resolves.toBe(true);
 
-    expect(
-      androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex,
-    ).toHaveBeenCalledWith(privateKey);
+    expect(androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex).toHaveBeenCalledWith(
+      privateKey,
+    );
     expect(localStorage.store.get(AUTH_METHOD_STORAGE_KEY)).toBe('nsec');
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
     expect(localStorage.store.get(PUBLIC_KEY_STORAGE_KEY)).toBe(expectedPubkey);
@@ -828,6 +869,9 @@ describe('nostr runtime messaging logic', () => {
       true,
     );
     androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex.mockRejectedValue(
+      new Error('secure storage unavailable'),
+    );
+    androidSecurePrivateKeyStorageMock.removeAndroidSecurePrivateKeyHex.mockRejectedValue(
       new Error('secure storage unavailable'),
     );
     const localStorage = createMockStorage();
@@ -915,9 +959,7 @@ describe('nostr runtime messaging logic', () => {
     const { runtime } = createAuthSessionHarness();
     const saving = runtime.savePrivateKeyHex(NostrPrivateKeySigner.generate().privateKey);
     await flushPromises();
-    expect(
-      androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex,
-    ).toHaveBeenCalled();
+    expect(androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex).toHaveBeenCalled();
     runtime.clearPrivateKey();
     finish();
     await expect(saving).resolves.toBe(false);
@@ -945,9 +987,9 @@ describe('nostr runtime messaging logic', () => {
 
     await expect(runtime.loadPrivateKeyHex()).resolves.toBe(privateKey);
 
-    expect(
-      androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex,
-    ).toHaveBeenCalledWith(privateKey);
+    expect(androidSecurePrivateKeyStorageMock.writeAndroidSecurePrivateKeyHex).toHaveBeenCalledWith(
+      privateKey,
+    );
     expect(localStorage.store.get(AUTH_METHOD_STORAGE_KEY)).toBe('nsec');
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();
     expect(localStorage.store.get(PUBLIC_KEY_STORAGE_KEY)).toBe(expectedPubkey);
@@ -984,6 +1026,9 @@ describe('nostr runtime messaging logic', () => {
       true,
     );
     electronSecurePrivateKeyStorageMock.writeElectronSecurePrivateKeyHex.mockRejectedValue(
+      new Error('secure storage unavailable'),
+    );
+    electronSecurePrivateKeyStorageMock.removeElectronSecurePrivateKeyHex.mockRejectedValue(
       new Error('secure storage unavailable'),
     );
     const localStorage = createMockStorage();

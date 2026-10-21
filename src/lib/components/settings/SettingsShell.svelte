@@ -68,7 +68,7 @@
     error = '';
     try {
       if (confirmation === 'logout') {
-        await disableAndroidRelayNotifications();
+        void disableAndroidRelayNotifications().catch(() => {});
         nostr.stopAppLifecycleRuntime();
         await nostr.logout();
         window.location.replace('/');
@@ -81,8 +81,11 @@
               : 'settings.forceRefreshSupportedBrowser',
           );
       }
-    } catch {
-      error = $translate(confirmation === 'logout' ? 'errors.failedLogOut' : 'common.tryAgain');
+    } catch (cause) {
+      error =
+        confirmation === 'logout' && cause instanceof Error
+          ? cause.message
+          : $translate('common.tryAgain');
     } finally {
       busy = false;
     }

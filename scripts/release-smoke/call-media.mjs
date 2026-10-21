@@ -1,7 +1,9 @@
 // Executed inside the packaged WebView. Synthetic sources exercise the real
 // recorder and streaming decoder without microphone/camera access in CI.
 export async function probeCallMedia(verifyVideo) {
-  const types = ['audio/webm;codecs=opus', 'video/webm;codecs=vp8,opus'];
+  // Probe the separate streams negotiated by current calls. Mixing synthetic
+  // WebAudio and canvas tracks also tests WebKit's unrelated A/V clock muxing.
+  const types = ['audio/webm;codecs=opus', 'video/webm;codecs=vp8'];
   const result = {
     secure: globalThis.isSecureContext,
     capture: typeof navigator.mediaDevices?.getUserMedia === 'function',
@@ -20,7 +22,7 @@ export async function probeCallMedia(verifyVideo) {
     const destination = context.createMediaStreamDestination();
     oscillator.connect(destination);
     oscillator.start();
-    const stream = destination.stream;
+    const stream = new MediaStream(mime.startsWith('video/') ? [] : destination.stream.getTracks());
     const canvas = document.createElement('canvas');
     canvas.width = 160;
     canvas.height = 120;
