@@ -428,6 +428,38 @@ describe('userActions runtime', () => {
     });
   });
 
+  it('passes a kind 15 target through to reaction and deletion rumors', async () => {
+    const deps = createDeps();
+    const actions = createUserActions(deps);
+
+    await actions.sendDirectMessageReaction(
+      'r'.repeat(64),
+      '🔥',
+      'target-id',
+      'b'.repeat(64),
+      ['wss://relay.example'],
+      { targetKind: 15 }
+    );
+    await actions.sendDirectMessageDeletion('r'.repeat(64), 'target-id', 15, ['wss://relay.example']);
+
+    expect(deps.createReactionRumorEvent).toHaveBeenCalledWith(
+      's'.repeat(64),
+      'r'.repeat(64),
+      '🔥',
+      'target-id',
+      'b'.repeat(64),
+      15,
+      123456
+    );
+    expect(deps.createEventDeletionRumorEvent).toHaveBeenCalledWith(
+      's'.repeat(64),
+      'r'.repeat(64),
+      'target-id',
+      15,
+      123456
+    );
+  });
+
   it('rejects unauthorized retries before reusing or publishing a cached envelope', async () => {
     const deps = createDeps();
     deps.prepareOutgoingPrivateMessage.mockRejectedValue(

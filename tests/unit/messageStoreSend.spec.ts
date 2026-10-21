@@ -13,6 +13,8 @@ const serviceMocks = vi.hoisted(() => ({
     createMessage: vi.fn(),
     getChatByPublicKey: vi.fn(),
     getMessageById: vi.fn(),
+    updateMessageMeta: vi.fn(),
+    reactionMessageBatches: vi.fn(async function* () {}),
     getMessageByEventIdOrEditReference: vi.fn().mockResolvedValue(null),
     listLatestMessages: vi.fn(),
     init: vi.fn().mockResolvedValue(undefined),
@@ -38,6 +40,9 @@ const serviceMocks = vi.hoisted(() => ({
     refreshContactByPublicKey: vi.fn().mockResolvedValue(undefined),
     ensureRespondedPubkeyIsContact: vi.fn().mockResolvedValue(undefined),
     sendDirectMessage: vi.fn().mockResolvedValue({ id: 'gift-wrap' }),
+    sendDirectMessageReaction: vi.fn().mockResolvedValue(null),
+    sendDirectMessageDeletion: vi.fn().mockResolvedValue(null),
+    refreshReplyPreviewsForTargetMessage: vi.fn().mockResolvedValue(undefined),
   },
   relayStore: {
     init: vi.fn(),
@@ -537,6 +542,44 @@ describe('messageStore send', () => {
       // Forwarding is by reference: nothing is downloaded, decrypted or re-uploaded.
       expect(fetchSpy).not.toHaveBeenCalled();
       vi.unstubAllGlobals();
+    });
+
+    it('reacts to and deletes an own kind 15 message with a kind 15 target', async () => {
+      const eventId = 'f'.repeat(64);
+      const row = makeMessageRow({
+        message: blobUrl,
+        event_id: eventId,
+        meta: { kind: 15, attachments: [encryptedAttachment] },
+      });
+      serviceMocks.chatDataService.getMessageById.mockResolvedValue(row);
+      serviceMocks.chatDataService.updateMessageMeta.mockImplementation(
+        async (_id: number, meta: Record<string, unknown>) => ({ ...row, meta })
+      );
+      serviceMocks.nostrEventDataService.getEventById.mockResolvedValue({
+        event: { id: eventId, kind: 15, pubkey: AUTHOR_PUBLIC_KEY, tags: [], content: blobUrl },
+        relay_statuses: [],
+        direction: 'out',
+      });
+      const store = useMessageStore();
+
+      await store.addReaction(CHAT_ID, '11', '🔥');
+      await store.deleteMessage(CHAT_ID, '11');
+
+      expect(serviceMocks.nostrStore.sendDirectMessageReaction).toHaveBeenCalledWith(
+        CHAT_ID,
+        '🔥',
+        eventId,
+        AUTHOR_PUBLIC_KEY,
+        expect.any(Array),
+        expect.objectContaining({ targetKind: 15 })
+      );
+      expect(serviceMocks.nostrStore.sendDirectMessageDeletion).toHaveBeenCalledWith(
+        CHAT_ID,
+        eventId,
+        15,
+        expect.any(Array),
+        expect.anything()
+      );
     });
 
     it('sends encrypted images to the current group epoch key', async () => {

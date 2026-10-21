@@ -90,6 +90,31 @@ describe('NIP-17 kind 15 gift wrapping', () => {
     });
   });
 
+  it('tags reactions and deletions of a file message with k 15', () => {
+    const runtime = createRuntime(new NostrClient(), NostrPrivateKeySigner.generate());
+    const [sender, recipient, target] = ['a'.repeat(64), 'b'.repeat(64), 'e'.repeat(64)];
+
+    const reaction = runtime.createReactionRumorEvent(
+      sender,
+      recipient,
+      '🔥',
+      target,
+      sender,
+      FILE_MESSAGE_KIND,
+      1_780_000_000
+    );
+    const deletion = runtime.createEventDeletionRumorEvent(
+      sender,
+      recipient,
+      target,
+      FILE_MESSAGE_KIND,
+      1_780_000_000
+    );
+
+    expect(reaction.tags).toContainEqual(['k', '15']);
+    expect(deletion.tags).toContainEqual(['k', '15']);
+  });
+
   it('documents that giftWrap rewrites the rumor kind to whatever rumorKind is passed', async () => {
     const ndk = new NostrClient();
     const sender = NostrPrivateKeySigner.generate();
