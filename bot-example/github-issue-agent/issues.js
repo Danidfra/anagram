@@ -7,7 +7,7 @@
 // state:  publishing → published | failed | review
 //   publishing: written before the GitHub request. `sending` becomes true just before it.
 //   review:     the outcome could not be determined; the operator must check GitHub.
-import { HEX } from './runtime.js';
+import { HEX } from './vendor/runtime.js';
 import { CODE, REF } from './ids.js';
 import { validRepo } from './intent.js';
 

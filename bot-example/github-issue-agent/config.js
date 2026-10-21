@@ -1,19 +1,13 @@
 // Reads and validates environment variables. Every mistake stops startup with a clear
 // message; nothing falls back silently to a less safe setting.
 import { nip19 } from 'nostr-tools';
-import { ConfigurationError, HEX } from './runtime.js';
+import { ConfigurationError, HEX } from './vendor/runtime.js';
+import { DEFAULT_RELAYS } from './vendor/bot.js';
 import { DEFAULT_OLLAMA_URL, OllamaError, parseEndpoint } from './ollama.js';
 import { DEFAULT_API_URL, GitHubError, parseApiBase } from './github.js';
-import { roomLink } from './public-groups.js';
+import { roomLink } from './vendor/public-groups.js';
 import { validRepo } from './intent.js';
 
-export const DEFAULT_RELAYS = [
-  'wss://relay.nostr.com',
-  'wss://relay.damus.io',
-  'wss://nostr.mom',
-  'wss://nostr.bitcoiner.social',
-  'wss://nos.lol',
-];
 export const DEFAULT_NAME = 'GitHub Issue Agent (Example Anagram Bot)';
 export const DEFAULT_MODEL = 'llama3.2';
 

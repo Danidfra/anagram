@@ -5,8 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { getPublicKey } from 'nostr-tools';
-import { directMessage } from '../direct-messages.js';
-import { now } from '../runtime.js';
+import { now } from '../vendor/runtime.js';
 import {
   alice,
   at,
@@ -43,7 +42,7 @@ function installedEarlier(store) {
   store.save();
 }
 async function deliver(bot, messages) {
-  for (const message of messages) await directMessage(bot, message, { tags: [] });
+  for (const message of messages) await bot.directMessage(message, { tags: [] });
   await settle(bot);
 }
 

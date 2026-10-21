@@ -1,8 +1,3 @@
-// Anagram private groups (NIP-171, see nips/nip171.md). Ticket and proof handling is the
-// same as the dad-jokes example; this bot additionally only joins allowed groups.
-// Copied from the Ollama Bridge. Changes: every authorized group message is passed on with
-// a `mentioned` flag (bot.js also accepts replies to its own messages), and sendPrivate
-// returns the reply's rumor id.
 import { getEventHash, getPublicKey } from 'nostr-tools';
 import { bytes, HEX, integer, mentions, newer, rumor, single, valid, wrap } from './runtime.js';
 
@@ -36,10 +31,6 @@ export function acceptTicket(bot, message, seal) {
   const incoming = readTicket(message, seal, bot.pubkey);
   if (!incoming) return;
   const group = message.pubkey;
-  // Invitations from groups the operator has not allowed are ignored, not stored: the bot
-  // does not subscribe to or decrypt their traffic. The ticket stays in the relay inbox,
-  // so after allowing the group and restarting, the invitation is read again.
-  if (!bot.access.privateGroup(group)) return bot.ignoredPrivateGroup(group);
   const previous = bot.state.groups[group];
   if (previous && incoming.epoch < previous.epoch) return;
   if (previous?.epoch === incoming.epoch) {
@@ -93,24 +84,13 @@ export async function privateMessage(bot, message, group, receivingEpoch) {
     !epoch ||
     epoch.conflict ||
     epoch.pubkey !== receivingEpoch ||
-    !bot.access.privateGroup(group) ||
     !authorized(message, group, epoch) ||
-    typeof message.content !== 'string' ||
-    message.content.length > 8000
+    !mentions(message.content, bot.pubkey) ||
+    !bot.shouldReply(message)
   )
     return;
-  await bot.handle(message, {
-    type: 'private',
-    conversation: `private:${group}`,
-    mentioned: mentions(message.content, bot.pubkey),
-  });
-}
-
-// Answers may take a while; use the group's epoch at sending time, not at receiving time.
-export function sendPrivate(bot, message, group, text) {
-  const epoch = bot.state.groups[group];
-  if (!epoch || epoch.conflict) return;
   // Epoch keys must never author messages. The bot signs the seal using its own identity.
+  const response = bot.response(message);
   const reply = rumor(
     bot.key,
     [
@@ -119,17 +99,21 @@ export function sendPrivate(bot, message, group, text) {
       ['epoch', String(epoch.epoch)],
       ['invited_at', String(epoch.ticket.created_at)],
       ['invitation_proof', epoch.ticket.sig],
-      ['e', message.id, '', 'reply'],
+      ...(response.quote === false ? [] : [['e', message.id, '', 'reply']]),
+      ...response.tags,
     ],
-    text,
+    response.text,
   );
-  bot.queue(message, [
-    {
-      event: wrap(reply, bot.key, epoch.pubkey),
-      relays: bot.groupRelays.get(group) ?? bot.relays,
-      group,
-      epoch: epoch.epoch,
-    },
-  ]);
-  return reply.id;
+  bot.queue(
+    message,
+    [
+      {
+        event: wrap(reply, bot.key, epoch.pubkey),
+        relays: bot.groupRelays.get(group) ?? bot.relays,
+        group,
+        epoch: epoch.epoch,
+      },
+    ],
+    reply,
+  );
 }

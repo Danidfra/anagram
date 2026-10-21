@@ -6,11 +6,9 @@ import { unwrapEvent } from 'nostr-tools/nip59';
 import { IssueAgent } from '../bot.js';
 import { Access } from '../access.js';
 import { Drafts } from '../drafts.js';
-import { directMessage } from '../direct-messages.js';
-import { acceptTicket, privateMessage } from '../private-groups.js';
-import { acceptRoom, publicMessage } from '../public-groups.js';
+import { acceptRoom } from '../vendor/public-groups.js';
 import { GitHubError } from '../github.js';
-import { now, sign, State } from '../runtime.js';
+import { now, sign, State } from '../vendor/runtime.js';
 
 export const parent = fileURLToPath(new URL('../data/', import.meta.url));
 mkdirSync(parent, { recursive: true });
@@ -192,7 +190,7 @@ export const dm = (sender, content, bot, tags = [], time = undefined) =>
   rumor(sender, [['p', bot.pubkey], ...tags], content, time);
 export async function sendDM(bot, sender, content, tags = [], time = undefined) {
   const message = dm(sender, content, bot, tags, time);
-  await directMessage(bot, message, { tags: [] });
+  await bot.directMessage(message, { tags: [] });
   await settle(bot);
   return message;
 }
@@ -238,7 +236,7 @@ export function privateGroup(bot, { allow = true, owner = generateSecretKey() } 
     bot.access.privateGroups.add(group);
     bot.authorize();
   }
-  acceptTicket(bot, invite.message, invite.seal);
+  bot.privateTicket(invite.message, invite.seal);
   const say = async (sender, content, tags = [], time = undefined) => {
     const senderTicket = ticket(owner, getPublicKey(sender), epochKey, 0);
     const message = rumor(
@@ -254,7 +252,7 @@ export function privateGroup(bot, { allow = true, owner = generateSecretKey() } 
       content,
       time,
     );
-    await privateMessage(bot, message, group, getPublicKey(epochKey));
+    await bot.privateMessage(message, group, getPublicKey(epochKey));
     await settle(bot);
     return message;
   };
@@ -282,7 +280,7 @@ export function publicGroup(
   acceptRoom(bot, event, true);
   const say = async (sender, content, tags = [], time = stamp()) => {
     const message = sign(sender, 9, [['a', address], ...tags], content, time);
-    await publicMessage(bot, message, address);
+    await bot.publicMessage(message, address);
     await settle(bot);
     return message;
   };

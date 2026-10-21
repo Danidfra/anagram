@@ -8,7 +8,7 @@ import { getPublicKey } from 'nostr-tools';
 import { issueBody } from '../drafting.js';
 import { review } from '../review.js';
 import { IssueAgent } from '../bot.js';
-import { State } from '../runtime.js';
+import { State } from '../vendor/runtime.js';
 import {
   alice,
   codeOf,
@@ -123,8 +123,7 @@ test('shutdown during a POST waits for the outcome and delivers the notice after
   await sendDM(first.bot, alice, `issue in ${REPO}: crash on start`);
   const code = codeOf(last(first.bot, alice));
   const { dm } = await import('./helpers.js');
-  const { directMessage } = await import('../direct-messages.js');
-  await directMessage(first.bot, dm(alice, `/confirm ${code}`, first.bot), { tags: [] });
+  await first.bot.directMessage(dm(alice, `/confirm ${code}`, first.bot), { tags: [] });
   await new Promise((r) => setTimeout(r, 20));
   const closing = first.bot.close();
   release();
@@ -139,7 +138,7 @@ test('shutdown during a POST waits for the outcome and delivers the notice after
   assert.match(last(second.bot, alice).content, /Published AG-.* as lnbits\/anagram#1/);
   assert.equal(github.creates.length, 1);
   // Relays resend the old /confirm after the restart; it is not handled again.
-  await directMessage(second.bot, dm(alice, `/confirm ${code}`, second.bot), { tags: [] });
+  await second.bot.directMessage(dm(alice, `/confirm ${code}`, second.bot), { tags: [] });
   await settle(second.bot);
   assert.equal(github.creates.length, 1);
   // Unconfirmed drafts are not persisted, the published record is, and the file is private.

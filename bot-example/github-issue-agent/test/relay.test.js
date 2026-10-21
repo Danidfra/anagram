@@ -10,7 +10,8 @@ import { Access } from '../access.js';
 import { Drafts } from '../drafts.js';
 import { GitHubClient } from '../github.js';
 import { OllamaClient } from '../ollama.js';
-import { Network, now, sign, State, wrap } from '../runtime.js';
+import { Network, now, sign, State, wrap } from '../vendor/runtime.js';
+import { joinPublic } from '../vendor/public-groups.js';
 import { relay, until } from './relay.js';
 import { chat, ollamaServer } from './ollama-server.js';
 import { githubServer } from './github-server.js';
@@ -150,7 +151,7 @@ test(
     await until(() => replies(epochKey).length === 1, 'private group draft');
     assert.match(replies(epochKey)[0].content, /^Draft AG-/);
 
-    // Public group: joined through the Trusted tag, mention, draft.
+    // Public group: joined from its ALLOWED_PUBLIC_GROUPS link (as main() does), mention, draft.
     local.emit(
       sign(owner, 34550, [
         ['d', 'public-room'],
@@ -160,7 +161,14 @@ test(
         ['trusted', bot.pubkey],
       ]),
     );
-    await until(() => store.data.rooms[address], 'public join via trusted tag');
+    const link = nip19.naddrEncode({
+      kind: 34550,
+      pubkey: group,
+      identifier: 'public-room',
+      relays: [local.url],
+    });
+    assert.ok(await joinPublic(bot, link));
+    assert.ok(store.data.rooms[address]);
     const question = sign(
       user,
       9,

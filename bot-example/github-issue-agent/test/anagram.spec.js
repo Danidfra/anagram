@@ -16,7 +16,7 @@ import { Access } from '../access.js';
 import { Drafts } from '../drafts.js';
 import { GitHubClient } from '../github.js';
 import { OllamaClient } from '../ollama.js';
-import { Network, State } from '../runtime.js';
+import { Network, State } from '../vendor/runtime.js';
 import { relay } from './relay.js';
 import { chat, ollamaServer } from './ollama-server.js';
 import { githubServer } from './github-server.js';

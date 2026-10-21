@@ -88,10 +88,9 @@ test('rapid repeated /confirm messages create one issue', async (t) => {
     new Promise((resolve) => (release = () => resolve(github.create(repo, title, body))));
   const { code } = await draft(bot);
   const { dm } = await import('./helpers.js');
-  const { directMessage } = await import('../direct-messages.js');
   // Two distinct messages before GitHub answers.
-  await directMessage(bot, dm(alice, `/confirm ${code}`, bot), { tags: [] });
-  await directMessage(bot, dm(alice, `/confirm ${code.toLowerCase()}`, bot), { tags: [] });
+  await bot.directMessage(dm(alice, `/confirm ${code}`, bot), { tags: [] });
+  await bot.directMessage(dm(alice, `/confirm ${code.toLowerCase()}`, bot), { tags: [] });
   await bot.work;
   await new Promise((r) => setTimeout(r, 10));
   assert.match(last(bot, alice).content, /already being published/);

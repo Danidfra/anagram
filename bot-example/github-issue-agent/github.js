@@ -6,7 +6,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { lookup as dnsLookup } from 'node:dns';
 import { isIP } from 'node:net';
-import { publicIP } from './runtime.js';
+import { publicIP } from './vendor/runtime.js';
 import { validRepo } from './intent.js';
 
 export const DEFAULT_API_URL = 'https://api.github.com';

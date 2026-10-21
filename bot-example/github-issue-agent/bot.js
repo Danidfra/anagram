@@ -3,17 +3,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { getPublicKey, nip19 } from 'nostr-tools';
 import {
-  bytes,
   ConfigurationError,
+  mentions,
   Network,
-  newer,
   now,
+  rumor,
   sign,
+  single,
   State,
   unwrap,
   valid,
-  single,
-} from './runtime.js';
+  wrap,
+} from './vendor/runtime.js';
+import { BotTransport } from './vendor/bot.js';
+import { acceptTicket, authorized, readTicket } from './vendor/private-groups.js';
+import { acceptRoom, joinPublic, parseRoom } from './vendor/public-groups.js';
 import { Access } from './access.js';
 import { loadConfig } from './config.js';
 import { Drafts } from './drafts.js';
@@ -57,9 +61,6 @@ import {
 } from './messages.js';
 import { definitelyNotCreated, GitHubClient, keywords } from './github.js';
 import { OllamaClient } from './ollama.js';
-import { directMessage, sendDirect } from './direct-messages.js';
-import { acceptTicket, privateMessage, readTicket, sendPrivate } from './private-groups.js';
-import { acceptRoom, joinPublic, parseRoom, publicMessage, sendPublic } from './public-groups.js';
 
 const DAY = 86400;
 const HOUR = 3600;
@@ -67,15 +68,15 @@ const QUESTION_SECONDS = HOUR;
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
 // How a message moves through the bot:
-//   relay event -> receive()/submit() -> protocol handler (direct-messages.js,
-//   private-groups.js, public-groups.js) checks the Nostr rules -> handle() checks
-//   addressing, sender, limits -> command() or natural() -> model jobs (draftJob/editJob)
-//   or the publication job (publish) -> reply() signs the answer into the durable outbox
-//   -> flush() publishes it to relays.
+//   relay event -> receive() -> directMessage()/privateMessage()/publicMessage() check the
+//   Nostr rules and the allowed groups -> handle() checks addressing, sender, limits ->
+//   command() or natural() -> model jobs (draftJob/editJob) or the publication job
+//   (publish) -> reply() signs the answer into the durable outbox -> flush() publishes it.
 //
-// Two serial queues keep slow work off the message chain: `models` (Ollama) and
-// `publisher` (GitHub issue creation and reconciliation).
-export class IssueAgent {
+// Relay subscriptions, the outbox and group tickets come from vendor/bot.js (the poll
+// example's transport). Two serial queues keep slow work off the message chain: `models`
+// (Ollama) and `publisher` (GitHub issue creation and reconciliation).
+export class IssueAgent extends BotTransport {
   constructor({
     store,
     net,
@@ -91,13 +92,8 @@ export class IssueAgent {
       throw error;
     },
   }) {
-    this.name = name;
-    this.store = store;
-    this.state = store.data;
-    this.key = store.key;
-    this.pubkey = getPublicKey(this.key);
-    this.net = net;
-    this.relays = net.configured;
+    // No reply cooldown: the per-user hourly limits below apply instead.
+    super({ store, net, name, log, onFatal, cooldown: 0 });
     this.ollama = ollama;
     this.github = github;
     this.access = access;
@@ -113,15 +109,6 @@ export class IssueAgent {
       ...limits,
     };
     this.reconcileDelays = reconcileDelays;
-    this.log = log;
-    this.onFatal = onFatal;
-    this.groupRelays = new Map();
-    this.inboxes = new Map();
-    this.watches = new Map();
-    this.pending = new Set();
-    this.work = Promise.resolve();
-    this.stopped = false;
-    this.started = false;
     const jobError = () => this.log('Internal error in a background job.');
     this.models = new Queue(this.limits.maxQueue, jobError);
     this.publisher = new Queue(1000, jobError);
@@ -137,46 +124,14 @@ export class IssueAgent {
     this.modelCalls = new Map();
     this.notices = new Map();
     this.logged = new Map();
-    // Corrupt persisted protocol state must not silently grant access or rotate identity.
-    for (const [group, epoch] of Object.entries(this.state.groups)) {
-      const { sig, ...message } = epoch.ticket ?? {};
-      const parsed = readTicket(message, { tags: [['invitation_proof', sig]] }, this.pubkey);
-      if (
-        !parsed ||
-        message.pubkey !== group ||
-        parsed.pubkey !== epoch.pubkey ||
-        parsed.epoch !== epoch.epoch
-      )
-        throw new Error('Invalid saved private group ticket. Restore state.json from backup.');
-    }
-    for (const [address, room] of Object.entries(this.state.rooms)) {
-      if (parseRoom(room.event)?.address !== address)
-        throw new Error('Invalid saved public group profile.');
-    }
     this.authorize();
-  }
-  save() {
-    this.store.save();
   }
 
   // ---- Receiving -------------------------------------------------------------------------
 
-  // Protocol-level filter shared by every chat type: replay, age, edits, own/epoch authors.
+  // The transport's replay, age, edit and epoch-author checks, for text messages only.
   shouldReply(message) {
-    if (
-      message.pubkey === this.pubkey ||
-      ![9, 14].includes(message.kind) ||
-      typeof message.content !== 'string' ||
-      message.created_at < Math.max(this.state.startedAt, now() - DAY) ||
-      message.created_at > now() + 60 ||
-      this.state.seen[message.id] ||
-      this.state.outbox.length >= 1000 ||
-      message.tags.some((t) => t[0] === 'e' && t[3] === 'edit')
-    )
-      return false;
-    // Never answer with an epoch key as an author, even in another conversation.
-    if (Object.values(this.state.groups).some((g) => g.pubkey === message.pubkey)) return false;
-    return true;
+    return typeof message.content === 'string' && super.shouldReply(message);
   }
 
   // Called by the protocol handlers for every valid chat message.
@@ -602,7 +557,8 @@ export class IssueAgent {
     }
     if (this.stopped) return;
     // Applied on the message chain, so no /confirm can slip between the check and the change.
-    const queued = this.submit(`edit:${request.message.id}`, async () => {
+    const id = `edit:${request.message.id}`;
+    this.submit(id, async () => {
       draft.editing = false;
       if (failure)
         return this.reply(
@@ -622,7 +578,8 @@ export class IssueAgent {
         { kind: 'draft', code: draft.code },
       );
     });
-    if (!queued) draft.editing = false; // Never leave a draft locked if the result is dropped.
+    // submit() drops work while stopping or overloaded; never leave the draft locked.
+    if (!this.pending.has(id)) draft.editing = false;
   }
 
   freshCode() {
@@ -889,16 +846,58 @@ export class IssueAgent {
     return id;
   }
 
-  // Signs the reply into the outbox for one conversation. Returns the reply's id.
+  // Signs the reply into the outbox for one conversation. Returns the reply's id, which the
+  // person's client references when replying to it.
   async deliverTo(conversation, message, text) {
     const split = conversation.indexOf(':');
     const type = conversation.slice(0, split);
     const target = conversation.slice(split + 1);
-    if (type === 'dm') return sendDirect(this, { ...message, pubkey: target }, text);
-    if (type === 'private' && this.access.privateGroup(target))
-      return sendPrivate(this, message, target, text);
-    if (type === 'public' && this.access.publicGroup(target))
-      return sendPublic(this, message, target, text);
+    if (type === 'dm') {
+      // NIP-17, wrapped for the person and for the bot itself (its other clients).
+      const relays = await this.inbox(target);
+      const reply = rumor(this.key, [['p', target], ['e', message.id, '', 'reply']], text);
+      this.queue(message, [
+        { event: wrap(reply, this.key, target), relays },
+        { event: wrap(reply, this.key, this.pubkey), relays: this.relays },
+      ]);
+      return reply.id;
+    }
+    if (type === 'private' && this.access.privateGroup(target)) {
+      // The group's epoch at sending time: answers may take a while. Epoch keys never
+      // author messages; the bot signs the seal with its own identity.
+      const epoch = this.state.groups[target];
+      if (!epoch || epoch.conflict) return undefined;
+      const reply = rumor(
+        this.key,
+        [
+          ['p', epoch.pubkey],
+          ['h', target],
+          ['epoch', String(epoch.epoch)],
+          ['invited_at', String(epoch.ticket.created_at)],
+          ['invitation_proof', epoch.ticket.sig],
+          ['e', message.id, '', 'reply'],
+        ],
+        text,
+      );
+      this.queue(message, [
+        {
+          event: wrap(reply, this.key, epoch.pubkey),
+          relays: this.groupRelays.get(target) ?? this.relays,
+          group: target,
+          epoch: epoch.epoch,
+        },
+      ]);
+      return reply.id;
+    }
+    if (type === 'public' && this.access.publicGroup(target)) {
+      // NIP-C7: kind:9 in the room (`a`) quoting the request (`q`). Public for everyone.
+      const saved = this.state.rooms[target];
+      const room = saved && parseRoom(saved.event);
+      if (!room) return undefined;
+      const reply = sign(this.key, 9, [['a', target], ['q', message.id, '', message.pubkey]], text);
+      this.queue(message, [{ event: reply, relays: room.relays, room: target }]);
+      return reply.id;
+    }
     return undefined;
   }
 
@@ -955,13 +954,6 @@ export class IssueAgent {
     this.state.seen[message.id] = now();
     this.save();
   }
-  queue(message, deliveries) {
-    // Persist the exact signed reply before publishing. A crash/retry republishes
-    // identical event IDs instead of asking the model a second time.
-    this.state.seen[message.id] = now();
-    this.state.outbox.push(...deliveries.map((delivery) => ({ ...delivery, queuedAt: now() })));
-    this.save();
-  }
 
   // Logs show who to allow, never what they wrote. One line per key per hour.
   note(key, line) {
@@ -980,99 +972,91 @@ export class IssueAgent {
       `Ignored a private group invitation from ${nip19.npubEncode(group)}: not in ALLOWED_PRIVATE_GROUPS.`,
     );
   }
-  ignoredPublicGroup(room) {
-    const naddr = nip19.naddrEncode({
-      kind: 34550,
-      pubkey: room.event.pubkey,
-      identifier: single(room.event, 'd'),
-      relays: room.relays.slice(0, 3),
-    });
-    this.note(room.address, `Ignored public group ${naddr}: not in ALLOWED_PUBLIC_GROUPS.`);
-  }
 
-  // ---- Nostr plumbing (same as the Ollama Bridge) ------------------------------------------
+  // ---- Nostr -----------------------------------------------------------------------------
+  // vendor/bot.js answers synchronously from its own handlers. This bot answers later (after
+  // the model or GitHub) and only in allowed groups, so it receives chat messages itself.
 
-  // Returns false if the action was not queued.
-  submit(id, action) {
-    if (this.stopped || this.pending.has(id) || this.pending.size >= 2000) return false;
-    this.pending.add(id);
-    this.work = this.work
-      .then(async () => {
-        if (!this.stopped) await action();
-      })
-      .catch((error) => {
-        this.stopped = true;
-        this.onFatal(error);
-      })
-      .finally(() => this.pending.delete(id));
-    return true;
-  }
   receive(event, key, group) {
     this.submit(event.id, async () => {
       const opened = unwrap(event, key);
       if (!opened) return;
-      if (group) await privateMessage(this, opened.message, group, getPublicKey(key));
-      else await directMessage(this, opened.message, opened.seal);
+      if (group) await this.privateMessage(opened.message, group, getPublicKey(key));
+      else await this.directMessage(opened.message, opened.seal);
     });
   }
+  async directMessage(message, seal) {
+    if (message.kind === 1014) return this.privateTicket(message, seal);
+    if (
+      message.kind !== 14 ||
+      single(message, 'p') !== this.pubkey ||
+      message.tags.some((t) => ['h', 'epoch', 'member'].includes(t[0]))
+    )
+      return;
+    // One conversation per sender: nobody else's drafts or issues are ever visible here.
+    await this.handle(message, {
+      type: 'dm',
+      conversation: `dm:${message.pubkey}`,
+      mentioned: true,
+    });
+  }
+  // Invitations from groups the operator has not allowed are ignored, not stored: the bot
+  // does not subscribe to or decrypt their traffic. The ticket stays in the relay inbox,
+  // so after allowing the group and restarting, the invitation is read again.
   privateTicket(message, seal) {
+    if (!readTicket(message, seal, this.pubkey)) return;
+    if (!this.access.privateGroup(message.pubkey)) return this.ignoredPrivateGroup(message.pubkey);
     acceptTicket(this, message, seal);
   }
-  async inbox(pubkey) {
-    const cached = this.inboxes.get(pubkey);
-    if (cached && cached.at > now() - 300) return cached.relays;
-    let latest;
-    try {
-      for (const event of await this.net.query(this.relays, {
-        kinds: [10050],
-        authors: [pubkey],
-        limit: 10,
-      })) {
-        if (event.kind === 10050 && event.pubkey === pubkey && valid(event) && newer(event, latest))
-          latest = event;
-      }
-    } catch {
-      /* Configured relays remain usable when discovery fails. */
-    }
-    const hints = latest?.tags.filter((t) => t[0] === 'relay').map((t) => t[1]) ?? [];
-    const relays = this.net.routes(hints);
-    if (this.inboxes.size >= 1000) this.inboxes.delete(this.inboxes.keys().next().value);
-    this.inboxes.set(pubkey, { at: now(), relays });
-    return relays;
-  }
-  setWatch(name, relays, filter, handler, key = this.key) {
-    if (!this.started || this.stopped) return;
-    this.watches.get(name)?.();
-    this.watches.set(name, this.net.watch(relays, filter, handler, key));
-  }
-  refreshPrivate(group) {
-    this.watches.get(`private:${group}`)?.();
+  async privateMessage(message, group, receivingEpoch) {
     const epoch = this.state.groups[group];
-    if (!epoch || epoch.conflict || !this.access.privateGroup(group)) return;
-    if (!this.started || this.stopped) return;
-    const key = bytes(epoch.ticket.content);
-    const watch = (relays) =>
-      this.setWatch(
-        `private:${group}`,
-        relays,
-        () => ({
-          kinds: [1059],
-          '#p': [epoch.pubkey],
-          since: Math.max(this.state.startedAt, now() - DAY) - 2 * DAY - 60,
-          limit: 1000,
-        }),
-        (event) => this.receive(event, key, group),
-        key,
-      );
-    watch(this.groupRelays.get(group) ?? this.relays);
-    void this.inbox(group)
-      .then((relays) => {
-        if (this.stopped || this.state.groups[group] !== epoch) return;
-        this.groupRelays.set(group, relays);
-        watch(relays);
-      })
-      .catch(() => this.log('Group relay discovery failed; using configured relays.'));
+    if (
+      !epoch ||
+      epoch.conflict ||
+      epoch.pubkey !== receivingEpoch ||
+      !this.access.privateGroup(group) ||
+      !authorized(message, group, epoch) ||
+      typeof message.content !== 'string' ||
+      message.content.length > 8000
+    )
+      return;
+    await this.handle(message, {
+      type: 'private',
+      conversation: `private:${group}`,
+      mentioned: mentions(message.content, this.pubkey),
+    });
   }
+  async publicMessage(event, address) {
+    const saved = this.state.rooms[address];
+    const room = saved && parseRoom(saved.event);
+    if (
+      !room ||
+      !this.access.publicGroup(address) ||
+      room.blocked.includes(this.pubkey) ||
+      room.blocked.includes(event.pubkey) ||
+      (!saved.explicit && !room.trusted.includes(this.pubkey)) ||
+      event.kind !== 9 ||
+      !valid(event) ||
+      single(event, 'a') !== address ||
+      typeof event.content !== 'string' ||
+      !event.content ||
+      event.content.length > 8000
+    )
+      return;
+    await this.handle(event, {
+      type: 'public',
+      conversation: `public:${address}`,
+      mentioned:
+        mentions(event.content, this.pubkey) ||
+        event.tags.some((t) => t[0] === 'p' && t[1] === this.pubkey),
+    });
+  }
+  // Groups removed from the configuration keep their saved ticket but are not followed.
+  refreshPrivate(group) {
+    if (this.access.privateGroup(group)) return super.refreshPrivate(group);
+    this.watches.get(`private:${group}`)?.();
+  }
+  // As in vendor/bot.js, for allowed rooms only and with this bot's message handler.
   refreshPublic(address) {
     const room = parseRoom(this.state.rooms[address].event);
     if (!room || !this.access.publicGroup(address)) return;
@@ -1093,94 +1077,20 @@ export class IssueAgent {
         since: Math.max(this.state.startedAt, now() - DAY),
         limit: 1000,
       }),
-      (event) => this.submit(event.id, () => publicMessage(this, event, address)),
+      (event) => this.submit(event.id, () => this.publicMessage(event, address)),
     );
+  }
+  // Rooms come only from ALLOWED_PUBLIC_GROUPS, looked up at startup (main), so the
+  // transport's discovery of every room that trusts the bot is not used.
+  setWatch(name, ...args) {
+    if (name !== 'discovery') super.setWatch(name, ...args);
   }
   async start() {
-    this.started = true;
-    this.log(`${this.name}: ${nip19.npubEncode(this.pubkey)}`);
-    this.setWatch(
-      'inbox',
-      this.relays,
-      () => ({ kinds: [1059], '#p': [this.pubkey], limit: 1000 }),
-      (event) => this.receive(event, this.key),
-    );
-    // Rooms where an owner marked the bot Trusted. acceptRoom() still requires the room
-    // to be in ALLOWED_PUBLIC_GROUPS; this only notices rooms outside the startup lookup.
-    this.setWatch(
-      'discovery',
-      this.relays,
-      () => ({ kinds: [34550], limit: 500 }),
-      (event) => this.submit(event.id, () => acceptRoom(this, event)),
-    );
-    for (const group of Object.keys(this.state.groups)) this.refreshPrivate(group);
-    for (const room of Object.keys(this.state.rooms)) this.refreshPublic(room);
-    this.timer = setInterval(() => {
-      void this.flush().catch(this.onFatal);
-    }, 2000);
-    this.discoveryTimer = setInterval(() => {
-      for (const group of Object.keys(this.state.groups)) this.refreshPrivate(group);
-    }, 5 * 60000);
+    await super.start();
     this.recover();
-    await this.flush();
-  }
-  async flush() {
-    if (this.flushing || this.stopped) return;
-    this.flushing = true;
-    try {
-      for (const item of this.state.outbox
-        .filter((item) => !item.retryAt || item.retryAt <= now())
-        .slice(0, 20)) {
-        if (this.stopped) break;
-        const epoch = item.group && this.state.groups[item.group];
-        const room = item.room && this.state.rooms[item.room];
-        const policy = room && parseRoom(room.event);
-        const obsolete =
-          item.queuedAt < now() - DAY ||
-          (item.group && (!epoch || epoch.conflict || epoch.epoch !== item.epoch)) ||
-          (item.room &&
-            (!policy ||
-              policy.blocked.includes(this.pubkey) ||
-              (!room.explicit && !policy.trusted.includes(this.pubkey))));
-        if (!obsolete) {
-          try {
-            await this.net.publish(
-              item.event,
-              policy?.relays ?? (item.group && this.groupRelays.get(item.group)) ?? item.relays,
-              epoch ? bytes(epoch.ticket.content) : this.key,
-            );
-          } catch {
-            item.attempts = (item.attempts ?? 0) + 1;
-            item.retryAt = now() + Math.min(300, 2 ** Math.min(item.attempts, 9));
-            this.save();
-            continue;
-          } // One ACK is enough. With zero ACKs the durable outbox retries.
-        }
-        this.state.outbox = this.state.outbox.filter((pending) => pending !== item);
-        this.save();
-      }
-      // Incoming age checks use a 24h window; keep dedupe IDs longer than that window.
-      let changed = false;
-      for (const [id, time] of Object.entries(this.state.seen)) {
-        if (time < now() - 2 * DAY) {
-          delete this.state.seen[id];
-          changed = true;
-        }
-      }
-      if (changed) this.save();
-      const queued = this.state.outbox.length;
-      if (queued && now() - (this.lastWarning ?? 0) > 60) {
-        this.log(`${queued} deliveries pending; relays will be retried.`);
-        this.lastWarning = now();
-      }
-    } finally {
-      this.flushing = false;
-    }
   }
   async close() {
     this.stopped = true;
-    clearInterval(this.timer);
-    clearInterval(this.discoveryTimer);
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
     // Cancel the model request in progress and forget waiting jobs (drafts are in memory
@@ -1188,12 +1098,9 @@ export class IssueAgent {
     this.abort.abort();
     await this.models.stop();
     await this.publisher.stop();
-    this.net.close();
     await this.work;
     await Promise.all(this.replying);
-    // A publish finishing during shutdown still writes its result before releasing the lock.
-    while (this.flushing) await new Promise((r) => setTimeout(r, 10));
-    this.store.close();
+    await super.close();
   }
 }
 

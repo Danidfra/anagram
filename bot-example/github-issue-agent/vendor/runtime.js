@@ -1,4 +1,4 @@
-// Shared Nostr plumbing, copied unchanged from the dad-jokes example so this bot stays standalone.
+// Shared plumbing. The three chat handlers contain the actual bot behavior.
 import {
   chmodSync,
   closeSync,

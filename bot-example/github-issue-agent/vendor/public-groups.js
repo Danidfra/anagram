@@ -1,8 +1,3 @@
-// Anagram public groups: NIP-72 kind:34550 profiles and NIP-C7 kind:9 messages.
-// Room parsing is the same as the dad-jokes example; this bot only joins allowed rooms.
-// Copied from the Ollama Bridge. Changes: every valid room message is passed on with a
-// `mentioned` flag (bot.js also accepts replies to its own messages), and sendPublic
-// returns the reply's event id.
 import { nip19 } from 'nostr-tools';
 import { HEX, mentions, newer, relayURLs, sign, single, valid } from './runtime.js';
 
@@ -54,14 +49,11 @@ export function parseRoom(event) {
   };
 }
 
-// explicit: the room is listed in ALLOWED_PUBLIC_GROUPS and was looked up at startup, so it
-// is served even if the owner has not marked the bot as Trusted (unless it is blocked).
 export function acceptRoom(bot, event, explicit = false) {
   const room = parseRoom(event);
   if (!room) return;
   const old = bot.state.rooms[room.address];
   if (!old && !explicit && !room.trusted.includes(bot.pubkey)) return;
-  if (!bot.access.publicGroup(room.address)) return bot.ignoredPublicGroup(room);
   if (old && !newer(event, old.event)) {
     if (explicit && !old.explicit) {
       old.explicit = true;
@@ -102,12 +94,11 @@ export async function joinPublic(bot, link) {
   return true;
 }
 
-export async function publicMessage(bot, event, address) {
+export function publicMessage(bot, event, address) {
   const saved = bot.state.rooms[address];
   const room = saved && parseRoom(saved.event);
   if (
     !room ||
-    !bot.access.publicGroup(address) ||
     room.blocked.includes(bot.pubkey) ||
     room.blocked.includes(event.pubkey) ||
     (!saved.explicit && !room.trusted.includes(bot.pubkey)) ||
@@ -115,32 +106,24 @@ export async function publicMessage(bot, event, address) {
     !valid(event) ||
     single(event, 'a') !== address ||
     !event.content ||
-    event.content.length > 8000
+    event.content.length > 8000 ||
+    !(
+      mentions(event.content, bot.pubkey) ||
+      event.tags.some((t) => t[0] === 'p' && t[1] === bot.pubkey)
+    ) ||
+    !bot.shouldReply(event)
   )
     return;
-  await bot.handle(event, {
-    type: 'public',
-    conversation: `public:${address}`,
-    mentioned:
-      mentions(event.content, bot.pubkey) ||
-      event.tags.some((t) => t[0] === 'p' && t[1] === bot.pubkey),
-  });
-}
-
-// NIP-C7 reply: kind:9 in the room (`a`) quoting the question (`q`). Public for everyone.
-export function sendPublic(bot, event, address, text) {
-  const saved = bot.state.rooms[address];
-  const room = saved && parseRoom(saved.event);
-  if (!room) return;
+  const response = bot.response(event);
   const reply = sign(
     bot.key,
     9,
     [
       ['a', address],
-      ['q', event.id, '', event.pubkey],
+      ...(response.quote === false ? [] : [['q', event.id, '', event.pubkey]]),
+      ...response.tags,
     ],
-    text,
+    response.text,
   );
-  bot.queue(event, [{ event: reply, relays: room.relays, room: address }]);
-  return reply.id;
+  bot.queue(event, [{ event: reply, relays: room.relays, room: address }], reply);
 }

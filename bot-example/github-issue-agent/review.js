@@ -8,7 +8,7 @@
 // After a decision, the bot tells the requester at its next start.
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { State } from './runtime.js';
+import { State } from './vendor/runtime.js';
 import { Issues } from './issues.js';
 import { normalizeRef } from './ids.js';
 

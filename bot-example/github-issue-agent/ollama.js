@@ -1,7 +1,7 @@
 // A small client for Ollama's documented HTTP API (https://docs.ollama.com/api).
 // It only sends chat text to one configured server: no tools, no streaming, no redirects,
-// and every request is bounded in time and size. Copied from the Ollama Bridge example;
-// the only change is the optional `format` (a JSON schema for structured output).
+// and every request is bounded in time and size. `format` (a JSON schema) requests
+// structured output.
 import http from 'node:http';
 import https from 'node:https';
 import { lookup as dnsLookup } from 'node:dns';
