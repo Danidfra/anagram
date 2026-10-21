@@ -416,6 +416,19 @@ test('a full queue answers "busy" instead of growing without bound', async (t) =
   assert.equal(ollama.calls.length, 2);
 });
 
+test('a generated answer is queued even when the work queue is full of relay events', async (t) => {
+  const { bot, ollama } = setup(t);
+  const wait = gate();
+  ollama.answer = () => wait.promise;
+  await sendDM(bot, alice, 'slow question');
+  for (let i = 0; i < 2000; i++) bot.pending.add(`flood:${i}`);
+  wait.release('late answer');
+  await bot.generating;
+  for (let i = 0; i < 2000; i++) bot.pending.delete(`flood:${i}`);
+  await settle(bot);
+  assert.equal(dmReplies(bot, alice)[0].content, 'late answer');
+});
+
 test('bot-to-bot loops: own, epoch-key, edited and replayed messages are ignored; output cannot mention', async (t) => {
   const owner = generateSecretKey();
   const { bot, ollama } = setup(t, { access: { privateGroups: [getPublicKey(owner)] } });
@@ -647,6 +660,29 @@ test('public group: a newly allowed member or room does not answer earlier menti
   await publicMessage(second.bot, fresh, later);
   await settle(second.bot);
   assert.equal(second.ollama.calls.length, 1);
+});
+
+test('pending replies are not sent to groups removed from the allow lists', async (t) => {
+  const owner = generateSecretKey();
+  const address = `34550:${getPublicKey(owner)}:ai-room`;
+  const first = setup(t, {
+    access: { privateGroups: [getPublicKey(owner)], publicGroups: [address] },
+  });
+  const g = privateGroup(first.bot, owner);
+  await g.say(alice, `${at(first.bot)} private question`);
+  acceptRoom(first.bot, room(owner, first.bot));
+  await publicMessage(
+    first.bot,
+    sign(alice, 9, [['a', address]], `${at(first.bot)} public`),
+    address,
+  );
+  await settle(first.bot);
+  assert.equal(first.bot.state.outbox.filter((i) => i.group || i.room).length, 2);
+
+  const second = await restart(t, first, {});
+  await second.bot.flush();
+  assert.deepEqual(second.sent, []);
+  assert.equal(second.bot.state.outbox.length, 0);
 });
 
 test('revoking access removes the grant, so allowing again starts a new window', async (t) => {

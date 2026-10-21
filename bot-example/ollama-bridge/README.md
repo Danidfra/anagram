@@ -192,13 +192,13 @@ Back up `state.json` while the bot is stopped: it contains the bot's **nsec** an
 
 ## Make it your own
 
-- **ollama.js** — the Ollama HTTP client (endpoint checks, timeouts, limits). It knows nothing about Nostr, so other bots can reuse it.
+- **ollama.js** — the Ollama HTTP client (endpoint checks, timeouts, limits). It knows nothing about Nostr.
 - **conversations.js** — bounded per-conversation memory and prompt building.
 - **commands.js** — commands, mention handling, answer formatting, user-facing errors.
 - **access.js / config.js** — allowlists and environment validation.
 - **bot.js** — access, limits and the generation queue in `handle()` and `generate()`; startup, outbox and relays.
 - **direct-messages.js / private-groups.js / public-groups.js** — Nostr protocol handling (NIP-17, NIP-171, NIP-C7), the same as the dad-jokes example plus allowlist checks.
-- **runtime.js** — identity, state file, encryption and relay connections, copied unchanged from dad-jokes.
+- **runtime.js** — identity, state file, encryption and relay connections, copied from dad-jokes. The state file also stores when each allowlist entry was granted (`grants`).
 
 ## Checks
 

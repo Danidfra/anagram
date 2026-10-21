@@ -278,7 +278,9 @@ export class OllamaBridge {
     } finally {
       this.busy.delete(context.conversation);
     }
-    this.submit(`reply:${message.id}`, () => context.deliver(text));
+    // Replies skip the relay-flood cap: they are already bounded by MAX_QUEUE, and the
+    // question is marked as handled, so dropping the answer here would lose it.
+    this.submit(`reply:${message.id}`, () => context.deliver(text), false);
   }
 
   markSeen(message) {
@@ -326,8 +328,8 @@ export class OllamaBridge {
     this.note(room.address, `Ignored public group ${naddr}: not in ALLOWED_PUBLIC_GROUPS.`);
   }
 
-  submit(id, action) {
-    if (this.stopped || this.pending.has(id) || this.pending.size >= 2000) return;
+  submit(id, action, bounded = true) {
+    if (this.stopped || this.pending.has(id) || (bounded && this.pending.size >= 2000)) return;
     this.pending.add(id);
     this.work = this.work
       .then(async () => {
@@ -468,9 +470,14 @@ export class OllamaBridge {
         const policy = room && parseRoom(room.event);
         const obsolete =
           item.queuedAt < now() - DAY ||
-          (item.group && (!epoch || epoch.conflict || epoch.epoch !== item.epoch)) ||
+          (item.group &&
+            (!epoch ||
+              epoch.conflict ||
+              epoch.epoch !== item.epoch ||
+              !this.access.privateGroup(item.group))) ||
           (item.room &&
             (!policy ||
+              !this.access.publicGroup(item.room) ||
               policy.blocked.includes(this.pubkey) ||
               (!room.explicit && !policy.trusted.includes(this.pubkey))));
         if (!obsolete) {

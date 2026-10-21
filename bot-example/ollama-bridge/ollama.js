@@ -1,7 +1,6 @@
 // A small client for Ollama's documented HTTP API (https://docs.ollama.com/api).
 // It only sends chat text to one configured server: no tools, no streaming, no redirects,
-// and every request is bounded in time and size. It has no Nostr knowledge, so other
-// bots (for example a future GitHub issue agent) can reuse it unchanged.
+// and every request is bounded in time and size. It has no Nostr knowledge.
 import http from 'node:http';
 import https from 'node:https';
 import { lookup as dnsLookup } from 'node:dns';
