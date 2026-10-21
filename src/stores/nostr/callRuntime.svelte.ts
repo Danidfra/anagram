@@ -1226,9 +1226,10 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     // A link that is down still switches, so reconnecting never resends the old input.
     if (!ctx?.stream || ctx.changingMedia || typeof deviceId !== 'string' || deviceId.length > 512)
       return;
-    if (!ctx.splitMedia || !deps.getMicrophone) {
-      // Media support is unknown until the peer confirms the call.
-      if (ctx.peerConfirmed) deviceError = 'call.error.peerUpgrade';
+    // Before the peer confirms nothing records yet, so the input can be replaced outright.
+    const legacy = () => ctx.peerConfirmed && !ctx.splitMedia;
+    if (legacy() || !deps.getMicrophone) {
+      deviceError = 'call.error.peerUpgrade';
       return;
     }
     ctx.changingMedia = changingMedia = true;
@@ -1237,7 +1238,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     let replacement: MediaStream | undefined;
     try {
       replacement = await deps.getMicrophone(deviceId);
-      if (!alive(ctx) || ctx.linkRevision !== revision) {
+      if (!alive(ctx) || ctx.linkRevision !== revision || legacy()) {
         replacement.getTracks().forEach((track) => {
           track.stop();
         });

@@ -1,4 +1,4 @@
-import { cloneCallTrack } from '#src/services/callSharedCapture.ts';
+import { callCaptureTrack, cloneCallTrack } from '#src/services/callSharedCapture.ts';
 import { roomVideoProfile } from '#src/services/callVideoProfile.ts';
 import { toStore } from 'svelte/store';
 import { untrack } from 'svelte';
@@ -588,11 +588,25 @@ export function createCallRoomRuntime(deps: Deps) {
     });
   }
   // Idempotent: align one peer link with the room's microphone and camera controls.
+  // A busy link skips changes, so re-check after each awaited one; whoever made the
+  // link busy syncs it again when done.
   async function syncPeerMedia(runtime: PeerRuntime) {
-    const media = runtime.session;
-    if (!media) return;
-    if (media.microphoneMuted !== microphoneMuted) runtime.toggleMicrophone();
-    if (media.cameraMuted !== cameraMuted) await runtime.toggleCamera();
+    const stale = (kind: 'audio' | 'video') =>
+      runtime.localStream
+        ?.getTracks()
+        .some(
+          (track) =>
+            track.kind === kind && !localStream?.getTracks().includes(callCaptureTrack(track)),
+        );
+    for (let pass = 0; pass < 3; pass++) {
+      const media = runtime.session;
+      if (!media || !localStream) return;
+      if (media.microphoneMuted !== microphoneMuted) runtime.toggleMicrophone();
+      if (stale('audio')) await runtime.selectMicrophone(microphoneDeviceId);
+      else if (media.cameraMuted !== cameraMuted) await runtime.toggleCamera();
+      else if (!cameraMuted && stale('video')) await runtime.selectCamera(cameraDeviceId);
+      else return;
+    }
   }
   async function selectCamera(deviceId: string) {
     if (!busy || !localStream || changingMedia) return;
@@ -657,6 +671,7 @@ export function createCallRoomRuntime(deps: Deps) {
                   : undefined,
         ),
       );
+      await Promise.all(peers.map(({ runtime }) => syncPeerMedia(runtime)));
     } catch (cause) {
       camera?.getTracks().forEach((track) => {
         if (!localStream?.getTracks().includes(track)) track.stop();
@@ -692,6 +707,7 @@ export function createCallRoomRuntime(deps: Deps) {
         track.onended = null;
         track.stop();
       });
+      await Promise.all(peers.map(({ runtime }) => syncPeerMedia(runtime)));
     } catch (cause) {
       if (current(s)) error = callCaptureErrorKey(cause);
     } finally {
