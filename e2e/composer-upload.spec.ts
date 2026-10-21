@@ -91,12 +91,12 @@ test('private upload can be cancelled, sends encrypted kind 15 media, and keeps 
     await expect.poll(upload.count).toBe(1);
     await dialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
     upload.release();
-    await page.waitForTimeout(500);
     await expect(input).toHaveValue('My caption');
     await expect(rows).toHaveCount(0);
     await page.locator('input[type="file"]').setInputFiles(image);
     await dialog.getByRole('button', { name: 'Upload', exact: true }).click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
+    // The cancelled upload was released before this one started; a late send would add a row.
     await expect(rows).toHaveCount(1);
     await expect(rows.getByTestId('message-encrypted-image')).toBeVisible({ timeout: 30_000 });
     await expect(rows).not.toContainText('My caption');

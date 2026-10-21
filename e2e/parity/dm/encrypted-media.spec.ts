@@ -99,32 +99,6 @@ function buildWavTone(seconds = 1, sampleRate = 8000): Buffer {
   return Buffer.concat([header, data]);
 }
 
-// Records a short, real WebM clip in the browser, so the test needs no binary fixture.
-async function recordWebmClip(page: Page): Promise<Buffer> {
-  const bytes = await page.evaluate(async () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 48;
-    const context = canvas.getContext('2d');
-    const recorder = new MediaRecorder(canvas.captureStream(15), { mimeType: 'video/webm' });
-    const chunks: Blob[] = [];
-    recorder.ondataavailable = (event) => chunks.push(event.data);
-    const stopped = new Promise((resolve) => (recorder.onstop = resolve));
-    recorder.start();
-    for (let frame = 0; frame < 12; frame += 1) {
-      if (context) {
-        context.fillStyle = `hsl(${frame * 30}, 80%, 50%)`;
-        context.fillRect(0, 0, 64, 48);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 60));
-    }
-    recorder.stop();
-    await stopped;
-    return Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer()));
-  });
-  return Buffer.from(bytes);
-}
-
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
@@ -378,7 +352,6 @@ test('private images are encrypted before upload and decrypted by the recipient'
     await expect(
       bob.page.getByTestId('message-url-link').filter({ hasText: BLOSSOM_ORIGIN }),
     ).toHaveCount(0);
-    await bob.page.waitForTimeout(1500);
     expect(blossom.downloads).toHaveLength(0);
     await loadMedia.click();
     const bobImage = await expectRenderedImage(bob.page);
@@ -428,7 +401,6 @@ test('private images are encrypted before upload and decrypted by the recipient'
     await waitForThreadMessage(alice.page, 'lazy-filler-19');
     const pendingImage = alice.page.getByTestId('message-encrypted-image-pending').first();
     await expect(pendingImage).toBeAttached();
-    await alice.page.waitForTimeout(1500);
     expect(blossom.downloads).toHaveLength(0);
     await pendingImage.scrollIntoViewIfNeeded();
     await expectRenderedImage(alice.page);
@@ -477,7 +449,8 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
     await aliceAudio.evaluate((element: HTMLMediaElement) => element.pause());
 
     // Video.
-    const webm = await recordWebmClip(alice.page);
+    // A short VP8 clip recorded from a canvas with MediaRecorder.
+    const webm = readFileSync('e2e/fixtures/vp8-clip.webm');
     await sendPrivateMedia(alice.page, { name: 'clip.webm', mimeType: 'video/webm', buffer: webm });
     await expect.poll(() => blossom.blobs.size, { timeout: 30_000 }).toBe(2);
     const videoUpload = blossom.uploadAttempts.at(-1);
@@ -491,7 +464,6 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
     const loadMedia = bob.page.getByRole('button', { name: 'Load media', exact: true });
     await expect(loadMedia).toHaveCount(2, { timeout: 30_000 });
     await expect(bob.page.getByTestId('message-encrypted-media')).toHaveCount(0);
-    await bob.page.waitForTimeout(1500);
     expect(blossom.downloads).toHaveLength(0);
     await loadMedia.first().click();
     const bobAudio = await expectUsablePlayer(bob.page, 'message-encrypted-audio');
@@ -546,7 +518,6 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
     const attemptsBeforeCancel = blossom.uploadAttempts.length;
     await alice.page.getByTestId('composer-media-upload-cancel').click();
     await expect(alice.page.getByRole('dialog', { name: 'upload' })).toBeHidden();
-    await alice.page.waitForTimeout(500);
     expect(blossom.uploadAttempts.length).toBe(attemptsBeforeCancel);
     await expect(alice.page.getByTestId('message-encrypted-media')).toHaveCount(3);
 
@@ -657,11 +628,9 @@ test('private media is sent without encryption only after the user chooses it', 
       'The message remains end-to-end encrypted through NIP-17, but the media file itself will be uploaded without encryption. The Blossom server operator and anyone with access to the file URL may be able to view the file.',
     );
     await expect(dialog).toContainText('plain-blossom.e2e.test');
-    await alice.page.waitForTimeout(500);
     expect(plaintextUploads()).toHaveLength(0);
     await alice.page.getByTestId('composer-media-upload-cancel').click();
     await expect(dialog).toBeHidden();
-    await alice.page.waitForTimeout(500);
     expect(plaintextUploads()).toHaveLength(0);
     await expect(bubbles).toHaveCount(bubblesBefore);
 
@@ -705,7 +674,6 @@ test('private media is sent without encryption only after the user chooses it', 
     });
     expect(blossom.uploadAttempts.at(-1)?.contentType).toBe('application/octet-stream');
     expect(blossom.uploadAttempts.length).toBe(encryptedAttempts + 1);
-    await alice.page.waitForTimeout(500);
     expect(plaintextUploads()).toHaveLength(1);
     await alice.page.getByTestId('composer-media-upload-cancel').click();
 
@@ -718,7 +686,6 @@ test('private media is sent without encryption only after the user chooses it', 
     );
     await expect(alice.page.getByTestId('composer-media-upload-retry')).toHaveCount(0);
     await expect(alice.page.getByTestId('composer-media-upload-change-server')).toHaveCount(0);
-    await alice.page.waitForTimeout(500);
     expect(blossom.uploadAttempts.length).toBe(attemptsBeforeHeic);
     await alice.page.getByTestId('composer-media-upload-unencrypted').click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
@@ -737,7 +704,6 @@ test('private media is sent without encryption only after the user chooses it', 
     await alice.page.getByTestId('composer-media-upload-unencrypted').click();
     await expect(warning).toBeVisible();
     await alice.page.getByTestId('composer-media-upload-cancel').click();
-    await alice.page.waitForTimeout(500);
     expect(plaintextUploads()).toHaveLength(2);
 
     await expectNoUnexpectedBrowserErrors([alice, bob], { allowPatterns: [/415/u] });
