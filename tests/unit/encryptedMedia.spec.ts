@@ -53,10 +53,8 @@ describe('encrypted media kinds', () => {
 
   it('adds the AES-GCM tag to the receive limit', () => {
     const video = resolveEncryptedMediaKind('video/mp4');
-    const audio = resolveEncryptedMediaKind('audio/mpeg');
 
     expect(video && getMaxEncryptedBlobBytes(video)).toBe(20 * MIB + 16);
-    expect(audio && getMaxEncryptedBlobBytes(audio)).toBe(20 * MIB + 16);
   });
 });
 

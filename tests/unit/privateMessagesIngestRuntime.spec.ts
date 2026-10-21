@@ -2190,27 +2190,11 @@ describe('privateMessagesIngestRuntime', () => {
       expect(deps.showIncomingMessageBrowserNotification).not.toHaveBeenCalled();
     });
 
+    // Every malformed tag is covered by the parser tests; these prove a rejection drops the rumor.
     it.each([
       [
         'missing the decryption key',
         fileTags.filter((tag) => tag[0] !== 'decryption-key'),
-        blobUrl,
-      ],
-      [
-        'missing the decryption nonce',
-        fileTags.filter((tag) => tag[0] !== 'decryption-nonce'),
-        blobUrl,
-      ],
-      ['missing the x hash', fileTags.filter((tag) => tag[0] !== 'x'), blobUrl],
-      ['missing the file type', fileTags.filter((tag) => tag[0] !== 'file-type'), blobUrl],
-      [
-        'using an unsupported algorithm',
-        fileTags.map((tag) => (tag[0] === 'encryption-algorithm' ? [tag[0], 'none'] : tag)),
-        blobUrl,
-      ],
-      [
-        'using a short key',
-        fileTags.map((tag) => (tag[0] === 'decryption-key' ? [tag[0], 'a1'.repeat(16)] : tag)),
         blobUrl,
       ],
       ['pointing at a non-HTTPS URL', fileTags, 'http://blossom.example.com/blob'],

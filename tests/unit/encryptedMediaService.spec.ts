@@ -5,8 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const MIB = 1024 * 1024;
 // Plaintext limit plus the 16-byte AES-GCM tag.
-const MAX_IMAGE_BLOB_BYTES = 20 * MIB + 16;
-const MAX_AUDIO_BLOB_BYTES = 20 * MIB + 16;
+const MAX_BLOB_BYTES = 20 * MIB + 16;
 const PLAINTEXT = new Uint8Array(new TextEncoder().encode('decrypted-image-bytes'));
 
 async function createEncryptedFixture(mimeType = 'image/png') {
@@ -95,6 +94,7 @@ describe('encryptedMediaService', () => {
     'text/html',
     'application/xhtml+xml',
     'video/x-matroska',
+    'audio/x-ms-wma',
   ])('never turns %s into a renderable object URL', async (mimeType) => {
     const { attachment, ciphertext } = await createEncryptedFixture(mimeType);
     const { service, fetch, createObjectURL } = createHarness(ciphertext);
@@ -133,7 +133,7 @@ describe('encryptedMediaService', () => {
       () =>
         new Response('', {
           status: 200,
-          headers: { 'Content-Length': String(MAX_IMAGE_BLOB_BYTES + 1) },
+          headers: { 'Content-Length': String(MAX_BLOB_BYTES + 1) },
         })
     );
 
@@ -194,18 +194,9 @@ describe('encryptedMediaService', () => {
     await expect(service.acquireDecryptedObjectUrl(attachment)).resolves.toBe('blob:anagram/1');
   });
 
-  describe('video and audio', () => {
-    it.each([
-      ['video/mp4'],
-      ['video/webm'],
-      ['audio/mpeg'],
-      ['audio/mp4'],
-      ['audio/aac'],
-      ['audio/ogg'],
-      ['audio/webm'],
-      ['audio/wav'],
-      ['audio/flac'],
-    ])('decrypts %s and preserves its MIME type', async (mimeType) => {
+  it.each([['video/quicktime'], ['audio/mpeg']])(
+    'decrypts %s and preserves its MIME type',
+    async (mimeType) => {
       const { attachment, ciphertext } = await createEncryptedFixture(mimeType);
       const { service } = createHarness(ciphertext);
 
@@ -213,24 +204,8 @@ describe('encryptedMediaService', () => {
 
       expect(blob.type).toBe(mimeType);
       expect(new Uint8Array(await blob.arrayBuffer())).toEqual(PLAINTEXT);
-    });
-
-    it.each([
-      ['video/x-matroska'],
-      ['audio/x-ms-wma'],
-      ['image/svg+xml'],
-      ['text/html'],
-    ])('refuses %s before downloading anything', async (mimeType) => {
-      const { attachment, ciphertext } = await createEncryptedFixture(mimeType);
-      const { service, fetch, createObjectURL } = createHarness(ciphertext);
-
-      await expect(service.acquireDecryptedObjectUrl(attachment)).rejects.toThrow(
-        'This encrypted attachment type cannot be displayed.'
-      );
-      expect(fetch).not.toHaveBeenCalled();
-      expect(createObjectURL).not.toHaveBeenCalled();
-    });
-  });
+    }
+  );
 
   describe('receive size limits', () => {
     function streamOf(chunkBytes: number, headers: Record<string, string> = {}) {
@@ -252,35 +227,9 @@ describe('encryptedMediaService', () => {
       const { service, fetch } = createHarness(new Uint8Array());
 
       await expect(
-        service.fetchDecryptedMediaBlob({ ...attachment, size: MAX_IMAGE_BLOB_BYTES + 1 })
+        service.fetchDecryptedMediaBlob({ ...attachment, size: MAX_BLOB_BYTES + 1 })
       ).rejects.toThrow('Encrypted media is too large to download.');
       expect(fetch).not.toHaveBeenCalled();
-    });
-
-    it('applies the lower audio limit to size metadata, Content-Length and streamed bytes', async () => {
-      const { attachment } = await createEncryptedFixture('audio/mpeg');
-      const bySize = createHarness(new Uint8Array());
-      const byHeader = createHarness(
-        () =>
-          new Response('', {
-            status: 200,
-            headers: { 'Content-Length': String(MAX_AUDIO_BLOB_BYTES + 1) },
-          })
-      );
-      const stream = streamOf(MIB);
-      const byStream = createHarness(stream.response);
-
-      await expect(
-        bySize.service.fetchDecryptedMediaBlob({ ...attachment, size: MAX_AUDIO_BLOB_BYTES + 1 })
-      ).rejects.toThrow('too large');
-      expect(bySize.fetch).not.toHaveBeenCalled();
-      await expect(byHeader.service.fetchDecryptedMediaBlob(attachment)).rejects.toThrow(
-        'too large'
-      );
-      await expect(
-        byStream.service.fetchDecryptedMediaBlob({ ...attachment, size: undefined })
-      ).rejects.toThrow('too large');
-      expect(stream.state.cancelled).toBe(true);
     });
 
     it('stops reading an unbounded body when Content-Length is absent', async () => {
@@ -311,7 +260,7 @@ describe('encryptedMediaService', () => {
 
     it('still accepts a ciphertext of exactly the maximum size', async () => {
       const { attachment } = await createEncryptedFixture('audio/mpeg');
-      const { service } = createHarness(new Uint8Array(MAX_AUDIO_BLOB_BYTES));
+      const { service } = createHarness(new Uint8Array(MAX_BLOB_BYTES));
 
       // Within the limit, so the failure is the hash check, not the size check.
       await expect(

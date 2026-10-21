@@ -512,8 +512,8 @@ describe('messageStore send', () => {
     });
 
     it.each([
+      ['image/jpeg'],
       ['video/mp4'],
-      ['video/webm'],
       ['audio/mpeg'],
     ])('sends and forwards encrypted %s as kind 15 with its MIME type', async (mimeType) => {
       const fetchSpy = vi.fn();
@@ -621,27 +621,6 @@ describe('messageStore send', () => {
           `x ${'e5'.repeat(32)}`,
         ],
       ]);
-    });
-
-    it('forwards an encrypted image by reference as a new kind 15 rumor', async () => {
-      const fetchSpy = vi.fn();
-      vi.stubGlobal('fetch', fetchSpy);
-      const store = useMessageStore();
-
-      await store.forwardMessage('e'.repeat(64), {
-        text: blobUrl,
-        meta: { kind: 15, attachments: [encryptedAttachment], reactions: [] },
-      });
-
-      expect(serviceMocks.nostrStore.sendDirectMessage).toHaveBeenCalledWith(
-        CHAT_ID,
-        blobUrl,
-        expect.any(Array),
-        expect.objectContaining({ rumorKind: 15, additionalTags: expectedFileTags })
-      );
-      // Forwarding never downloads, decrypts, or re-uploads the blob.
-      expect(fetchSpy).not.toHaveBeenCalled();
-      vi.unstubAllGlobals();
     });
 
     it('forwards legacy media as kind 14 with imeta', async () => {

@@ -134,6 +134,7 @@ describe('private media composer upload lifecycle', () => {
     expect(get(f.uploader.state).phase).toBe('uploading');
     await f.finishUpload();
     await pending;
+    expect(f.deps.prepare).toHaveBeenCalledExactlyOnceWith(f.file);
     expect(f.deps.signUploadAuthHeader).toHaveBeenCalledOnce();
     expect(f.deps.send).toHaveBeenCalledExactlyOnceWith('chat-1', attachment, reply);
     expect(f.deps.persistServer).not.toHaveBeenCalled();
@@ -361,16 +362,6 @@ describe('private media upload confirmation', () => {
     expect(f.deps.prepare).not.toHaveBeenCalled();
     expect(f.deps.upload).not.toHaveBeenCalled();
     expectNothingSent(f);
-  });
-
-  it('confirming encrypts, uploads and sends the encrypted attachment', async () => {
-    const f = setup();
-    f.uploader.choose(f.file, reply);
-    const pending = f.uploader.commit();
-    await f.finishUpload();
-    await pending;
-    expect(f.deps.prepare).toHaveBeenCalledExactlyOnceWith(f.file);
-    expect(f.deps.send).toHaveBeenCalledExactlyOnceWith('chat-1', attachment, reply);
   });
 
   it.each([
