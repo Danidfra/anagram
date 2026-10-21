@@ -9,6 +9,7 @@ import {
   codeOf,
   last,
   mallory,
+  OTHER,
   privateGroup,
   publicGroup,
   refOf,
@@ -117,7 +118,8 @@ test('public group: p-tag mention, q-tag reply edits, no repository list in publ
   assert.ok(!room.replies().at(-1).content.includes('Your repositories'));
   assert.match(room.replies().at(-1).content, /visible to the whole group/);
   await room.say(bob, `${at(bot)} /new lnbits/lnbits wallet bug`);
-  assert.match(room.replies().at(-1).content, /not allowed to create issues in lnbits\/lnbits\.$/);
+  assert.match(room.replies().at(-1).content, /not allowed to create issues in that repository\.$/);
+  assert.ok(!room.replies().at(-1).content.includes('lnbits/lnbits'));
 });
 
 test('a DM reply references the request and the reply id is remembered for edits', async (t) => {
@@ -138,4 +140,59 @@ test('a DM reply references the request and the reply id is remembered for edits
     }
   });
   assert.ok(own.some((m) => m?.id === reply.id));
+});
+
+test('groups never show private repositories, their drafts or their issues', async (t) => {
+  const { bot, github, ollama } = setup(t, { publicRepos: [REPO] });
+  const g = privateGroup(bot);
+  const room = publicGroup(bot);
+  for (const chat of [g, room]) {
+    const replies = () => chat.replies().map((e) => e.content);
+    await chat.say(alice, `${at(bot)} create an issue in ${OTHER} about wallet sync`);
+    assert.match(replies().at(-1), /not public, so I handle it only in a direct message/);
+    await chat.say(alice, `${at(bot)} /help`);
+    await chat.say(alice, `${at(bot)} the login is broken`);
+    await chat.say(mallory, `${at(bot)} /help`);
+    await chat.say(bob, `${at(bot)} /new ${OTHER} wallet bug`);
+    assert.ok(
+      replies().every((text) => !text.includes(OTHER) && !text.includes('Your repositories')),
+    );
+  }
+  assert.equal(ollama.calls.length, 0);
+
+  // A draft for a public repository whose repository turns private before publication:
+  // the group only learns that the requester was told; the URL goes to the requester's DM.
+  await g.say(alice, `${at(bot)} create an issue in ${REPO} about the login bug`);
+  const code = codeOf(g.replies().at(-1));
+  const ref = refOf(g.replies().at(-1));
+  github.onCreate = (repo, issue) => {
+    bot.publicRepos.delete(REPO);
+    return github.create(repo, issue.title, issue.body);
+  };
+  await g.say(alice, `/confirm ${code}`);
+  assert.equal(github.creates.length, 1);
+  assert.equal(
+    g.replies().at(-1).content,
+    `${ref}: I sent the result to the requester by direct message.`,
+  );
+  assert.match(last(bot, alice).content, new RegExp(`Published ${ref} as ${REPO}#1: https://`));
+  // Lists and lookups in the group now leave it out.
+  await g.say(alice, `${at(bot)} /issues`);
+  assert.match(g.replies().at(-1).content, /No issues have been created/);
+  await g.say(bob, `/who ${ref}`);
+  assert.match(g.replies().at(-1).content, /not public/);
+  assert.ok(g.replies().every((e) => !e.content.includes('github.com')));
+});
+
+test('repository visibility comes from GitHub and anything unclear counts as private', async (t) => {
+  const { bot, github, logs } = setup(t, { publicRepos: [] });
+  github.privateRepos.add(OTHER);
+  await bot.checkRepos(bot.log);
+  assert.deepEqual([...bot.publicRepos], [REPO]);
+  assert.ok(logs.some((line) => line === `${OTHER}: ok (not public: handled only in DMs)`));
+  github.repository = async () => {
+    throw new Error('offline');
+  };
+  await bot.checkRepos();
+  assert.deepEqual([...bot.publicRepos], []);
 });

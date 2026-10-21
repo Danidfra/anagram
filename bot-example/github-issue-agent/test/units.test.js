@@ -221,6 +221,13 @@ test('GitHub client: fixed paths, token only in the header, results validated', 
     /Invalid repository/,
   );
   assert.deepEqual(keywords('The app: does NOT start, start!'), ['app', 'start']);
+  // Visibility: only an explicit public answer is public.
+  assert.equal((await client.repository('lnbits/anagram')).public, true);
+  server.repos['lnbits/secret'] = { private: true, visibility: 'private' };
+  server.repos['lnbits/internal'] = { private: false, visibility: 'internal' };
+  server.repos['lnbits/unclear'] = { private: undefined, visibility: undefined };
+  for (const repo of ['lnbits/secret', 'lnbits/internal', 'lnbits/unclear'])
+    assert.equal((await client.repository(repo)).public, false, repo);
 });
 
 test('GitHub client: errors say whether the request may have reached GitHub', async (t) => {

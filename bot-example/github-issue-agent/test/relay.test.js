@@ -61,6 +61,7 @@ test(
         },
       });
       await bot.start();
+      await until(() => bot.publicRepos.has(REPO), 'repository visibility');
     };
     t.after(async () => {
       await bot?.close();

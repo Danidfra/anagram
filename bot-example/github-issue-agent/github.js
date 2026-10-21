@@ -115,6 +115,8 @@ export class GitHubClient {
       fullName: body.full_name,
       hasIssues: body.has_issues !== false,
       archived: body.archived === true,
+      // Anything but an explicit public answer counts as private (internal, missing fields).
+      public: body.private === false && (body.visibility ?? 'public') === 'public',
     };
   }
 

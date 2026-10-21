@@ -54,6 +54,7 @@ export function fakeGitHub() {
     calls: [],
     searchResults: null,
     onCreate: null,
+    privateRepos: new Set(),
     create(repo, title, body) {
       const number = github.issues.length + 1;
       const issue = {
@@ -71,7 +72,12 @@ export function fakeGitHub() {
       return { login: 'issue-bot' };
     },
     async repository(repo) {
-      return { fullName: repo, hasIssues: true, archived: false };
+      return {
+        fullName: repo,
+        hasIssues: true,
+        archived: false,
+        public: !github.privateRepos.has(repo),
+      };
     },
     async searchIssues(repo, title) {
       github.calls.push(['search', repo, title]);
@@ -114,6 +120,8 @@ export function setup(
     github = fakeGitHub(),
     ollama = fakeOllama(),
     reconcileDelays = [0, 0, 0],
+    // Repositories already known to be public (see IssueAgent.checkRepos).
+    publicRepos = [REPO, OTHER],
   } = {},
 ) {
   // A caller that passes its own directory owns it (restart tests reuse it).
@@ -153,6 +161,7 @@ export function setup(
     reconcileDelays,
     log: (line) => logs.push(line),
   });
+  bot.publicRepos = new Set(publicRepos);
   t.after(async () => {
     if (!bot.stopped) await bot.close();
     if (owned) rmSync(dir, { recursive: true, force: true });

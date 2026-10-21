@@ -56,6 +56,8 @@ export async function githubServer({ login = 'issue-bot' } = {}) {
     if (!match[3] && req.method === 'GET')
       return send(res, 200, {
         full_name: repo,
+        private: false,
+        visibility: 'public',
         has_issues: true,
         archived: false,
         ...fixture.repos[repo],

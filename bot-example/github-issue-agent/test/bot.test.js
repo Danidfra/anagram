@@ -136,7 +136,10 @@ test('unauthorized senders and repositories never reach the model', async (t) =>
 test('the repository comes only from the request, never from a follow-up guess', async (t) => {
   const { bot, ollama } = setup(t);
   await sendDM(bot, alice, 'the login button is broken on mobile');
-  assert.match(last(bot, alice).content, /Which repository.*\/new owner\/repo.*lnbits\/anagram, lnbits\/lnbits/);
+  assert.match(
+    last(bot, alice).content,
+    /Which repository.*\/new owner\/repo.*lnbits\/anagram, lnbits\/lnbits/,
+  );
   await sendDM(bot, alice, 'lnbits/lnbits and lnbits/anagram are both broken');
   assert.match(last(bot, alice).content, /several repositories/);
   assert.equal(ollama.calls.length, 0);

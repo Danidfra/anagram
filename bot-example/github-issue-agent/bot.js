@@ -61,6 +61,8 @@ import { OllamaClient } from './ollama.js';
 const DAY = 86400;
 const HOUR = 3600;
 const HERE = fileURLToPath(new URL('.', import.meta.url));
+const NOT_SHOWN =
+  'That repository is not public, so I handle it only in a direct message. Nothing about it is shown here.';
 
 // How a message moves through the bot:
 //   relay event -> receive() -> directMessage()/privateMessage()/publicMessage() check the
@@ -113,6 +115,8 @@ export class IssueAgent extends BotTransport {
     // In memory, bounded: ids of messages the bot sent → what they showed, so replies to
     // draft messages can be recognized as edits.
     this.sent = new Map();
+    // Repositories GitHub reports as public (checkRepos). See shown().
+    this.publicRepos = new Set();
     this.busy = new Set();
     this.requests = new Map();
     this.modelCalls = new Map();
@@ -211,7 +215,12 @@ export class IssueAgent extends BotTransport {
       case 'new':
         return this.newCommand(args, request);
       case 'drafts':
-        return this.say(request, draftList(this.drafts.list(conversation, sender)));
+        return this.say(
+          request,
+          draftList(
+            this.drafts.list(conversation, sender).filter((d) => this.shown(d.repo, request)),
+          ),
+        );
       case 'edit': {
         const { id, rest } = splitId(args);
         const draft = this.ownDraft(id, request, 'edit');
@@ -230,7 +239,10 @@ export class IssueAgent extends BotTransport {
         return this.say(request, `Cancelled draft ${draft.ref} (code ${draft.code}).`);
       }
       case 'issues':
-        return this.say(request, issueList(this.issues.recent(conversation)));
+        return this.say(
+          request,
+          issueList(this.issues.recent(conversation).filter((r) => this.shown(r.repo, request))),
+        );
       case 'who':
         return this.who(splitId(args).id, request);
       default:
@@ -246,10 +258,16 @@ export class IssueAgent extends BotTransport {
   helpFor({ sender, context }) {
     return helpText({
       repos: this.access.repos(sender),
-      // Public groups are readable by anyone: never list a user's repositories there.
-      showRepos: context.type !== 'public',
+      showRepos: context.type === 'dm',
       group: context.type !== 'dm',
     });
+  }
+
+  // Group members are not necessarily allowed users, and public groups are readable by
+  // anyone. In groups the bot names, drafts and links only repositories GitHub reports as
+  // public; everything about other repositories stays in direct messages.
+  shown(repo, { context }) {
+    return context.type === 'dm' || this.publicRepos.has(repo);
   }
 
   // /new owner/repo <description>. Without a repository, behaves like a plain request.
@@ -282,13 +300,15 @@ export class IssueAgent extends BotTransport {
     }
     const draft = this.drafts.get(code);
     if (draft && draft.conversation === conversation) {
+      if (!this.shown(draft.repo, request)) return void this.say(request, NOT_SHOWN);
       if (draft.requester === sender) return draft;
       this.say(request, `Only the person who requested draft ${code} can ${action} it.`);
       return undefined;
     }
     const record = this.issues.byCode(code);
     if (record && record.conversation === conversation) {
-      if (record.requester !== sender)
+      if (!this.shown(record.repo, request)) this.say(request, NOT_SHOWN);
+      else if (record.requester !== sender)
         this.say(request, `Only the person who requested draft ${code} can ${action} it.`);
       else if (record.state === 'published')
         this.say(
@@ -318,9 +338,11 @@ export class IssueAgent extends BotTransport {
     const conversation = request.context.conversation;
     // Only records created in this conversation. In a DM that means only the requester's.
     const record = this.issues.inConversation(ref, conversation);
+    const draft = !record && this.drafts.findByRef(ref);
+    const repo = record?.repo ?? (draft?.conversation === conversation && draft.repo);
+    if (repo && !this.shown(repo, request)) return this.say(request, NOT_SHOWN);
     if (record) return this.say(request, whoText(record));
-    const draft = this.drafts.findByRef(ref);
-    if (draft?.conversation === conversation)
+    if (repo)
       return this.say(
         request,
         `${ref} is an unpublished draft for ${draft.repo}, requested by ${nip19.npubEncode(draft.requester)} in this conversation.`,
@@ -342,7 +364,9 @@ export class IssueAgent extends BotTransport {
     }
     // Approval in plain words never publishes.
     if (confirmationPhrase(text)) {
-      const drafts = this.drafts.list(context.conversation, sender).filter((d) => !d.publishing);
+      const drafts = this.drafts
+        .list(context.conversation, sender)
+        .filter((d) => !d.publishing && this.shown(d.repo, request));
       return this.say(
         request,
         drafts.length
@@ -375,11 +399,12 @@ export class IssueAgent extends BotTransport {
   }
 
   deniedText(repos, request) {
-    return `You are not allowed to create issues in ${repos.join(', ')}.${this.yourRepos(request)}`;
+    const names = request.context.type === 'dm' ? repos.join(', ') : 'that repository';
+    return `You are not allowed to create issues in ${names}.${this.yourRepos(request)}`;
   }
-  // Public groups are readable by anyone: never list a user's repositories there.
+  // A user's repositories are listed only in their DM (see shown()).
   yourRepos({ sender, context }) {
-    if (context.type === 'public') return '';
+    if (context.type !== 'dm') return '';
     return ` Your repositories: ${this.access.repos(sender).join(', ')}.`;
   }
 
@@ -410,6 +435,7 @@ export class IssueAgent extends BotTransport {
   }
 
   startDraft(repo, text, request) {
+    if (!this.shown(repo, request)) return this.say(request, NOT_SHOWN);
     if (!this.drafts.room(request.sender))
       return this.say(
         request,
@@ -440,6 +466,8 @@ export class IssueAgent extends BotTransport {
     if (this.stopped) return;
     this.submit(`draft:${request.message.id}`, async () => {
       if (failure) return this.reply(request, modelFailureText(failure, this.ollama.model));
+      // The repository may have stopped being public while the model was working.
+      if (!this.shown(repo, request)) return this.reply(request, NOT_SHOWN);
       if (!this.drafts.room(request.sender))
         return this.reply(request, `You already have ${this.drafts.maxPerUser} pending drafts.`);
       const draft = this.drafts.create({
@@ -484,6 +512,7 @@ export class IssueAgent extends BotTransport {
           request,
           `Draft ${draft.ref} was cancelled, published or expired before the edit finished. The edit was discarded.`,
         );
+      if (!this.shown(draft.repo, request)) return this.reply(request, NOT_SHOWN);
       this.drafts.revise(draft, this.freshCode(), content);
       this.log(`Draft revised (${request.context.type}, ${draft.repo}).`);
       await this.reply(
@@ -706,14 +735,18 @@ export class IssueAgent extends BotTransport {
     });
   }
 
-  // Replies to the /confirm message in its conversation, possibly after a restart.
+  // Replies to the /confirm message in its conversation, possibly after a restart. If the
+  // repository is not (or no longer) public, a group only learns that the requester was
+  // told, and the details go to the requester's DM.
   send(record, text, done = () => {}) {
     this.submit(`notice:${record.attempt}:${record.state}:${record.checks ?? 0}`, async () => {
-      await this.deliverTo(
-        record.conversation,
-        { id: record.messageId, pubkey: record.requester },
-        text,
-      );
+      const message = { id: record.messageId, pubkey: record.requester };
+      const context = { type: record.conversation.split(':')[0] };
+      if (!this.shown(record.repo, { context })) {
+        await this.deliverTo(`dm:${record.requester}`, message, text);
+        text = `${record.ref}: I sent the result to the requester by direct message.`;
+      }
+      await this.deliverTo(record.conversation, message, text);
       done();
     });
   }
@@ -769,7 +802,14 @@ export class IssueAgent extends BotTransport {
     if (type === 'dm') {
       // NIP-17, wrapped for the person and for the bot itself (its other clients).
       const relays = await this.inbox(target);
-      const reply = rumor(this.key, [['p', target], ['e', message.id, '', 'reply']], text);
+      const reply = rumor(
+        this.key,
+        [
+          ['p', target],
+          ['e', message.id, '', 'reply'],
+        ],
+        text,
+      );
       this.queue(message, [
         { event: wrap(reply, this.key, target), relays },
         { event: wrap(reply, this.key, this.pubkey), relays: this.relays },
@@ -808,7 +848,15 @@ export class IssueAgent extends BotTransport {
       const saved = this.state.rooms[target];
       const room = saved && parseRoom(saved.event);
       if (!room) return undefined;
-      const reply = sign(this.key, 9, [['a', target], ['q', message.id, '', message.pubkey]], text);
+      const reply = sign(
+        this.key,
+        9,
+        [
+          ['a', target],
+          ['q', message.id, '', message.pubkey],
+        ],
+        text,
+      );
       this.queue(message, [{ event: reply, relays: room.relays, room: target }]);
       return reply.id;
     }
@@ -1002,9 +1050,32 @@ export class IssueAgent extends BotTransport {
   async start() {
     await super.start();
     this.recover();
+    // Until the first check answers, every repository counts as private.
+    void this.checkRepos(this.log);
+    this.repoTimer = setInterval(() => void this.checkRepos(), 10 * 60000);
+  }
+  // Records which allowed repositories are public, so a repository made private stops being
+  // shown in groups within ten minutes. Errors count as private. log: the startup report.
+  async checkRepos(log = () => {}) {
+    for (const repo of new Set([...this.access.users.values()].flat())) {
+      let info;
+      try {
+        info = await this.github.repository(repo);
+        log(
+          `${repo}: ${info.archived ? 'archived, issues cannot be created' : info.hasIssues ? 'ok' : 'issues are disabled'}${info.public ? '' : ' (not public: handled only in DMs)'}`,
+        );
+      } catch (error) {
+        log(
+          `${repo}: not accessible (${error?.code ?? 'error'}). Check the token's repository access.`,
+        );
+      }
+      if (info?.public) this.publicRepos.add(repo);
+      else this.publicRepos.delete(repo);
+    }
   }
   async close() {
     this.stopped = true;
+    clearInterval(this.repoTimer);
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
     // Cancel the model request in progress and forget waiting jobs (drafts are in memory
@@ -1063,7 +1134,7 @@ export async function publishProfile(bot, { pictureURL = '', nip05 = '' } = {}) 
 }
 
 // Startup checks so the operator sees problems early. Never fatal: services may start later.
-export async function checkServices(bot, repos, log) {
+export async function checkServices(bot, log) {
   try {
     if (await bot.ollama.hasModel())
       log(`Ollama is reachable; model ${bot.ollama.model} is installed.`);
@@ -1079,18 +1150,6 @@ export async function checkServices(bot, repos, log) {
     log(`GitHub token accepted (account ${bot.login}).`);
   } catch (error) {
     log(`GitHub token check failed (${error?.code ?? 'error'}). Check GITHUB_TOKEN.`);
-  }
-  for (const repo of repos) {
-    try {
-      const info = await bot.github.repository(repo);
-      log(
-        `${repo}: ${info.archived ? 'archived, issues cannot be created' : info.hasIssues ? 'ok' : 'issues are disabled'}`,
-      );
-    } catch (error) {
-      log(
-        `${repo}: not accessible (${error?.code ?? 'error'}). Check the token's repository access.`,
-      );
-    }
   }
 }
 
@@ -1142,7 +1201,7 @@ export async function main() {
     if (!config.access.users.size)
       console.log('Warning: ALLOWED_USERS is empty, so the bot will not answer anyone.');
     await bot.start();
-    void checkServices(bot, config.repos, console.log);
+    void checkServices(bot, console.log);
     const profile = async () => {
       if (publishing || closing) return;
       publishing = true;
