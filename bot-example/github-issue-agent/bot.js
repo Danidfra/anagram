@@ -61,18 +61,21 @@ import { OllamaClient } from './ollama.js';
 const DAY = 86400;
 const HOUR = 3600;
 const HERE = fileURLToPath(new URL('.', import.meta.url));
+const LANE_LIMIT = 100; // waiting jobs per conversation
 const NOT_SHOWN =
   'That repository is not public, so I handle it only in a direct message. Nothing about it is shown here.';
 
 // How a message moves through the bot:
 //   relay event -> receive() -> directMessage()/privateMessage()/publicMessage() check the
 //   Nostr rules and the allowed groups -> handle() checks addressing, sender, limits ->
-//   command() or natural() -> model jobs (draftJob/editJob) or the publication job
-//   (publish) -> reply() signs the answer into the durable outbox -> flush() publishes it.
+//   the conversation's lane -> process() -> command() or natural() -> model jobs
+//   (draftJob/editJob) or the publication job (publish) -> reply() signs the answer into
+//   the durable outbox -> flush() publishes it.
 //
 // Relay subscriptions, the outbox and group tickets come from vendor/bot.js (the poll
-// example's transport). Two serial queues keep slow work off the message chain: `models`
-// (Ollama) and `publisher` (GitHub issue creation and reconciliation).
+// example's transport), whose message chain only receives, verifies and authorizes.
+// Serial queues keep slow work off it: `models` (Ollama), `publisher` (GitHub issue
+// creation and reconciliation) and one lane per conversation (see lane()).
 export class IssueAgent extends BotTransport {
   constructor({
     store,
@@ -109,6 +112,7 @@ export class IssueAgent extends BotTransport {
     const jobError = () => this.log('Internal error in a background job.');
     this.models = new Queue(this.limits.maxQueue, jobError);
     this.publisher = new Queue(1000, jobError);
+    this.lanes = new Map();
     this.abort = new AbortController();
     this.timers = new Set();
     this.replying = new Set();
@@ -152,6 +156,8 @@ export class IssueAgent extends BotTransport {
     // Written before its author or group was allowed: relays resend history after every
     // restart, so these are dropped without being recorded (see README, "Old messages").
     if (!this.allowedWhenWritten(message, context)) return;
+    // A full lane is left unrecorded too, so the message is not lost silently.
+    if (this.stopped || this.lanes.get(context.conversation)?.full) return;
     // From here on the message is handled exactly once, even if it fails or a relay
     // resends it later. Persist that before doing anything slow.
     this.markSeen(message);
@@ -160,9 +166,35 @@ export class IssueAgent extends BotTransport {
       context,
       sender: message.pubkey,
       text,
+      command,
       target,
       key: `${context.conversation}\n${message.pubkey}`,
     };
+    this.lane(context.conversation, () => this.process(request));
+  }
+
+  // One serial Queue per conversation. Everything for one conversation (its requests, model
+  // results and publication notices) keeps its order, while a slow GitHub or relay request
+  // in one conversation no longer holds up the others. Lanes exist only for allowed users
+  // and groups, so their number, and the requests in flight, are bounded by the
+  // configuration. Shared state is checked and changed without an await in between.
+  lane(conversation, job) {
+    if (this.stopped) return false;
+    let lane = this.lanes.get(conversation);
+    if (!lane) {
+      lane = new Queue(LANE_LIMIT, (error) => this.fail(error));
+      this.lanes.set(conversation, lane);
+    }
+    return lane.push(job);
+  }
+  fail(error) {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.onFatal(error);
+  }
+
+  async process(request) {
+    const { text, command } = request;
     if (!this.allow(this.requests, request.sender, this.limits.requestsPerHour)) {
       if ((this.notices.get(request.sender) ?? 0) > now() - HOUR) return;
       this.notices.set(request.sender, now());
@@ -493,7 +525,7 @@ export class IssueAgent extends BotTransport {
       this.busy.delete(request.key);
     }
     if (this.stopped) return;
-    this.submit(`draft:${request.message.id}`, async () => {
+    this.lane(request.context.conversation, async () => {
       if (failure) return this.reply(request, modelFailureText(failure, this.ollama.model));
       // The repository may have stopped being public while the model was working.
       if (!(await this.visibleNow([repo], request)).has(repo))
@@ -528,9 +560,10 @@ export class IssueAgent extends BotTransport {
       this.busy.delete(request.key);
     }
     if (this.stopped) return;
-    // Applied on the message chain, so no /confirm can slip between the check and the change.
-    const id = `edit:${request.message.id}`;
-    this.submit(id, async () => {
+    // Applied in the draft's conversation lane, where /confirm runs too, and checked after
+    // the last await, so no /confirm can slip between the check and the change.
+    const queued = this.lane(request.context.conversation, async () => {
+      const visible = !failure && (await this.visibleNow([draft.repo], request)).has(draft.repo);
       draft.editing = false;
       if (failure)
         return this.reply(
@@ -542,8 +575,7 @@ export class IssueAgent extends BotTransport {
           request,
           `Draft ${draft.ref} was cancelled, published or expired before the edit finished. The edit was discarded.`,
         );
-      if (!(await this.visibleNow([draft.repo], request)).has(draft.repo))
-        return this.reply(request, NOT_SHOWN);
+      if (!visible) return this.reply(request, NOT_SHOWN);
       this.drafts.revise(draft, this.freshCode(), content);
       this.log(`Draft revised (${request.context.type}, ${draft.repo}).`);
       await this.reply(
@@ -552,8 +584,8 @@ export class IssueAgent extends BotTransport {
         { kind: 'draft', code: draft.code },
       );
     });
-    // submit() drops work while stopping or overloaded; never leave the draft locked.
-    if (!this.pending.has(id)) draft.editing = false;
+    // lane() drops work while stopping or overloaded; never leave the draft locked.
+    if (!queued) draft.editing = false;
   }
 
   freshCode() {
@@ -770,7 +802,8 @@ export class IssueAgent extends BotTransport {
   // repository is not (or no longer) public, a group only learns that the requester was
   // told, and the details go to the requester's DM.
   send(record, text, done = () => {}) {
-    this.submit(`notice:${record.attempt}:${record.state}:${record.checks ?? 0}`, async () => {
+    // Dropped notices keep notified === false and are sent again at the next start.
+    this.lane(record.conversation, async () => {
       const message = { id: record.messageId, pubkey: record.requester };
       const context = { type: record.conversation.split(':')[0] };
       if (!(await this.visibleNow([record.repo], { context })).has(record.repo)) {
@@ -801,15 +834,11 @@ export class IssueAgent extends BotTransport {
 
   // ---- Replies ---------------------------------------------------------------------------
 
-  // Replies right away; only for code already running on the message chain. Some callers do
-  // not await it, so it never rejects: a storage error goes to onFatal, and close() waits
-  // for replies still in flight before releasing the data directory.
+  // Replies right away; only for code already running in the conversation's lane. Some
+  // callers do not await it, so it never rejects: a storage error goes to onFatal, and
+  // close() waits for replies still in flight before releasing the data directory.
   say(request, text, meta) {
-    const promise = this.reply(request, text, meta).catch((error) => {
-      if (this.stopped) return;
-      this.stopped = true;
-      this.onFatal(error);
-    });
+    const promise = this.reply(request, text, meta).catch((error) => this.fail(error));
     this.replying.add(promise);
     promise.finally(() => this.replying.delete(promise));
     return promise;
@@ -1114,6 +1143,7 @@ export class IssueAgent extends BotTransport {
     this.abort.abort();
     await this.models.stop();
     await this.publisher.stop();
+    await Promise.all([...this.lanes.values()].map((lane) => lane.stop()));
     await this.work;
     await Promise.all(this.replying);
     await super.close();

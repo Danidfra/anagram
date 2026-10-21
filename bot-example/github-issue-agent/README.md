@@ -141,7 +141,7 @@ Run `npm run check` and `npm test`. Tests use a mock Ollama, a mock GitHub API a
 
 - Drafts are lost on restart, and replies to bot messages sent before a restart are no longer recognized; use the commands.
 - After startup, groups are served once the first repository check answers. A repository made public again is served in groups after the next ten-minute check.
-- A repository made private between the check and the moment relays deliver the message can still leak that one message. In groups, each message with repository details waits for one GitHub request (at most 20 seconds), during which the bot handles no other messages.
+- A repository made private between the check and the moment relays deliver the message can still leak that one message. In groups, each message with repository details waits for one GitHub request (at most 20 seconds); later messages in that conversation wait behind it, other conversations do not.
 - An allowed public group that cannot be found at startup is not retried; restart the bot.
 - The model may write something inaccurate. The requester reviews the draft before confirming.
 - Similar-issue search uses GitHub search, which can lag and has its own rate limit.

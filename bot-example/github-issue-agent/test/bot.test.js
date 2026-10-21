@@ -432,11 +432,17 @@ test('a dropped edit result never leaves the draft locked', async (t) => {
   const { bot } = setup(t);
   await sendDM(bot, alice, `issue in ${REPO}: crash`);
   const draft = bot.drafts.all()[0];
-  const original = bot.submit.bind(bot);
-  bot.submit = (id, action) => (id.startsWith('edit:') ? false : original(id, action));
+  // The lane refuses the edit result (as when stopping or full); the request itself ran.
+  const original = bot.lane.bind(bot);
+  const answer = bot.ollama.answer;
+  bot.ollama.answer = (messages) => {
+    bot.lane = () => false;
+    return answer(messages);
+  };
   await sendDM(bot, alice, `/edit ${draft.code} shorter`);
+  assert.equal(bot.ollama.calls.length, 2);
   assert.equal(draft.editing, false);
-  bot.submit = original;
+  bot.lane = original;
   await sendDM(bot, alice, `/confirm ${draft.code}`);
   assert.match(last(bot, alice).content, /Published/);
 });

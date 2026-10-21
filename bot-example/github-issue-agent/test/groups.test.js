@@ -7,6 +7,7 @@ import {
   at,
   bob,
   codeOf,
+  dm,
   last,
   mallory,
   OTHER,
@@ -15,9 +16,14 @@ import {
   refOf,
   REPO,
   replyTag,
+  repliesFor,
   sendDM,
+  settle,
   setup,
+  stamp,
 } from './helpers.js';
+import { sign } from '../vendor/runtime.js';
+import { until } from './relay.js';
 
 test('private group: addressing, requester-only confirmation and shared history', async (t) => {
   const { bot, github, ollama } = setup(t);
@@ -295,4 +301,54 @@ test('visibility is asked only for group messages with details of a cached publi
   assert.equal(lookups(), 0, 'a cached "private" is trusted');
   await g.say(alice, `${at(bot)} create an issue in ${REPO} about a crash`);
   assert.equal(lookups(), 1, 'one fresh check before sending the draft');
+});
+
+test('a slow visibility check delays only its own conversation, which keeps its order', async (t) => {
+  const { bot, github } = setup(t, { publicRepos: [REPO] });
+  const room = publicGroup(bot);
+  await room.say(alice, `${at(bot)} create an issue in ${REPO} about the login bug`);
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  const repository = github.repository;
+  github.repository = async (repo) => {
+    await gate;
+    return repository(repo);
+  };
+  const before = room.replies().length;
+  const post = (content) =>
+    bot.publicMessage(
+      sign(
+        alice,
+        9,
+        [
+          ['a', room.address],
+          ['p', bot.pubkey],
+        ],
+        content,
+        stamp(),
+      ),
+      room.address,
+    );
+  await post('/drafts'); // waits for GitHub
+  await post('/help'); // same conversation: must wait behind /drafts
+  // Another conversation is answered meanwhile.
+  await bot.directMessage(dm(bob, '/help', bot), { tags: [] });
+  await until(() => repliesFor(bot, bob).length === 1, 'DM answer while the group waits');
+  assert.equal(room.replies().length, before);
+  release();
+  await settle(bot);
+  const [drafts, help] = room.replies().slice(before);
+  assert.match(drafts.content, /^Your drafts in this conversation:\n• .* lnbits\/anagram/);
+  assert.match(help.content, /^I turn your requests/);
+});
+
+test('lanes exist only for authorized conversations; a full lane leaves messages unrecorded', async (t) => {
+  const { bot } = setup(t);
+  await sendDM(bot, mallory, '/help');
+  assert.equal(bot.lanes.size, 0);
+  await sendDM(bot, alice, '/help');
+  assert.deepEqual([...bot.lanes.keys()], [`dm:${getPublicKey(alice)}`]);
+  bot.lanes.get(`dm:${getPublicKey(alice)}`).limit = 0;
+  const refused = await sendDM(bot, alice, '/drafts');
+  assert.equal(bot.state.seen[refused.id], undefined, 'a relay can deliver it again later');
 });

@@ -181,6 +181,7 @@ export async function settle(bot) {
       !bot.models.jobs.length &&
       !bot.publisher.current &&
       !bot.publisher.jobs.length &&
+      [...bot.lanes.values()].every((lane) => !lane.current && !lane.jobs.length) &&
       !bot.pending.size
     )
       return;
