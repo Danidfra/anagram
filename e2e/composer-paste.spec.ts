@@ -54,6 +54,8 @@ test('existing image paste opens upload confirmation in private and public chats
     const input = page.getByTestId('message-composer-input');
     await input.press('ControlOrMeta+v');
     await expect(input).toHaveValue('Draft kept while pasting plain text');
+    // Checked again after the public group paste, so a delayed private upload would show.
+    expect(uploadRequests).toBe(0);
     expect(user.browserErrors).toEqual([]);
   } finally {
     await context.close();

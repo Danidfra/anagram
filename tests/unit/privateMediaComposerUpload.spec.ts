@@ -535,6 +535,26 @@ describe('sending private media without encryption', () => {
     expect(sentAttachment).not.toHaveProperty('encryption');
   });
 
+  it.each(['failed', 'confirm-plaintext'])(
+    'uploads nothing later, however long, after cancelling in the %s phase',
+    async (phase) => {
+      const f = setup();
+      await failEncrypted(f);
+      if (phase === 'confirm-plaintext') await f.uploader.chooseUnencrypted();
+      expect(get(f.uploader.state).phase).toBe(phase);
+      vi.useFakeTimers();
+      try {
+        f.uploader.cancel();
+        await vi.runAllTimersAsync();
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(f.deps.upload).toHaveBeenCalledOnce();
+      expect(f.deps.uploadPlaintext).not.toHaveBeenCalled();
+      expectNothingSent(f);
+    },
+  );
+
   it('cancelling the plaintext confirmation uploads and sends nothing', async () => {
     const f = setup();
     await failEncrypted(f);

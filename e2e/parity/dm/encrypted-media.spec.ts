@@ -516,6 +516,7 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
       timeout: 30_000,
     });
     const attemptsBeforeCancel = blossom.uploadAttempts.length;
+    const cancelledAttempt = blossom.uploadAttempts.at(-1)!;
     await alice.page.getByTestId('composer-media-upload-cancel').click();
     await expect(alice.page.getByRole('dialog', { name: 'upload' })).toBeHidden();
     expect(blossom.uploadAttempts.length).toBe(attemptsBeforeCancel);
@@ -574,6 +575,11 @@ test('private audio and video decrypt locally, and failed uploads only retry cip
     expect(
       blossom.uploadAttempts.every((attempt) => attempt.contentType === 'application/octet-stream'),
     ).toBe(true);
+
+    // Later uploads have finished by now, so a delayed upload of the cancelled file would show here.
+    expect(
+      blossom.uploadAttempts.filter((attempt) => attempt.body.equals(cancelledAttempt.body)),
+    ).toHaveLength(1);
 
     await expectNoUnexpectedBrowserErrors([alice, bob], {
       allowPatterns: [/503/u, /unavailable/u],
@@ -705,6 +711,13 @@ test('private media is sent without encryption only after the user chooses it', 
     await expect(warning).toBeVisible();
     await alice.page.getByTestId('composer-media-upload-cancel').click();
     expect(plaintextUploads()).toHaveLength(2);
+    // A confirmed upload afterwards is the sync point: a delayed upload of the cancelled file
+    // would make it the fourth.
+    await pickMedia(alice.page, heic);
+    await alice.page.getByTestId('composer-media-upload-unencrypted').click();
+    await alice.page.getByTestId('composer-media-plaintext-confirm').click();
+    await expect(dialog).toBeHidden({ timeout: 30_000 });
+    expect(plaintextUploads()).toHaveLength(3);
 
     await expectNoUnexpectedBrowserErrors([alice, bob], { allowPatterns: [/415/u] });
   } finally {
