@@ -19,7 +19,10 @@
   import ThreadSearch from './ThreadSearch.svelte';
   import ComposerContext from './ComposerContext.svelte';
   import MessageReply from './MessageReply.svelte';
-  import { buildMessageReplyPreviewContent } from '#src/utils/messageAttachments.ts';
+  import {
+    buildMessageReplyPreviewContent,
+    FILE_MESSAGE_KIND,
+  } from '#src/utils/messageAttachments.ts';
   import ForwardMessagePicker from './ForwardMessagePicker.svelte';
   import ThreadTimeline from './ThreadTimeline.svelte';
   import MessageRow from './MessageRow.svelte';
@@ -2274,7 +2277,8 @@
         'reply',
         'copy',
         'forward',
-        'edit',
+        // A kind 15 file message has no text to edit.
+        ...(actionMessage.meta.kind === FILE_MESSAGE_KIND ? [] : ['edit']),
         'info',
         'delete',
         ...(canPin && !pinBusy && actionMessage.eventId && !actionMessage.meta.deleted

@@ -347,6 +347,10 @@ test('private images are encrypted before upload and decrypted by the recipient'
     await aliceBubble.hover();
     // Bubble padding opens the message menu without hitting the decrypted image.
     await aliceBubble.locator('.message-content').click({ position: { x: 5, y: 5 } });
+    // A kind 15 file message has no text to edit; the own-message menu still offers Delete.
+    const menu = alice.page.getByTestId('message-context-menu');
+    await expect(menu.getByRole('menuitem', { name: 'Delete', exact: true })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Edit', exact: true })).toHaveCount(0);
     await alice.page.getByRole('menuitem', { name: 'Nostr info', exact: true }).click();
     await alice.page.getByText('Event JSON', { exact: true }).click();
     const eventJson = JSON.parse(await alice.page.locator('.event-json').innerText()) as {
