@@ -434,6 +434,7 @@
       : 'Public group'}
     label="Public group settings"
     onopen={() => (details = true)}
+    oncopylink={share}
     onback={() => goto('/chats')}
   >
     {#snippet actions()}
@@ -441,9 +442,6 @@
         class="icon-button"
         aria-label="Search conversation"
         onclick={() => (searching = !searching)}><Icon name="search" /></button
-      >
-      <button class="icon-button" aria-label="Copy public group link" onclick={share}
-        ><Icon name="content_copy" /></button
       >
       <button
         class="icon-button"

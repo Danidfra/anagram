@@ -601,7 +601,7 @@
   $: mobileThread =
     section === 'contacts'
       ? Boolean(contactSelectedKey)
-      : section === 'chats' && (/^\/chats\/[^/]+/.test($page.url.pathname) || !!publicLink);
+      : section === 'chats' && (/^\/chats?\/[^/]+/.test($page.url.pathname) || !!publicLink);
   $: if ($state.selected?.id && $state.selected.id !== currentId) {
     currentId = $state.selected.id;
     draft = chats.getComposerDraft(currentId);
@@ -1597,6 +1597,14 @@
             ? () =>
                 void act(async () => {
                   await navigator.clipboard.writeText(nostr.encodeNpub($state.selected!.publicKey));
+                })
+            : undefined}
+          oncopylink={$state.selected.type === 'user'
+            ? () =>
+                void act(async () => {
+                  await navigator.clipboard.writeText(
+                    `https://anagram.chat/chat/${nostr.encodeNpub($state.selected!.publicKey)}`,
+                  );
                 })
             : undefined}
           onback={() => {
