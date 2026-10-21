@@ -189,6 +189,7 @@
       relayVersion: nostr.relayStatusVersion,
       contactVersion: nostr.contactListVersion,
     })),
+    (value) => value.selected?.id,
   );
   let section: 'chats' | 'contacts' | 'settings' = 'chats';
   let mobileThread = false;
@@ -695,11 +696,13 @@
     // The desktop sidebar stays mounted while the thread changes. Preserve any
     // search input/selection made during navigation; mobile opens a new screen.
     await goto(`/chats/${chat.id}`, { reset: mobileViewport });
+    if ($page.url.pathname !== `/chats/${chat.id}`) return;
     chats.selectChat(chat.id);
     nostr.setAppLifecycleRouteChatId(chat.id);
     mobileThread = true;
-    await loadThread(chat.id);
-    await chats.markAsRead(chat.id);
+    // Commit the recipient and draft before exposing the composer. The thread
+    // effects already load history and mark it read without blocking navigation.
+    await tick();
   }
   async function loadContacts() {
     const revision = ++contactLoadRevision;
@@ -1055,11 +1058,11 @@
             found.normalizedPubkey,
           );
       await nostr.ensureRespondedPubkeyIsContact(found.normalizedPubkey, contactName);
-      modal = '';
       if (addingInContacts) {
         await loadContacts();
         await goto(`/contacts/${found.normalizedPubkey}`);
       } else if (chat) await open(chat);
+      modal = '';
     } catch (e) {
       modalError = String(e);
     } finally {
