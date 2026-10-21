@@ -3,14 +3,11 @@ import assert from 'node:assert/strict';
 import { inspect } from 'node:util';
 import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
 import {
-  codeCandidates,
   confirmationPhrase,
-  issueIntent,
   parseCommand,
   repoRefs,
   replyTarget,
   stripMention,
-  withoutRepos,
 } from '../intent.js';
 import { editMessages, issueBody, neutralizeGitHubMentions, parseDraft } from '../drafting.js';
 import { loadConfig } from '../config.js';
@@ -48,7 +45,6 @@ test('repository references come only from explicit owner/repo text or GitHub li
     { repo: 'iOS/Android', explicit: false },
   ]);
   assert.deepEqual(repoRefs('path /usr/bin and ../a/b and a/b/c'), []);
-  assert.equal(withoutRepos('in lnbits/anagram please'), 'in please');
 });
 
 test('confirmation phrases are detected so they can be refused', () => {
@@ -67,9 +63,6 @@ test('confirmation phrases are detected so they can be refused', () => {
     'add that it happens on Android 15 after an update',
   ])
     assert.ok(!confirmationPhrase(text), text);
-  assert.ok(issueIntent('the app crashes on start'));
-  assert.ok(!issueIntent('hello there'));
-  assert.deepEqual(codeCandidates('for k3p9qx and UPDATE, LOGIN1'), ['K3P9QX']);
 });
 
 test('mentions and reply targets', () => {
@@ -102,7 +95,7 @@ test('identifiers have fixed shapes and avoid collisions', () => {
   assert.throws(() => newCode(() => true), /unique identifier/);
 });
 
-test('drafts: revisions retire codes and the per-user limit counts all conversations', () => {
+test('drafts: revisions replace codes and the per-user limit counts all conversations', () => {
   const drafts = new Drafts({ maxPerUser: 2 });
   const content = { title: 't', body: 'b', missing: [], warnings: [], similar: [] };
   const a = drafts.create({
@@ -124,7 +117,7 @@ test('drafts: revisions retire codes and the per-user limit counts all conversat
   assert.equal(drafts.room('x'), false);
   drafts.revise(a, 'CCCCCC', { ...content, title: 't2' });
   assert.equal(drafts.get('AAAAAA'), undefined);
-  assert.equal(drafts.retired.get('AAAAAA').ref, 'AG-0001');
+  assert.equal(drafts.has('AAAAAA'), false);
   assert.equal(drafts.get('CCCCCC').revision, 2);
   assert.equal(drafts.list('dm:1', 'x').length, 1);
 });

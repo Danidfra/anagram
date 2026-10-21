@@ -1,7 +1,6 @@
 // Deterministic interpretation of chat text. These rules, not the model, decide whether a
-// message is a command, an edit, a new request or a (refused) natural-language confirmation.
+// message is a command, a new request or a (refused) natural-language confirmation.
 import { nip19 } from 'nostr-tools';
-import { normalizeCode } from './ids.js';
 
 export const COMMANDS = ['help', 'new', 'drafts', 'edit', 'confirm', 'cancel', 'issues', 'who'];
 
@@ -56,49 +55,16 @@ export function repoRefs(text) {
   return [...found.values()].map(({ repo, explicit }) => ({ repo, explicit }));
 }
 
-// Removes repository references, leaving the rest of the request.
-export function withoutRepos(text) {
-  return text
-    .replace(URL_REPO, ' ')
-    .replace(BARE_REPO, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-// Plain-text requests that should start a draft. Deliberately simple and predictable.
-const ISSUE_WORDS =
-  /\b(issues?|bugs?|report|ticket|feature|problems?|crash(?:es|ed|ing)?|errors?|broken|fails?|failing|regression|enhancement|improvement)\b/i;
-export function issueIntent(text) {
-  return ISSUE_WORDS.test(text);
-}
-
 // Phrases that sound like approval. They never publish; the bot replies with the command.
-const CONFIRM_PHRASE =
-  /^(?:y|yes|yep|yeah|sure|ok|okay|confirm(?:ed)?|approve[d]?|publish(?: it)?|submit(?: it)?|post(?: it)?|create(?: it)?|send(?: it)?|go(?: ahead)?|do it|ship it|lgtm|looks good(?: to me)?|sounds good|perfect|great|correct|that'?s? (?:fine|good|right))(?:[\s,]+(?:please|thanks|thank you|now))*[\s.!👍✅]*$/iu;
+const APPROVAL =
+  /^(?:y|yes|yep|yeah|sure|ok|okay|confirm(?:ed)?|approved?|publish(?: it)?|submit(?: it)?|go ahead|do it|lgtm|looks good)(?:[\s,]+(?:please|thanks|thank you|now))*[\s.!👍✅]*$/iu;
 export function confirmationPhrase(text) {
   const clean = text.trim();
-  if (CONFIRM_PHRASE.test(clean)) return true;
   // Short messages that ask to publish ("please confirm", "publish this one") also count.
-  const words = clean.split(/\s+/).filter(Boolean);
-  return words.length <= 5 && /\b(confirm|publish|submit|approve)\b/i.test(clean);
-}
-
-// Six-character tokens that might be confirmation codes. The caller keeps only live codes
-// of this requester in this conversation, so ordinary words cannot select a draft.
-export function codeCandidates(text) {
-  const codes = new Set();
-  for (const match of text.matchAll(/(?<![A-Za-z0-9-])([A-Za-z0-9]{6})(?![A-Za-z0-9-])/g)) {
-    const code = normalizeCode(match[1]);
-    if (code) codes.add(code);
-  }
-  return [...codes];
-}
-export function removeToken(text, token) {
-  return text
-    .replace(new RegExp(`(?<![A-Za-z0-9-])${token}(?![A-Za-z0-9-])`, 'gi'), ' ')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/^[\s,:;.-]+/, '')
-    .trim();
+  return (
+    APPROVAL.test(clean) ||
+    (clean.split(/\s+/).length <= 5 && /\b(confirm|publish|submit|approve)\b/i.test(clean))
+  );
 }
 
 // Same mention syntax runtime.js recognizes: nostr:npub1..., npub1..., nprofile1...

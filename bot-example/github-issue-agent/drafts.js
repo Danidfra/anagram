@@ -15,9 +15,6 @@ export class Drafts {
     this.maxTotal = maxTotal;
     this.clock = clock;
     this.items = new Map(); // code → draft
-    // Codes replaced by an edit: old code → { ref, conversation, requester }. Lets the bot
-    // explain that a code is outdated instead of "unknown". Bounded.
-    this.retired = new Map();
   }
   purge() {
     const time = this.clock();
@@ -29,7 +26,7 @@ export class Drafts {
     return this.items.get(code);
   }
   has(code) {
-    return this.items.has(code) || this.retired.has(code);
+    return this.items.has(code);
   }
   all() {
     this.purge();
@@ -69,21 +66,12 @@ export class Drafts {
     this.items.set(code, draft);
     return draft;
   }
-  // Applies an edit under a new code. The old code is retired and can never confirm.
+  // Applies an edit under a new code. The old code is forgotten and can never confirm.
   revise(draft, code, content) {
     this.items.delete(draft.code);
-    this.retire(draft);
     Object.assign(draft, content, { code, revision: draft.revision + 1 });
     this.items.set(code, draft);
     return draft;
-  }
-  retire(draft) {
-    this.retired.set(draft.code, {
-      ref: draft.ref,
-      conversation: draft.conversation,
-      requester: draft.requester,
-    });
-    while (this.retired.size > 5000) this.retired.delete(this.retired.keys().next().value);
   }
   remove(draft) {
     if (this.items.get(draft.code) === draft) this.items.delete(draft.code);

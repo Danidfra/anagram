@@ -133,28 +133,19 @@ test('unauthorized senders and repositories never reach the model', async (t) =>
   assert.equal(ollama.calls.length, 0);
 });
 
-test('a missing repository is asked for, and the answer completes the request', async (t) => {
+test('the repository comes only from the request, never from a follow-up guess', async (t) => {
   const { bot, ollama } = setup(t);
   await sendDM(bot, alice, 'the login button is broken on mobile');
-  assert.match(last(bot, alice).content, /Which repository.*lnbits\/anagram, lnbits\/lnbits/);
+  assert.match(last(bot, alice).content, /Which repository.*\/new owner\/repo.*lnbits\/anagram, lnbits\/lnbits/);
+  await sendDM(bot, alice, 'lnbits/lnbits and lnbits/anagram are both broken');
+  assert.match(last(bot, alice).content, /several repositories/);
   assert.equal(ollama.calls.length, 0);
-  await sendDM(bot, alice, 'lnbits/anagram');
-  assert.match(last(bot, alice).content, /^Draft AG-.* for lnbits\/anagram/);
-  assert.match(ollama.calls[0][1].content, /login button is broken on mobile/);
-  // A reply to the question works too, and several repositories prompt again.
-  await sendDM(bot, alice, 'another bug: the app crashes on start');
-  const question = last(bot, alice);
-  await sendDM(bot, alice, 'lnbits/lnbits and lnbits/anagram', [replyTag(question.id)]);
-  assert.match(last(bot, alice).content, /Which repository/);
-  await sendDM(bot, alice, 'lnbits/lnbits', [replyTag(question.id)]);
+  await sendDM(bot, alice, '/new lnbits/lnbits the app crashes on start');
   assert.match(last(bot, alice).content, /^Draft AG-.* for lnbits\/lnbits/);
-  // Text that is not an issue request gets a hint and no model call.
-  await sendDM(bot, alice, 'hello there');
-  assert.match(last(bot, alice).content, /I create GitHub issue drafts/);
-  assert.equal(ollama.calls.length, 2);
+  assert.match(ollama.calls[0][1].content, /the app crashes on start/);
 });
 
-test('edits issue a new code, retire the old one and send only the draft to the model', async (t) => {
+test('edits issue a new code, invalidate the old one and send only the draft to the model', async (t) => {
   const { bot, ollama, github } = setup(t);
   const first = await draft(bot);
   await sendDM(bot, alice, `/edit ${first.code} mention Android 15`);
@@ -170,11 +161,11 @@ test('edits issue a new code, retire the old one and send only the draft to the 
   assert.ok(!editCall[1].content.includes('mobile login bug'), 'no chat history or request text');
   // The old code can never confirm.
   await sendDM(bot, alice, `/confirm ${first.code}`);
-  assert.match(last(bot, alice).content, new RegExp(`older version.*current code is ${newCode}`));
+  assert.match(last(bot, alice).content, /No draft with code.*Codes change with every edit/);
   assert.equal(github.creates.length, 0);
   // Replying to the old draft message is refused too; replying to the new one edits it.
   await sendDM(bot, alice, 'make the title shorter', [replyTag(first.message.id)]);
-  assert.match(last(bot, alice).content, /older version/);
+  assert.match(last(bot, alice).content, /No draft with code/);
   await sendDM(bot, alice, 'make the title shorter', [replyTag(revised.id)]);
   const third = codeOf(last(bot, alice));
   assert.match(last(bot, alice).content, /Title: Edited: make the title shorter/);
@@ -189,13 +180,11 @@ test('simultaneous drafts are never confused', async (t) => {
   const b = await draft(bot, alice, `issue in ${OTHER}: wallet balance is wrong`);
   assert.notEqual(a.code, b.code);
   assert.notEqual(a.ref, b.ref);
-  await sendDM(bot, alice, `for ${b.code} add that it happens after restore`);
+  await sendDM(bot, alice, 'add that it happens after restore', [replyTag(b.message.id)]);
   const edited = last(bot, alice);
   assert.equal(refOf(edited), b.ref);
   assert.match(edited.content, /for lnbits\/lnbits/);
   assert.equal(bot.drafts.get(a.code).title, 'Mobile login fails', 'the other draft is untouched');
-  await sendDM(bot, alice, `${a.code} and ${codeOf(edited)} need more detail`);
-  assert.match(last(bot, alice).content, /names several drafts/);
   await sendDM(bot, alice, '/drafts');
   const list = last(bot, alice).content;
   assert.ok(list.includes(a.code) && list.includes(codeOf(edited)));
@@ -218,7 +207,7 @@ test('drafts belong to their requester and conversation', async (t) => {
   await sendDM(bot, alice, `/cancel ${code}`);
   assert.equal(bot.drafts.get(code), undefined);
   await sendDM(bot, alice, `/confirm ${code}`);
-  assert.match(last(bot, alice).content, /no longer valid/);
+  assert.match(last(bot, alice).content, /No draft with code/);
   assert.equal(github.creates.length, 0);
 });
 

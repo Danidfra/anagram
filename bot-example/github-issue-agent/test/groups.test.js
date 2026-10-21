@@ -103,9 +103,9 @@ test('public group: p-tag mention, q-tag reply edits, no repository list in publ
   const room = publicGroup(bot);
   await room.say(alice, `${at(bot)} the login is broken`);
   const question = room.replies().at(-1);
-  assert.match(question.content, /Which repository.*\(owner\/repo\)/);
-  assert.ok(!question.content.includes('lnbits/lnbits'), 'repositories are not listed publicly');
-  await room.say(alice, REPO, [['q', question.id, '', bot.pubkey]]);
+  assert.match(question.content, /Which repository/);
+  assert.ok(!question.content.includes('lnbits/'), 'repositories are not listed publicly');
+  await room.say(alice, `the login is broken in ${REPO}`, [['p', bot.pubkey]]);
   const draftEvent = room.replies().at(-1);
   assert.match(draftEvent.content, /^Draft AG-/);
   await room.say(alice, 'add steps: open app, tap login', [['q', draftEvent.id, '', bot.pubkey]]);

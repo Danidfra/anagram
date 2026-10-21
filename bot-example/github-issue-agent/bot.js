@@ -25,17 +25,13 @@ import { Issues } from './issues.js';
 import { Queue } from './queue.js';
 import { newCode, newRef, normalizeCode, normalizeRef } from './ids.js';
 import {
-  codeCandidates,
   confirmationPhrase,
-  issueIntent,
   parseCommand,
-  removeToken,
   repoRefs,
   replyTarget,
   splitId,
   stripMention,
   validRepo,
-  withoutRepos,
 } from './intent.js';
 import {
   DRAFT_SCHEMA,
@@ -64,7 +60,6 @@ import { OllamaClient } from './ollama.js';
 
 const DAY = 86400;
 const HOUR = 3600;
-const QUESTION_SECONDS = HOUR;
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
 // How a message moves through the bot:
@@ -115,10 +110,9 @@ export class IssueAgent extends BotTransport {
     this.abort = new AbortController();
     this.timers = new Set();
     this.replying = new Set();
-    // In memory, bounded. sent: ids of messages the bot sent → what they showed, so replies
-    // to them can be recognized. questions: requests waiting for a repository name.
+    // In memory, bounded: ids of messages the bot sent → what they showed, so replies to
+    // draft messages can be recognized as edits.
     this.sent = new Map();
-    this.questions = new Map();
     this.busy = new Set();
     this.requests = new Map();
     this.modelCalls = new Map();
@@ -194,7 +188,6 @@ export class IssueAgent extends BotTransport {
       if (!code) return false;
       return (
         this.drafts.get(code)?.conversation === conversation ||
-        this.drafts.retired.get(code)?.conversation === conversation ||
         this.issues.byCode(code)?.conversation === conversation
       );
     }
@@ -234,7 +227,6 @@ export class IssueAgent extends BotTransport {
         if (!draft) return;
         if (draft.publishing) return this.say(request, `${draft.ref} is already being published.`);
         this.drafts.remove(draft);
-        this.drafts.retire(draft);
         return this.say(request, `Cancelled draft ${draft.ref} (code ${draft.code}).`);
       }
       case 'issues':
@@ -313,20 +305,9 @@ export class IssueAgent extends BotTransport {
         );
       return undefined;
     }
-    const retired = this.drafts.retired.get(code);
-    if (retired && retired.conversation === conversation && retired.requester === sender) {
-      const current = this.drafts.findByRef(retired.ref);
-      this.say(
-        request,
-        current
-          ? `Code ${code} belongs to an older version of draft ${retired.ref}. The current code is ${current.code}; review the latest version before you ${action} it.`
-          : `Code ${code} is no longer valid.`,
-      );
-      return undefined;
-    }
     this.say(
       request,
-      `No draft with code ${code} in this conversation. Drafts expire ${Math.round(this.drafts.ttlMs / 3600000)} hours after creation and are forgotten when the bot restarts. Send /drafts to list yours.`,
+      `No draft with code ${code} in this conversation. Codes change with every edit, drafts expire ${Math.round(this.drafts.ttlMs / 3600000)} hours after creation and are forgotten when the bot restarts. Send /drafts to list yours.`,
     );
     return undefined;
   }
@@ -347,51 +328,21 @@ export class IssueAgent extends BotTransport {
     return this.say(request, `No issue ${ref} was created in this conversation.`);
   }
 
-  // ---- Natural language ------------------------------------------------------------------
+  // ---- Plain text ------------------------------------------------------------------------
   // Fixed rules decide what plain text means. The model is never asked what to do.
 
   async natural(request) {
     const { text, sender, target, context } = request;
-    const conversation = context.conversation;
-
-    // 1. A reply to one of the bot's draft messages edits exactly that draft revision.
+    // A reply to one of the bot's draft messages edits exactly that draft revision.
     if (target?.kind === 'draft') {
-      const draft = this.drafts.get(target.code);
-      if (!draft || draft.conversation !== conversation)
-        return this.ownDraft(target.code, request, 'edit');
-      if (draft.requester !== sender)
-        return this.say(
-          request,
-          `Only the person who requested draft ${draft.code} can change it.`,
-        );
+      const draft = this.ownDraft(target.code, request, 'edit');
+      if (!draft) return;
       if (confirmationPhrase(text)) return this.say(request, confirmHint([draft]));
       return this.startEdit(draft, text, request);
     }
-
-    // 2. A message naming one of the requester's current codes edits that draft.
-    const candidates = codeCandidates(text);
-    const named = candidates
-      .map((code) => this.drafts.get(code))
-      .filter((d) => d && d.conversation === conversation && d.requester === sender);
-    if (named.length > 1)
-      return this.say(
-        request,
-        `Your message names several drafts (${named.map((d) => d.code).join(', ')}). Please change one at a time with /edit CODE <instructions>.`,
-      );
-    if (named.length === 1) {
-      const rest = removeToken(text, named[0].code);
-      if (!rest || confirmationPhrase(rest)) return this.say(request, confirmHint(named));
-      return this.startEdit(named[0], rest, request);
-    }
-    const stale = candidates.find((code) => {
-      const retired = this.drafts.retired.get(code);
-      return retired?.conversation === conversation && retired.requester === sender;
-    });
-    if (stale) return this.ownDraft(stale, request, 'edit');
-
-    // 3. Approval in plain words never publishes.
+    // Approval in plain words never publishes.
     if (confirmationPhrase(text)) {
-      const drafts = this.drafts.list(conversation, sender).filter((d) => !d.publishing);
+      const drafts = this.drafts.list(context.conversation, sender).filter((d) => !d.publishing);
       return this.say(
         request,
         drafts.length
@@ -399,74 +350,37 @@ export class IssueAgent extends BotTransport {
           : 'There is no draft of yours to confirm in this conversation.',
       );
     }
-
-    // 4. An answer to "which repository?".
-    const question = this.question(request.key);
-    if (question) {
-      const permitted = this.permittedRepos(text, sender);
-      const rest = withoutRepos(text);
-      const words = rest.split(/\s+/).filter(Boolean).length;
-      if (permitted.length && (target?.kind === 'question' || words <= 3)) {
-        if (permitted.length > 1) return this.askRepo(question.text, request, []);
-        this.questions.delete(request.key);
-        const extra = target?.kind === 'question' && words > 3 ? `\n${rest}` : '';
-        return this.startDraft(permitted[0], `${question.text}${extra}`, request);
-      }
-      if (target?.kind === 'question') return this.askRepo(question.text, request, []);
-    }
-
-    // 5. A new request.
-    if (!issueIntent(text) && !this.permittedRepos(text, sender).length)
-      return this.say(
-        request,
-        'I create GitHub issue drafts. For example: "create an issue in owner/repo about the login bug", or send /help.',
-      );
     return this.newRequest(text, request);
-  }
-
-  permittedRepos(text, sender) {
-    return [...new Set(repoRefs(text).flatMap(({ repo }) => this.access.repo(sender, repo) ?? []))];
   }
 
   // Picks the repository from the requester's own words. The model never chooses it.
   async newRequest(text, request) {
-    const permitted = this.permittedRepos(text, request.sender);
+    const refs = repoRefs(text);
+    const permitted = [
+      ...new Set(refs.flatMap(({ repo }) => this.access.repo(request.sender, repo) ?? [])),
+    ];
     if (permitted.length === 1) return this.startDraft(permitted[0], text, request);
-    const denied = repoRefs(text)
+    const denied = refs
       .filter((r) => r.explicit && !this.access.repo(request.sender, r.repo))
       .map((r) => r.repo);
-    return this.askRepo(text, request, permitted.length ? [] : denied);
-  }
-
-  async askRepo(text, request, denied) {
-    this.questions.delete(request.key);
-    this.questions.set(request.key, { text, at: now() });
-    bound(this.questions);
-    const lines = [];
-    if (denied.length) lines.push(this.deniedText(denied, request));
-    lines.push(
-      request.context.type === 'public'
-        ? 'Which repository should this issue go to? Reply with its name (owner/repo).'
-        : `Which repository should this issue go to? Reply with one of: ${this.access.repos(request.sender).join(', ')}`,
+    if (!permitted.length && denied.length)
+      return this.say(request, this.deniedText(denied, request));
+    const ask = permitted.length
+      ? 'Your message names several repositories. Pick one'
+      : 'Which repository is this for? Name it as owner/repo';
+    return this.say(
+      request,
+      `${ask}, for example: /new owner/repo <description of the issue>${this.yourRepos(request)}`,
     );
-    return this.say(request, lines.join('\n'), { kind: 'question', requester: request.sender });
   }
 
   deniedText(repos, request) {
-    const yours =
-      request.context.type === 'public'
-        ? ''
-        : ` Your repositories: ${this.access.repos(request.sender).join(', ')}.`;
-    return `You are not allowed to create issues in ${repos.join(', ')}.${yours}`;
+    return `You are not allowed to create issues in ${repos.join(', ')}.${this.yourRepos(request)}`;
   }
-
-  question(key) {
-    const question = this.questions.get(key);
-    if (question && question.at <= now() - QUESTION_SECONDS) {
-      this.questions.delete(key);
-      return undefined;
-    }
-    return question;
+  // Public groups are readable by anyone: never list a user's repositories there.
+  yourRepos({ sender, context }) {
+    if (context.type === 'public') return '';
+    return ` Your repositories: ${this.access.repos(sender).join(', ')}.`;
   }
 
   // ---- Model jobs ------------------------------------------------------------------------
