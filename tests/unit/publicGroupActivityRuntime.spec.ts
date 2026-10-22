@@ -259,7 +259,7 @@ async function trustedMentionSetup() {
 it('counts unread mentions only from trusted posts and clears them on read', async () => {
   const s = await trustedMentionSetup();
   expect(s.subscribe.mock.calls[0][0]).toContainEqual(
-    expect.objectContaining({ kinds: [5], '#h': [s.room.address] }),
+    expect.objectContaining({ kinds: [5], '#h': [s.room.address], '#k': ['9'] }),
   );
   const stranger = generateSecretKey();
   await s.runtime.ingest(s.room.address, s.message(s.mention, s.now, undefined, stranger));
@@ -329,4 +329,58 @@ it('drops mention updates after an account switch', async () => {
   await pending;
   await s.runtime.ingest(s.room.address, s.message(`${s.mention} after switch`));
   expect(s.saved().unreadMentionCount ?? 0).toBe(0);
+});
+
+it('skips edits and deletions that cannot change unread mentions', async () => {
+  const s = await trustedMentionSetup();
+  const update = vi.spyOn(s.db, 'updateMention');
+  const read = s.message('already read');
+  await s.runtime.ingest(s.room.address, read);
+  await s.runtime.markRead(s.room.address);
+  // Nothing unread: neither edits nor deletions touch storage.
+  await s.runtime.ingest(s.room.address, s.edit(read.id, read.id, s.mention));
+  await s.runtime.ingest(s.room.address, s.remove([read.id]));
+  expect(update).not.toHaveBeenCalled();
+
+  // Unread messages without mentions: edits apply, deletions are skipped.
+  const plain = s.message('plain unread');
+  await s.runtime.ingest(s.room.address, plain);
+  await s.runtime.ingest(s.room.address, s.remove([plain.id]));
+  expect(update).not.toHaveBeenCalled();
+  const edit = s.edit(plain.id, plain.id, `${s.mention} added`);
+  await s.runtime.ingest(s.room.address, edit);
+  expect(update).toHaveBeenCalledOnce();
+  expect(s.saved().unreadMentionCount).toBe(1);
+
+  // Reaction deletions never retract a message mention.
+  const reactionDeletion = finalizeEvent(
+    {
+      kind: 5,
+      created_at: s.now,
+      content: '',
+      tags: [['h', s.room.address], ['k', '7'], ['e', plain.id]],
+    },
+    s.author,
+  );
+  await s.runtime.ingest(s.room.address, reactionDeletion);
+  expect(update).toHaveBeenCalledOnce();
+  // Rapid edit then deletion of the current version.
+  await s.runtime.ingest(s.room.address, s.edit(edit.id, plain.id, 'removed again'));
+  await s.runtime.ingest(s.room.address, s.edit(edit.id, plain.id, `${s.mention} stale`));
+  expect(s.saved().unreadMentionCount).toBe(0);
+  expect(s.saved().unreadCount).toBe(1);
+});
+
+it('keeps one subscription per background room and stops it on room or account switch', async () => {
+  const s = await trustedMentionSetup();
+  const live = () => s.subscriptions.filter((sub) => !sub.stopped);
+  expect(live()).toHaveLength(1);
+  s.runtime.sync([s.saved()]);
+  expect(live()).toHaveLength(1);
+  s.runtime.setActive(s.room.address);
+  expect(live()).toHaveLength(0);
+  s.runtime.setActive('');
+  await vi.waitFor(() => expect(live()).toHaveLength(1));
+  s.switchAccount();
+  expect(live()).toHaveLength(0);
 });

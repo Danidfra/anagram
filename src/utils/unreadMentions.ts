@@ -11,7 +11,6 @@ const SEEN_BOUNDARY_META_KEYS = [
 
 interface MentionRowLike {
   author_public_key?: unknown;
-  created_at?: unknown;
   meta?: unknown;
 }
 
@@ -54,26 +53,6 @@ export function isIncomingMentionRow(
     !row.meta.deleted &&
     isIncomingUnreadMessageActivity(row, loggedInPublicKey)
   );
-}
-
-/** The latest unread mention, or '' once every mention is at or before the read boundary. */
-export function resolveUnreadMentionAt(
-  meta: unknown,
-  rows: MentionRowLike[],
-  loggedInPublicKey: string | null | undefined,
-): string {
-  let latest = '';
-  for (const row of rows) {
-    const createdAt = typeof row.created_at === 'string' ? row.created_at : '';
-    if (
-      isIncomingMentionRow(row, loggedInPublicKey) &&
-      isAfterChatSeenBoundary(meta, createdAt) &&
-      toTimestamp(createdAt) > toTimestamp(latest)
-    ) {
-      latest = createdAt;
-    }
-  }
-  return latest;
 }
 
 export function laterMentionAt(current: unknown, next: string): string {

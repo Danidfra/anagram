@@ -4,7 +4,6 @@ import {
   isIncomingMentionRow,
   laterMentionAt,
   readChatSeenBoundaryAt,
-  resolveUnreadMentionAt,
 } from '#src/utils/unreadMentions.ts';
 
 const OWN = 'b'.repeat(64);
@@ -13,10 +12,9 @@ const READ_AT = '2026-01-01T00:00:10.000Z';
 const BEFORE = '2026-01-01T00:00:05.000Z';
 const AFTER = '2026-01-01T00:00:20.000Z';
 
-function row(overrides: { author?: string; at?: string; meta?: Record<string, unknown> } = {}) {
+function row(overrides: { author?: string; meta?: Record<string, unknown> } = {}) {
   return {
     author_public_key: overrides.author ?? MEMBER,
-    created_at: overrides.at ?? AFTER,
     meta: overrides.meta ?? { mentions_me: true },
   };
 }
@@ -58,6 +56,10 @@ describe('unread mentions', () => {
     expect(
       hasUnreadChatMention({ type: 'group', unreadCount: 2, meta: { unread_mention_at: 'bad' } }),
     ).toBe(false);
+    // A cleared indicator is stored as an empty patch value.
+    expect(
+      hasUnreadChatMention({ type: 'group', unreadCount: 2, meta: { unread_mention_at: '' } }),
+    ).toBe(false);
   });
 
   it('only treats live incoming mentioning rows as mentions', () => {
@@ -75,24 +77,6 @@ describe('unread mentions', () => {
       isIncomingMentionRow(row({ meta: { mentions_me: true, kind: 1014 } }), OWN),
     ).toBe(false);
     expect(isIncomingMentionRow(row(), null)).toBe(false);
-  });
-
-  it('resolves the latest unread mention after the boundary', () => {
-    const meta = { last_seen_received_activity_at: READ_AT };
-    const latest = '2026-01-01T00:00:30.000Z';
-    expect(
-      resolveUnreadMentionAt(
-        meta,
-        [
-          row({ at: BEFORE }),
-          row({ at: AFTER }),
-          row({ at: latest, meta: {} }),
-          row({ at: latest, author: OWN }),
-        ],
-        OWN,
-      ),
-    ).toBe(AFTER);
-    expect(resolveUnreadMentionAt(meta, [row({ at: BEFORE })], OWN)).toBe('');
   });
 
   it('keeps the later of two mention timestamps', () => {

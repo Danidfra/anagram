@@ -3,6 +3,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { resetStores } from '#src/lib/state/store.svelte.ts';
 import { chatDataService } from '#src/services/chatDataService.ts';
 import { useMessageStore } from '#src/stores/messageStore.svelte.ts';
+import { hasUnreadChatMention } from '#src/utils/unreadMentions.ts';
 
 const chatStore = vi.hoisted(() => ({
   selectedChatId: null as string | null,
@@ -37,6 +38,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await chatDataService.clearAllData();
   resetStores();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
@@ -64,28 +66,134 @@ it('persists the latest unread mention with the message and ignores already-read
   expect((await chatDataService.getChatByPublicKey(GROUP))?.meta.unread_mention_at).toBe(SECOND);
 });
 
-it('recomputes the unread mention after the latest mention is deleted or edited away', async () => {
-  const first = await chatDataService.createMessage(incoming(FIRST, 'e'.repeat(64), true));
-  const second = await chatDataService.createMessage(incoming(SECOND, 'f'.repeat(64), true));
+const at = (second: number) => new Date(Date.parse(READ_AT) + second * 1000).toISOString();
+const mentionAt = async () =>
+  (await chatDataService.getChatByPublicKey(GROUP))?.meta.unread_mention_at;
+
+async function seed(count: number, mentions: number[]) {
+  const rows = [];
+  for (let second = 1; second <= count; second += 1)
+    rows.push(
+      (await chatDataService.createMessage(
+        incoming(at(second), second.toString(16).padStart(64, '0'), mentions.includes(second)),
+      ))!,
+    );
+  return rows;
+}
+
+function deleted(row: Awaited<ReturnType<typeof seed>>[number]) {
+  return { ...row, meta: { ...row.meta, deleted: { deletedAt: row.created_at } } };
+}
+
+it('walks back from a removed latest mention to the previous one, across rapid deletions', async () => {
+  const rows = await seed(6, [2, 4, 6]);
+  const store = useMessageStore();
+  const before = vi.spyOn(chatDataService, 'listMessagesBefore');
+  const after = vi.spyOn(chatDataService, 'listMessagesAfter');
+  expect(await mentionAt()).toBe(at(6));
+
+  // Removing a mention that is not the latest cannot move the indicator: no scan.
+  await chatDataService.updateMessageMeta(rows[3]!.id, deleted(rows[3]!).meta);
+  await store.syncUnreadMentionForMessage(rows[3]!, deleted(rows[3]!));
+  expect(before).not.toHaveBeenCalled();
+  expect(await mentionAt()).toBe(at(6));
+
+  for (const [index, expected] of [
+    [5, at(2)],
+    [1, ''],
+  ] as const) {
+    await chatDataService.updateMessageMeta(rows[index]!.id, deleted(rows[index]!).meta);
+    await store.syncUnreadMentionForMessage(rows[index]!, deleted(rows[index]!));
+    expect(await mentionAt()).toBe(expected);
+    expect(chatStore.setUnreadMentionAt).toHaveBeenLastCalledWith(GROUP, expected);
+  }
+  expect(before).toHaveBeenCalledTimes(2);
+  expect(after).not.toHaveBeenCalled();
+});
+
+it('raises the indicator for an edit that adds a mention without scanning', async () => {
+  const rows = await seed(3, []);
+  const before = vi.spyOn(chatDataService, 'listMessagesBefore');
+  const store = useMessageStore();
+  await store.syncUnreadMentionForMessage(rows[1]!, { ...rows[1]!, meta: { mentions_me: true } });
+  expect(await mentionAt()).toBe(at(2));
+  // An edit that keeps the mention, or adds one to an older message, changes nothing.
+  await store.syncUnreadMentionForMessage(
+    { ...rows[1]!, meta: { mentions_me: true } },
+    { ...rows[1]!, meta: { mentions_me: true } },
+  );
+  await store.syncUnreadMentionForMessage(rows[0]!, { ...rows[0]!, meta: { mentions_me: true } });
+  expect(await mentionAt()).toBe(at(2));
+  expect(before).not.toHaveBeenCalled();
+});
+
+it('bounds the backward search on a large history without a read cursor', async () => {
+  await chatDataService.updateChatMeta(GROUP, { last_seen_received_activity_at: '' }, true);
+  const rows = await seed(620, [1, 619, 620]);
+  const before = vi.spyOn(chatDataService, 'listMessagesBefore');
+  const after = vi.spyOn(chatDataService, 'listMessagesAfter');
+  const batches = vi.spyOn(chatDataService, 'messageBatches');
   const store = useMessageStore();
 
-  await chatDataService.updateMessageMeta(second!.id, {
-    mentions_me: true,
-    deleted: { deletedAt: SECOND },
+  // A nearby earlier mention is found on the first page.
+  await chatDataService.updateMessageMeta(rows[619]!.id, deleted(rows[619]!).meta);
+  await store.syncUnreadMentionForMessage(rows[619]!, deleted(rows[619]!));
+  expect(await mentionAt()).toBe(at(619));
+  expect(before).toHaveBeenCalledTimes(1);
+
+  // The remaining mention is beyond the scan limit: the search stops instead of reading history.
+  await chatDataService.updateMessageMeta(rows[618]!.id, deleted(rows[618]!).meta);
+  before.mockClear();
+  await store.syncUnreadMentionForMessage(rows[618]!, deleted(rows[618]!));
+  expect(await mentionAt()).toBe('');
+  expect(before).toHaveBeenCalledTimes(10);
+  const scanned = (
+    await Promise.all(before.mock.results.map((result) => result.value))
+  ).reduce((total, batch) => total + batch.rows.length, 0);
+  expect(scanned).toBe(500);
+  expect(after).not.toHaveBeenCalled();
+  expect(batches).not.toHaveBeenCalled();
+});
+
+it('never overwrites a read cursor written by markAsRead during a mention search', async () => {
+  const rows = await seed(4, [1, 4]);
+  const store = useMessageStore();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
   });
-  await store.syncChatUnreadMention(GROUP);
-  expect((await chatDataService.getChatByPublicKey(GROUP))?.meta.unread_mention_at).toBe(FIRST);
-  expect(chatStore.setUnreadMentionAt).toHaveBeenLastCalledWith(GROUP, FIRST);
+  const original = chatDataService.listMessagesBefore.bind(chatDataService);
+  const searching = new Promise<void>((started) => {
+    vi.spyOn(chatDataService, 'listMessagesBefore').mockImplementation(async (...args) => {
+      started();
+      await gate;
+      return original(...args);
+    });
+  });
 
-  await chatDataService.updateMessageMeta(first!.id, {});
-  await store.syncChatUnreadMention(GROUP);
-  expect((await chatDataService.getChatByPublicKey(GROUP))?.meta).not.toHaveProperty(
-    'unread_mention_at',
-  );
-  expect(chatStore.setUnreadMentionAt).toHaveBeenLastCalledWith(GROUP, '');
+  await chatDataService.updateMessageMeta(rows[3]!.id, deleted(rows[3]!).meta);
+  const pending = store.syncUnreadMentionForMessage(rows[3]!, deleted(rows[3]!));
+  await searching;
+  // markAsRead persists the full chat meta with the newer cursor and clears the count.
+  const chat = (await chatDataService.getChatByPublicKey(GROUP))!;
+  await chatDataService.updateChatMeta(GROUP, {
+    ...chat.meta,
+    last_seen_received_activity_at: at(4),
+  });
+  await chatDataService.updateChatUnreadCount(GROUP, 0);
+  release();
+  await pending;
 
-  // An edit that adds a mention to a still-unread message raises it again.
-  await chatDataService.updateMessageMeta(first!.id, { mentions_me: true });
-  await store.syncChatUnreadMention(GROUP);
-  expect((await chatDataService.getChatByPublicKey(GROUP))?.meta.unread_mention_at).toBe(FIRST);
+  const stored = (await chatDataService.getChatByPublicKey(GROUP))!;
+  expect(stored.meta.last_seen_received_activity_at).toBe(at(4));
+  expect(stored.meta.last_incoming_message_at).toBe(chat.meta.last_incoming_message_at);
+  expect(
+    hasUnreadChatMention({ type: stored.type, unreadCount: stored.unread_count, meta: stored.meta }),
+  ).toBe(false);
+  // Even if a new message arrives, the older calculation's mention stays read.
+  await chatDataService.createMessage(incoming(at(5), 'f'.repeat(64), false));
+  const next = (await chatDataService.getChatByPublicKey(GROUP))!;
+  expect(
+    hasUnreadChatMention({ type: next.type, unreadCount: next.unread_count, meta: next.meta }),
+  ).toBe(false);
 });

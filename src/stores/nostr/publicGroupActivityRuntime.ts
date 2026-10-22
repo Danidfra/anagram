@@ -39,14 +39,16 @@ export function createPublicGroupActivityRuntime(deps: {
       account = deps.account(),
       token = generation;
     const row = rows.get(address);
-    if (
-      db &&
-      account &&
-      row?.joined &&
-      !row.blocked &&
-      (event.kind === 5 || (event.kind === 9 && editTarget(event))) &&
-      validPublicAction(event, address)
-    ) {
+    if (event.kind === 5 || (event.kind === 9 && editTarget(event))) {
+      // Only unread messages can change mention state: skip signature checks and writes
+      // for deletions without unread mentions and edits without unread messages.
+      const kinds = event.tags.filter((tag) => tag[0] === 'k').map((tag) => tag[1]);
+      const relevant =
+        event.kind === 5
+          ? (row?.unreadMentionCount ?? 0) > 0 && (!kinds.length || kinds.includes('9'))
+          : (row?.unreadCount ?? 0) > 0;
+      if (!db || !account || !row?.joined || row.blocked || !relevant) return;
+      if (!validPublicAction(event, address)) return;
       const updated = await db.updateMention(
         address,
         event.kind === 5
@@ -155,10 +157,11 @@ export function createPublicGroupActivityRuntime(deps: {
               since: Math.max(saved.activitySince ?? 0, (saved.lastActivityAt ?? 0) - 1),
               limit: 50,
             },
-            // Deletions can retract an unread mention.
+            // Message deletions can retract an unread mention.
             {
               kinds: [5],
               '#h': [row.address],
+              '#k': ['9'],
               since: Math.max(saved.activitySince ?? 0, (saved.lastActivityAt ?? 0) - 1),
               limit: 50,
             },

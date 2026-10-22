@@ -1516,7 +1516,10 @@ export function createPrivateMessagesIngestRuntime({
             nextEditedMessage.meta.mentions_me === true)
         ) {
           const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
-          await useMessageStore().syncChatUnreadMention(chat.public_key);
+          await useMessageStore().syncUnreadMentionForMessage(
+            editTargetMessage,
+            nextEditedMessage,
+          );
         }
         if (rumorNostrEvent) {
           await nostrEventDataService.upsertEvent({

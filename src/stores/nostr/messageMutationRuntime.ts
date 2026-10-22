@@ -117,12 +117,12 @@ export function createMessageMutationRuntime({
     };
   }
 
-  async function syncChatUnreadMention(chatPublicKey: string): Promise<void> {
+  async function syncUnreadMentionForMessage(previous: MessageRow, next: MessageRow): Promise<void> {
     try {
       const { useMessageStore } = await import('#src/stores/messageStore.svelte.ts');
-      await useMessageStore().syncChatUnreadMention(chatPublicKey);
+      await useMessageStore().syncUnreadMentionForMessage(previous, next);
     } catch (error) {
-      console.warn('Failed to synchronize unread mention for chat', chatPublicKey, error);
+      console.warn('Failed to synchronize unread mention for chat', next.chat_public_key, error);
     }
   }
 
@@ -423,7 +423,7 @@ export function createMessageMutationRuntime({
 
     await refreshReplyPreviewsForTargetMessage(updatedRow, options);
     if (messageRow.meta.mentions_me === true) {
-      await syncChatUnreadMention(updatedRow.chat_public_key);
+      await syncUnreadMentionForMessage(messageRow, updatedRow);
     }
     const uiThrottleMs = normalizeThrottleMs(options.uiThrottleMs);
     if (uiThrottleMs > 0) {
@@ -498,7 +498,7 @@ export function createMessageMutationRuntime({
       return null;
     }
     if (messageRow.meta.mentions_me === true || editedRow.meta.mentions_me === true) {
-      await syncChatUnreadMention(editedRow.chat_public_key);
+      await syncUnreadMentionForMessage(messageRow, editedRow);
     }
 
     const chat = await chatDataService.getChatByPublicKey(editedRow.chat_public_key);

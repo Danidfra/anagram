@@ -12,7 +12,7 @@ const ndkMocks = vi.hoisted(() => ({
 }));
 
 const messageStoreMocks = vi.hoisted(() => ({
-  syncChatUnreadMention: vi.fn().mockResolvedValue(undefined),
+  syncUnreadMentionForMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
 const serviceMocks = vi.hoisted(() => ({
@@ -60,7 +60,7 @@ vi.mock('#src/lib/nostr/client.ts', async () => {
 vi.mock('#src/stores/messageStore.svelte.ts', () => ({
   useMessageStore: () => ({
     stageIncomingMessage: vi.fn(),
-    syncChatUnreadMention: messageStoreMocks.syncChatUnreadMention,
+    syncUnreadMentionForMessage: messageStoreMocks.syncUnreadMentionForMessage,
     upsertPersistedMessage: vi.fn().mockResolvedValue(undefined),
   }),
 }));
@@ -2109,17 +2109,17 @@ describe('privateMessagesIngestRuntime', () => {
       serviceMocks.chatDataService.getMessageByEventId.mockImplementation(async (eventId) =>
         eventId === originalEventId ? original : null,
       );
-      serviceMocks.chatDataService.applyMessageEdit.mockResolvedValue({
-        ...original,
-        event_id: 'f'.repeat(64),
-        meta: after,
-      });
+      const edited = { ...original, event_id: 'f'.repeat(64), meta: after };
+      serviceMocks.chatDataService.applyMessageEdit.mockResolvedValue(edited);
       const runtime = createPrivateMessagesIngestRuntime(deps);
       await runtime.queuePrivateMessageIngestion(makeWrappedEvent({ id: crypto.randomUUID() }), account);
       await runtime.getPrivateMessagesIngestQueue();
 
       expect(serviceMocks.chatDataService.createMessage).not.toHaveBeenCalled();
-      expect(messageStoreMocks.syncChatUnreadMention).toHaveBeenCalledExactlyOnceWith(group);
+      expect(messageStoreMocks.syncUnreadMentionForMessage).toHaveBeenCalledExactlyOnceWith(
+        original,
+        edited,
+      );
       runtime.resetPrivateMessagesIngestRuntimeState();
     });
   });
