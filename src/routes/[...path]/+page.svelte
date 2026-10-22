@@ -115,7 +115,8 @@
   {#if cleaning}
     <main class="logout-cleanup" aria-live="polite">
       <p>{cleanupBusy ? 'Logging out…' : cleanupError}</p>
-      {#if !cleanupBusy}<button onclick={resumeLogout}>Retry logout</button>{/if}
+      <!-- Reload releases stuck storage handles; the pending marker resumes cleanup before login. -->
+      {#if !cleanupBusy}<button onclick={() => window.location.reload()}>Retry logout</button>{/if}
     </main>
   {:else if sessionBusy || sessionError}
     <main class="logout-cleanup" aria-live="polite">

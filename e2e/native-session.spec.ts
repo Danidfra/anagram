@@ -103,6 +103,30 @@ test('native restart preserves a valid session and retries credential read failu
   expect(await page.evaluate(() => localStorage.getItem('npub'))).toBe(pubkey);
 });
 
+test('retry logout releases a blocked database without reopening the account', async ({ page }) => {
+  const storage = await nativeSession(page);
+  await page.evaluate(async () => {
+    // A lingering handle cannot be released by repeating deleteDatabase in the same document.
+    (window as any).__logoutBlocker = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('anagram-logout-blocked-test', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  });
+  await page.getByRole('button', { name: 'settings', exact: true }).click();
+  await page.getByTestId('settings-logout-item').click();
+  await page.getByTestId('settings-logout-confirm').click();
+  await expect(page.getByRole('button', { name: 'Retry logout' })).toBeVisible();
+  expect(storage.key).toBeNull();
+  storage.shellMounts = 0;
+  await page.getByRole('button', { name: 'Retry logout' }).click();
+  await expect(page.getByTestId('auth-open-key-button')).toBeVisible();
+  expect(storage.shellMounts).toBe(0);
+  expect(
+    await page.evaluate(async () => (await indexedDB.databases()).map((db) => db.name)),
+  ).not.toContain('anagram-logout-blocked-test');
+});
+
 test('a slow native credential read stays retryable without queueing more reads', async ({
   page,
 }) => {
