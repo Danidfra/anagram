@@ -1578,7 +1578,8 @@ describe('privateStateRuntime', () => {
 
     function createLiveRuntime(
       overrides: Record<string, unknown> = {},
-      options: { sendEose?: boolean } = {},
+      // 'connected': only the relays connected at the time finished their replay.
+      options: { sendEose?: boolean | 'connected' } = {},
     ) {
       const subscriptions: Array<{
         filters: unknown;
@@ -1586,6 +1587,9 @@ describe('privateStateRuntime', () => {
         onEose: () => void;
         // Called by the client once every relay of the subscription has closed.
         onClose: () => void;
+        on: ReturnType<typeof vi.fn>;
+        // Every relay of the subscription finished its replay (the client's 'eose' event).
+        completeSync: () => void;
         stop: ReturnType<typeof vi.fn>;
       }> = [];
       const deps = createDeps({
@@ -1594,16 +1598,26 @@ describe('privateStateRuntime', () => {
         encryptContactCursorContent: vi.fn(async (cursor) => `cursor:${cursor.at}`),
         getFilterSince: vi.fn(() => 1_700_000_000),
         subscribeWithReqLogging: vi.fn((_label, _request, filters, subscriptionOptions) => {
+          const eoseListeners: Array<() => void> = [];
           const subscription = {
             filters,
             onEvent: subscriptionOptions.onEvent,
             onEose: subscriptionOptions.onEose,
             onClose: subscriptionOptions.onClose,
-            stop: vi.fn(),
+            on: vi.fn((name: string, listener: () => void) => {
+              if (name === 'eose') eoseListeners.push(listener);
+            }),
+            completeSync: () => {
+              subscription.onEose?.();
+              for (const listener of eoseListeners) listener();
+            },
+            // Like the client, a stopped subscription reports its close.
+            stop: vi.fn(() => subscription.onClose?.()),
           };
           subscriptions.push(subscription);
           // Relays finish their replay at once unless a test holds EOSE back.
-          if (options.sendEose !== false) queueMicrotask(() => subscription.onEose?.());
+          if (options.sendEose === 'connected') queueMicrotask(() => subscription.onEose?.());
+          else if (options.sendEose !== false) queueMicrotask(() => subscription.completeSync());
           return subscription;
         }),
         ...overrides,
@@ -1880,6 +1894,192 @@ describe('privateStateRuntime', () => {
 
       expect(subscriptions).toHaveLength(2);
       expect(subscriptions[1].filters).toEqual(subscriptions[0].filters);
+    });
+
+    describe('resume point', () => {
+      // The stored boundary the harness returns; a full replay starts here.
+      const boundary = 1_700_000_000;
+      const relayA = 'wss://relay.example/';
+      const relayB = 'wss://added.example/';
+
+      function sinceOf(subscription: { filters: unknown } | undefined): number {
+        return (subscription?.filters as { since: number }).since;
+      }
+
+      function expectResumed(subscription: { filters: unknown } | undefined): void {
+        const now = Math.floor(Date.now() / 1000);
+        expect(sinceOf(subscription)).toBeGreaterThanOrEqual(
+          now - CONTACT_CURSOR_LIVE_LOOKBACK_SECONDS - 5,
+        );
+        expect(sinceOf(subscription)).toBeLessThanOrEqual(
+          now - CONTACT_CURSOR_LIVE_LOOKBACK_SECONDS,
+        );
+      }
+
+      async function connect(
+        deps: ReturnType<typeof createLiveRuntime>['deps'],
+        runtime: ReturnType<typeof createLiveRuntime>['runtime'],
+        relays: string[],
+      ): Promise<void> {
+        deps.resolveLoggedInReadRelayUrls.mockResolvedValue(relays);
+        await runtime.subscribeContactCursorUpdates(relays);
+        await flushPromises();
+      }
+
+      async function dropAllRelaysAndRecover(
+        runtime: ReturnType<typeof createLiveRuntime>['runtime'],
+        subscriptions: ReturnType<typeof createLiveRuntime>['subscriptions'],
+      ): Promise<void> {
+        subscriptions.at(-1)?.onClose();
+        await runtime.recoverContactCursorSubscription();
+        await flushPromises();
+      }
+
+      it('resumes a reconnect with unchanged relays from the last full sync', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime();
+        await connect(deps, runtime, [relayA, relayB]);
+        expect(sinceOf(subscriptions[0])).toBe(boundary);
+
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+        expect(subscriptions).toHaveLength(2);
+        expectResumed(subscriptions[1]);
+      });
+
+      it('replays the full history to a relay added after a reconnect', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime();
+        await connect(deps, runtime, [relayA]);
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+        expectResumed(subscriptions[1]);
+
+        await connect(deps, runtime, [relayA, relayB]);
+        expect(subscriptions).toHaveLength(3);
+        expect(sinceOf(subscriptions[2])).toBe(boundary);
+      });
+
+      it('restarts from the boundary when a relay is added while connected', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime();
+        await connect(deps, runtime, [relayA]);
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+
+        // The added relay never replayed its history here, even though relayA did.
+        await connect(deps, runtime, [relayA, relayB]);
+        expect(subscriptions[1].stop).toHaveBeenCalled();
+        expect(sinceOf(subscriptions[2])).toBe(boundary);
+      });
+
+      it('keeps the resume point when a synced relay is removed while connected', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime();
+        await connect(deps, runtime, [relayA, relayB]);
+
+        await connect(deps, runtime, [relayA]);
+        expect(subscriptions).toHaveLength(2);
+        expectResumed(subscriptions[1]);
+      });
+
+      it('does not resume when only the connected relays finished their replay', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime({}, { sendEose: 'connected' });
+        await connect(deps, runtime, [relayA, relayB]);
+
+        // relayB was offline, so the subscription reported EOSE without its history.
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+        expect(sinceOf(subscriptions[1])).toBe(boundary);
+      });
+
+      it('recovers from the boundary after a relay change whose subscription failed to start', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime();
+        await connect(deps, runtime, [relayA]);
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+
+        // The change stops the synced subscription, then its replacement fails to start.
+        deps.ensureRelayConnections.mockRejectedValueOnce(new Error('offline'));
+        await connect(deps, runtime, [relayA, relayB]).catch(() => {});
+        expect(subscriptions).toHaveLength(2);
+        expect(subscriptions[1].stop).toHaveBeenCalled();
+
+        await runtime.recoverContactCursorSubscription();
+        await flushPromises();
+        expect(subscriptions).toHaveLength(3);
+        expect(sinceOf(subscriptions[2])).toBe(boundary);
+      });
+
+      it('resumes again only once the new relay set has fully synced', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime({}, { sendEose: false });
+        await connect(deps, runtime, [relayA]);
+        subscriptions[0].completeSync();
+        await connect(deps, runtime, [relayA, relayB]);
+        expect(sinceOf(subscriptions[1])).toBe(boundary);
+
+        // The set closes before relayB finishes: the next try is still a full replay.
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+        expect(sinceOf(subscriptions[2])).toBe(boundary);
+
+        subscriptions[2].completeSync();
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+        expectResumed(subscriptions[3]);
+
+        // Back to relayA alone, then relayB again: relayB synced in this set, so both resume.
+        await connect(deps, runtime, [relayA]);
+        expectResumed(subscriptions[4]);
+        subscriptions[4].completeSync();
+        await connect(deps, runtime, [relayA, relayB]);
+        expect(sinceOf(subscriptions[5])).toBe(boundary);
+      });
+
+      it('does not restart a healthy subscription when its relays are unchanged', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime();
+        await connect(deps, runtime, [relayA]);
+        // A later full sync moves the resume point; the open subscription keeps its filter.
+        subscriptions[0].completeSync();
+        await connect(deps, runtime, [relayA]);
+        await runtime.recoverContactCursorSubscription();
+        await flushPromises();
+
+        expect(subscriptions).toHaveLength(1);
+        expect(subscriptions[0].stop).not.toHaveBeenCalled();
+      });
+
+      it('replays from the boundary after a cursor fails to apply', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await connect(deps, runtime, [relayA]);
+        serviceMocks.contactsService.updateContact.mockRejectedValueOnce(new Error('disk full'));
+        subscriptions[0].onEvent(makeCursorEvent('2026-01-03T00:00:00.000Z', { id: 'event-1' }));
+        await settleLiveEvents();
+
+        // A relay reconnecting in place completes the set again; the event is still pending.
+        subscriptions[0].completeSync();
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+        expect(sinceOf(subscriptions[1])).toBe(boundary);
+
+        // The boundary replay applies cleanly, so the next reconnect resumes again.
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+        expectResumed(subscriptions[2]);
+      });
+
+      it('does not move the read state back when a resumed replay delivers older events', async () => {
+        const { deps, runtime, subscriptions } = createLiveRuntime();
+        await connect(deps, runtime, [relayA]);
+        subscriptions[0].onEvent(
+          makeCursorEvent('2026-01-05T00:00:00.000Z', { id: 'newer', created_at: 1_800_000_100 }),
+        );
+        await vi.waitFor(() => expect(deps.chatStore.refreshChat).toHaveBeenCalledTimes(1));
+        expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledTimes(1);
+
+        await dropAllRelaysAndRecover(runtime, subscriptions);
+        subscriptions[1].onEvent(
+          makeCursorEvent('2026-01-04T00:00:00.000Z', { id: 'older', created_at: 1_800_000_050 }),
+        );
+        await settleLiveEvents();
+
+        expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledTimes(1);
+        expect(deps.chatStore.refreshChat).toHaveBeenCalledTimes(1);
+        expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+        await runtime.publishContactCursor(contactPublicKey, {
+          at: '2026-01-04T00:00:00.000Z',
+          eventId: 'stale',
+        });
+        expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+      });
     });
 
     it('never publishes a cursor at or behind the newest known cursor', async () => {

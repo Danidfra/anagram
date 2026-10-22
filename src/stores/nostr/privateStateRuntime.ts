@@ -45,6 +45,7 @@ import type {
   RelaySaveStatus,
 } from '#src/stores/nostr/types.ts';
 import {
+  normalizeRelayStatusUrlsValue,
   resolveCurrentGroupChatEpochEntryValue,
   resolveGroupPublishRelayUrlsValue,
   resolveGroupReadRelayUrlsValue,
@@ -273,8 +274,15 @@ export function createPrivateStateRuntime({
   let contactCursorApplyQueue = Promise.resolve();
   let contactCursorGeneration = 0;
   let contactCursorSince = 0;
-  // Set when a caught-up subscription closes: a recovered one only needs events from then on.
-  let contactCursorResumeSince = 0;
+  // Every relay in `relays` finished replaying its history and then stayed subscribed, so later
+  // subscriptions to only those relays need events from `since` on. Other relays start from
+  // `contactCursorSince`, as they never delivered their history here.
+  let contactCursorResume: { relays: string[]; since: number } | null = null;
+  // A cursor failed to apply. Until a replay from `contactCursorSince` starts, no resume point
+  // is recorded, so that replay delivers the event again.
+  let contactCursorApplyFailed = false;
+  // The open subscription's filter, reused so a repeated call does not restart it.
+  let contactCursorLiveFilter: { relays: string[]; since: number } | null = null;
   let contactCursorSeedRelayUrls: string[] | null = null;
 
   function allocateReplaceableCreatedAt(streamKey: string): number {
@@ -2472,14 +2480,20 @@ export function createPrivateStateRuntime({
       const storedSince = getFilterSince();
       contactCursorSince = storedSince > 0 ? Math.min(storedSince, lookbackSince) : lookbackSince;
     }
-    // The filter changes only while no subscription is open, so a healthy one is never restarted.
-    if (contactCursorSubscriptions.size() === 0) {
-      contactCursorSince = Math.max(contactCursorSince, contactCursorResumeSince);
-    }
+    const relays = normalizeRelayStatusUrlsValue(relayUrls).sort();
+    const live = contactCursorSubscriptions.size() > 0 ? contactCursorLiveFilter : null;
+    const resume = contactCursorResume;
+    const since =
+      live && live.relays.join(' ') === relays.join(' ')
+        ? live.since
+        : resume && relays.every((url) => resume.relays.includes(url))
+          ? Math.max(contactCursorSince, resume.since)
+          : contactCursorSince;
+    contactCursorLiveFilter = { relays, since };
     const filters: NostrFilter = {
       kinds: [PRIVATE_PREFERENCES_KIND],
       authors: [account],
-      since: contactCursorSince,
+      since,
     };
     const signature = subscriptionSignature(filters, relayUrls);
     await contactCursorSubscriptions.reconcile([
@@ -2492,9 +2506,8 @@ export function createPrivateStateRuntime({
         },
         applied: () => contactCursorApplyQueue,
         start: (onEose, onClose) => {
-          let caughtUp = false;
-          contactCursorResumeSince = 0;
-          return subscribeWithReqLogging(
+          if (since === contactCursorSince) contactCursorApplyFailed = false;
+          const subscription = subscribeWithReqLogging(
             'contact-cursors',
             'contact-cursors',
             filters,
@@ -2511,32 +2524,37 @@ export function createPrivateStateRuntime({
                 contactCursorApplyQueue = contactCursorApplyQueue
                   .then(() => applyLiveContactCursorEvent(wrappedEvent, account, generation))
                   .catch((error) => {
+                    // A later subscription replays from the boundary to retry this event.
+                    contactCursorApplyFailed = true;
+                    contactCursorResume = null;
                     console.warn('Failed to apply live contact cursor event', error);
                   });
               },
-              onEose: () => {
-                caughtUp = true;
-                onEose();
-              },
-              onClose: () => {
-                // Events up to now arrived live; the lookback still covers skewed clocks.
-                if (caughtUp && isCurrentContactCursorSession(account, generation)) {
-                  contactCursorResumeSince =
-                    Math.floor(Date.now() / 1000) - CONTACT_CURSOR_LIVE_LOOKBACK_SECONDS;
-                }
-                onClose();
-              },
+              onEose,
+              onClose,
             },
             { signature },
           );
+          // The client emits 'eose' only once every relay of the set has finished its replay
+          // and is still subscribed; the onEose above may fire with offline relays pending.
+          // Events from now on arrive live, and the lookback covers skewed clocks.
+          subscription.on('eose', () => {
+            if (!contactCursorApplyFailed && isCurrentContactCursorSession(account, generation)) {
+              contactCursorResume = {
+                relays,
+                since: Math.floor(Date.now() / 1000) - CONTACT_CURSOR_LIVE_LOOKBACK_SECONDS,
+              };
+            }
+          });
+          return subscription;
         },
       },
     ]);
   }
 
   // A subscription whose relays all disconnect closes itself. Reconnect healing and relay
-  // reconnects call this to restore it with the same filter, so the replay from `since`
-  // delivers cursors published meanwhile. A live subscription makes this a no-op.
+  // reconnects call this to restore it, and the replay from `since` delivers cursors published
+  // meanwhile. A live subscription makes this a no-op.
   async function recoverContactCursorSubscription(): Promise<void> {
     const seedRelayUrls = contactCursorSeedRelayUrls;
     if (!seedRelayUrls || !getLoggedInPublicKeyHex() || contactCursorSubscriptions.size() > 0) {
@@ -2562,7 +2580,9 @@ export function createPrivateStateRuntime({
     contactCursorDTagIndex = null;
     contactCursorApplyQueue = Promise.resolve();
     contactCursorSince = 0;
-    contactCursorResumeSince = 0;
+    contactCursorResume = null;
+    contactCursorApplyFailed = false;
+    contactCursorLiveFilter = null;
     contactCursorSeedRelayUrls = null;
   }
 
