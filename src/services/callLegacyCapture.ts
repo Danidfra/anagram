@@ -32,6 +32,8 @@ export function subscribeLegacyCapture(
   if (!capture) {
     const listeners = new Set([listener]);
     let recorder: MediaRecorder;
+    let captured: MediaStreamTrack | undefined;
+    let stopping: Promise<void> | undefined;
     let closed = false;
     let started = false;
     let joining: ReturnType<typeof setTimeout> | undefined;
@@ -39,29 +41,57 @@ export function subscribeLegacyCapture(
     const timeslice = mimeType === CALL_MIME_TYPES[1] ? 50 : 100;
     const renewVideo =
       mimeType === CALL_VIDEO_MIME_TYPE &&
+      Boolean(options?.onStreamRestart) &&
       isTauri() &&
       /Linux/.test(navigator.userAgent) &&
       !/Android/.test(navigator.userAgent);
     const fail = () => {
       for (const peer of [...listeners]) peer.error();
     };
-    const stopRecorder = () => {
-      if (!recorder) return;
-      recorder.ondataavailable = recorder.onerror = recorder.onstop = null;
-      if (recorder.state !== 'inactive') recorder.stop();
+    const stopRecorder = (): Promise<void> => {
+      if (stopping) return stopping;
+      if (!recorder) return Promise.resolve();
+      const previous = recorder;
+      const track = captured;
+      captured = undefined;
+      previous.ondataavailable = previous.onerror = null;
+      // stop() changes state synchronously, but native encoder teardown finishes
+      // asynchronously. Do not attach another recorder to the source until then.
+      stopping = new Promise<void>((resolve, reject) => {
+        const finish = () => {
+          previous.onstop = null;
+          track?.stop();
+          resolve();
+        };
+        if (previous.state === 'inactive') finish();
+        else {
+          previous.onstop = finish;
+          try {
+            previous.stop();
+          } catch (error) {
+            previous.onstop = null;
+            track?.stop();
+            reject(error);
+          }
+        }
+      }).finally(() => {
+        stopping = undefined;
+      });
+      return stopping;
     };
     const scheduleKeyframe = () => {
       if (renewVideo)
         keyframe = setTimeout(() => {
-          try {
-            if (!closed && recorder.state === 'recording') recorder.stop();
-          } catch {
-            fail();
-          }
+          // A restarted recorder may begin its timestamps at zero. Use the
+          // same ordered receiver reset as a late join, not another WebM header
+          // on a decoder whose playback cursor belongs to the old recording.
+          if (!closed) capture!.restart();
         }, 4000);
     };
     const start = () => {
-      recorder = new MediaRecorder(original ? new MediaStream([original]) : stream, {
+      // Keep recorder lifecycle separate from the room's preview/camera track.
+      captured = original?.clone();
+      recorder = new MediaRecorder(captured ? new MediaStream([captured]) : stream, {
         mimeType,
         audioBitsPerSecond: 32000,
         videoBitsPerSecond: options?.videoBitsPerSecond ?? 600000,
@@ -71,28 +101,21 @@ export function subscribeLegacyCapture(
           for (const peer of [...listeners]) if (peer.ready) peer.chunk(event.data);
       };
       recorder.onerror = fail;
-      recorder.onstop = () => {
-        if (closed || !renewVideo) return;
-        try {
-          recorder.start(timeslice);
-          scheduleKeyframe();
-        } catch {
-          fail();
-        }
-      };
       recorder.start(timeslice);
+      started = true;
       scheduleKeyframe();
     };
     capture = {
       listeners,
       restart() {
         if (joining !== undefined) return;
-        joining = setTimeout(() => {
-          joining = undefined;
+        joining = setTimeout(async () => {
           if (closed) return;
           clearTimeout(keyframe);
           try {
-            stopRecorder();
+            await stopRecorder();
+            joining = undefined;
+            if (closed) return;
             for (const peer of [...listeners]) {
               // A new subscriber already has an empty receiver. Only peers
               // that received the previous generation need another reset.
@@ -101,9 +124,9 @@ export function subscribeLegacyCapture(
             }
             if (!closed) {
               start();
-              started = true;
             }
           } catch {
+            joining = undefined;
             fail();
           }
         }, 100);
@@ -112,7 +135,8 @@ export function subscribeLegacyCapture(
         closed = true;
         clearTimeout(joining);
         clearTimeout(keyframe);
-        stopRecorder();
+        void stopRecorder().catch(() => {});
+        captured?.stop();
         profiles?.delete(key);
       },
     };

@@ -1,109 +1,150 @@
 import { expect, test, type ConsoleMessage } from '@playwright/test';
 
-test('shared WebM video gives staggered late joiners decodable headers', async ({ page }) => {
-  await page.route('**/__shared-video', (route) =>
-    route.fulfill({ contentType: 'text/html', body: '<button>Start</button>' }),
-  );
-  await page.goto('/__shared-video');
-  await page.getByRole('button').click();
-  const result = await page.evaluate(async () => {
-    const { recordCallMedia, createCallMediaReceiver } =
-      await import('/src/services/callMediaService.ts');
-    const { cloneCallTrack } = await import('/src/services/callSharedCapture.ts');
-    const { watchCallLive } = await import('/src/services/callPlaybackService.ts');
-    const mime = 'video/webm;codecs=vp8';
-    const canvas = document.createElement('canvas');
-    canvas.width = 320;
-    canvas.height = 180;
-    document.body.append(canvas);
-    const paint = canvas.getContext('2d')!;
-    const draw = setInterval(() => {
-      paint.fillStyle = `hsl(${performance.now() % 360},90%,50%)`;
-      paint.fillRect(0, 0, 320, 180);
-    }, 50);
-    const source = canvas.captureStream(20).getVideoTracks()[0];
-    const errors: string[] = [];
-    const stops: Array<() => void> = [];
-    const players: Array<{ video: HTMLVideoElement; frames: number; resets: number }> = [];
-    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-    try {
-      for (let i = 0; i < 5; i++) {
-        const video = document.createElement('video');
-        video.muted = true;
-        video.playsInline = true;
-        video.autoplay = true;
-        document.body.append(video);
-        const player = { video, frames: 0, resets: 0 };
-        players.push(player);
-        let frameCallback = 0;
-        const displayed = () => {
-          player.frames++;
-          frameCallback = video.requestVideoFrameCallback(displayed);
-        };
-        frameCallback = video.requestVideoFrameCallback(displayed);
-        video.onerror = () => errors.push(video.error?.message ?? 'video failed');
-        const createReceiver = () => {
-          const receiver = createCallMediaReceiver(mime, () => errors.push('decoder failed'));
-          video.src = receiver.url;
-          void video.play().catch(() => {});
-          return receiver;
-        };
-        let receiver = createReceiver();
-        const follow = watchCallLive(video, 'video');
-        const clone = cloneCallTrack(source);
-        const stop = recordCallMedia(
-          new MediaStream([clone]),
-          mime,
-          async (bytes) => receiver.append(bytes.subarray(1)),
-          () => errors.push('recorder failed'),
-          {
-            onStreamRestart: async () => {
-              player.resets++;
-              receiver.close();
-              receiver = createReceiver();
-            },
-          },
-        );
-        stops.push(() => {
-          stop();
-          follow();
-          clone.stop();
-          video.cancelVideoFrameCallback(frameCallback);
-          video.onerror = null;
-          video.pause();
-          video.removeAttribute('src');
-          video.load();
-          receiver.close();
-          video.remove();
+for (const nativeRenewal of [false, true]) {
+  test(`shared WebM video gives staggered late joiners decodable headers${nativeRenewal ? ' through Linux recorder renewals' : ''}`, async ({
+    page,
+  }, testInfo) => {
+    await page.route('**/__shared-video', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<button>Start</button>' }),
+    );
+    await page.goto('/__shared-video');
+    await page.getByRole('button').click();
+    const result = await page.evaluate(async (nativeRenewal) => {
+      if (nativeRenewal) {
+        (window as any).isTauri = true;
+        Object.defineProperty(navigator, 'userAgent', {
+          configurable: true,
+          value: 'Linux x86_64',
         });
-        await delay(600);
       }
-      // Every participant must keep decoding after the last shared reset.
-      const before = players.map((p) => p.frames);
-      const deadline = performance.now() + 10000;
-      while (
-        players.some((p, i) => p.frames - before[i] < 5) &&
-        performance.now() < deadline &&
-        !errors.length
-      )
-        await delay(100);
-      return {
-        errors,
-        frames: players.map((p, i) => p.frames - before[i]),
-        resets: players.map((p) => p.resets),
-      };
-    } finally {
-      stops.forEach((stop) => stop());
-      source.stop();
-      clearInterval(draw);
-      canvas.remove();
-    }
+      const { recordCallMedia, createCallMediaReceiver } =
+        await import('/src/services/callMediaService.ts');
+      const { cloneCallTrack } = await import('/src/services/callSharedCapture.ts');
+      const { watchCallLive } = await import('/src/services/callPlaybackService.ts');
+      const mime = 'video/webm;codecs=vp8';
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 180;
+      document.body.append(canvas);
+      const paint = canvas.getContext('2d')!;
+      const draw = setInterval(() => {
+        paint.fillStyle = `hsl(${performance.now() % 360},90%,50%)`;
+        paint.fillRect(0, 0, 320, 180);
+      }, 50);
+      const source = canvas.captureStream(20).getVideoTracks()[0];
+      const errors: string[] = [];
+      const stops: Array<() => void> = [];
+      const players: Array<{ video: HTMLVideoElement; frames: number; resets: number }> = [];
+      const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      try {
+        for (let i = 0; i < 5; i++) {
+          const video = document.createElement('video');
+          video.muted = true;
+          video.playsInline = true;
+          video.autoplay = true;
+          document.body.append(video);
+          const player = { video, frames: 0, resets: 0 };
+          players.push(player);
+          let frameCallback = 0;
+          const displayed = () => {
+            player.frames++;
+            frameCallback = video.requestVideoFrameCallback(displayed);
+          };
+          frameCallback = video.requestVideoFrameCallback(displayed);
+          video.onerror = () => errors.push(video.error?.message ?? 'video failed');
+          const createReceiver = () => {
+            const receiver = createCallMediaReceiver(mime, () => errors.push('decoder failed'));
+            video.src = receiver.url;
+            void video.play().catch(() => {});
+            return receiver;
+          };
+          let receiver = createReceiver();
+          const follow = watchCallLive(video, 'video');
+          const clone = cloneCallTrack(source);
+          const stop = recordCallMedia(
+            new MediaStream([clone]),
+            mime,
+            async (bytes) => receiver.append(bytes.subarray(1)),
+            () => errors.push('recorder failed'),
+            {
+              onStreamRestart: async () => {
+                player.resets++;
+                receiver.close();
+                receiver = createReceiver();
+              },
+            },
+          );
+          stops.push(() => {
+            stop();
+            follow();
+            clone.stop();
+            video.cancelVideoFrameCallback(frameCallback);
+            video.onerror = null;
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+            receiver.close();
+            video.remove();
+          });
+          await delay(600);
+        }
+        // Cross two periodic renewals as well as the late-join resets. A new
+        // WebM header must not be appended to an old receiver timeline.
+        const joinResets = players.map((p) => p.resets);
+        if (nativeRenewal) await delay(9000);
+        // Every participant must keep decoding after the last shared reset.
+        const before = players.map((p) => p.frames);
+        const deadline = performance.now() + 10000;
+        while (
+          players.some((p, i) => p.frames - before[i] < 5) &&
+          performance.now() < deadline &&
+          !errors.length
+        )
+          await delay(100);
+        return {
+          errors,
+          joinResets,
+          players: players.map(({ video, frames, resets }) => ({
+            frames,
+            resets,
+            time: video.currentTime,
+            ready: video.readyState,
+            paused: video.paused,
+            seeking: video.seeking,
+            buffered: Array.from({ length: video.buffered.length }, (_, i) => [
+              video.buffered.start(i),
+              video.buffered.end(i),
+            ]),
+          })),
+          frames: players.map((p, i) => p.frames - before[i]),
+          resets: players.map((p) => p.resets),
+        };
+      } finally {
+        stops.forEach((stop) => stop());
+        source.stop();
+        clearInterval(draw);
+        canvas.remove();
+      }
+    }, nativeRenewal);
+    await testInfo.attach('shared-video-playback', {
+      body: JSON.stringify(result, null, 2),
+      contentType: 'application/json',
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.frames).toHaveLength(5);
+    for (const [index, frames] of result.frames.entries())
+      expect(
+        frames,
+        `Player ${index}: ${JSON.stringify(result.players[index])}`,
+      ).toBeGreaterThanOrEqual(5);
+    expect(result.joinResets).toEqual([4, 3, 2, 1, 0]);
+    if (nativeRenewal) {
+      const renewals = result.resets[4];
+      expect(renewals).toBeGreaterThanOrEqual(2);
+      expect(result.resets).toEqual(result.joinResets.map((resets) => resets + renewals));
+    } else expect(result.resets).toEqual(result.joinResets);
   });
-  expect(result.errors).toEqual([]);
-  expect(result.frames).toHaveLength(5);
-  expect(result.frames.every((frames) => frames >= 5)).toBe(true);
-  expect(result.resets).toEqual([4, 3, 2, 1, 0]);
-});
+}
 
 for (const kind of ['audio', 'video', 'combined'] as const) {
   for (const { managed, slowSend, unevenSend } of [
