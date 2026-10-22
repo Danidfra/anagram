@@ -625,7 +625,7 @@
           {#if $state.local}<div
               class="room-tile"
               data-testid="room-local"
-              class:room-tile--speaker={focusedSpeaker === 'local'}
+              class:room-tile--speaker={speakerView && focusedSpeaker === 'local'}
               class:room-tile--speaking={speaking.has('local') && !$state.muted}
             >
               <div class="room-tile__content" use:callVideoAspect>
@@ -657,7 +657,7 @@
             {@const displayName = peer.name}
             <div
               class="room-tile"
-              class:room-tile--speaker={focusedSpeaker === peer.pubkey}
+              class:room-tile--speaker={speakerView && focusedSpeaker === peer.pubkey}
               class:room-tile--speaking={speaking.has(peer.pubkey) && !peer.microphoneMuted}
               data-testid={`room-peer-${peer.pubkey}`}
             >
@@ -696,8 +696,16 @@
               </div>
             </div>{/each}
         </div>
-      {:else if hasVideo}<div class="call-panel__media">
-          {#if videoUrl}<div class="call-panel__remote" class:call-speaking={remoteSpeaking}>
+      {:else if hasVideo || screens.length}<div class="call-panel__media">
+          <!-- The header avatar is hidden beside video or a screen; without remote
+               video the peer keeps an avatar here, which carries the speaking ring. -->
+          {#if !videoUrl}<div
+              class="call-panel__remote call-person"
+              class:call-speaking={remoteSpeaking}
+              data-testid="call-remote-avatar"
+            >
+              <Avatar name={peerName} publicKey={peerKey} eager />
+            </div>{:else}<div class="call-panel__remote" class:call-speaking={remoteSpeaking}>
               <CallVideo
                 bind:this={remoteVideo}
                 url={videoUrl}
@@ -1190,6 +1198,12 @@
   .call-panel__identity :global(svg) {
     width: 40px;
     height: 40px;
+  }
+  .call-panel__remote.call-person {
+    container-type: size;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   /* Scale with the tile; the avatar's inline size is a fixed default. */
   .call-person :global(.avatar) {

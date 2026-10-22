@@ -65,4 +65,34 @@ describe('speaking indicator', () => {
     levels.delete('peer');
     expect([...track(levels, 'local', 200)]).toEqual(['local']);
   });
+  it('starts on two consecutive samples despite timer jitter, not on separate spikes', () => {
+    const levels = new Map([['peer', 0.2]]);
+    for (const gap of [99, 60, 140]) {
+      const track = createSpeakingTracker();
+      track(levels, 'peer', 1000);
+      expect([...track(levels, 'peer', 1000 + gap)]).toEqual(['peer']);
+    }
+    const track = createSpeakingTracker();
+    track(levels, 'peer', 0);
+    levels.set('peer', 0);
+    track(levels, 'peer', 100);
+    track(levels, 'peer', 200);
+    levels.set('peer', 0.2);
+    // A second spike after a quiet sample is noise, but it can begin real speech.
+    expect(track(levels, 'peer', 300).size).toBe(0);
+    expect([...track(levels, 'peer', 400)]).toEqual(['peer']);
+  });
+  it('holds speech for exactly the silence window', () => {
+    const track = createSpeakingTracker();
+    const levels = new Map([['peer', 0.2]]);
+    track(levels, 'peer', 0);
+    const speaking = track(levels, 'peer', 100);
+    levels.set('peer', 0);
+    expect(track(levels, 'peer', 799)).toBe(speaking);
+    expect(track(levels, 'peer', 800).size).toBe(0);
+    // After the hold ends, speech must start over with two samples.
+    levels.set('peer', 0.2);
+    expect(track(levels, 'peer', 900).size).toBe(0);
+    expect([...track(levels, 'peer', 1000)]).toEqual(['peer']);
+  });
 });

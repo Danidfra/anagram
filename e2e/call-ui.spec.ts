@@ -1021,6 +1021,8 @@ test('call avatars follow participant profiles and speaking rings follow live au
   await speech('remote.value = 0.5');
   await expect(remote).toHaveClass(/room-tile--speaking/);
   await expect(local).not.toHaveClass(/room-tile--speaking/);
+  // Gallery tiles are not promoted, so the active speaker marks no tile.
+  await expect(page.locator('.room-tile--speaker')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/call-room-speaking.png' });
   await speech('remote.value = 0');
   await expect(remote).not.toHaveClass(/room-tile--speaking/);
@@ -1078,6 +1080,79 @@ test('call avatars follow participant profiles and speaking rings follow live au
   await speech('remote.value = 0.5');
   await expect(avatar).toHaveClass(/call-speaking/);
   await page.screenshot({ path: 'test-results/call-direct-speaking.png' });
+
+  // Beside the local camera the header avatar is hidden; the peer keeps one on stage.
+  const stageAvatar = page.getByTestId('call-remote-avatar');
+  await page.evaluate(() => {
+    const call = (window as any).__testCall;
+    const canvas = document.createElement('canvas');
+    canvas.getContext('2d')!.fillRect(0, 0, 300, 150);
+    (window as any).__speech.camera = () => canvas.captureStream(5);
+    call.localStream = (window as any).__speech.camera();
+    call.session = { ...call.session, cameraMuted: false };
+  });
+  await expect(page.locator('.call-panel__local video')).toBeVisible();
+  await expect(avatar).toBeHidden();
+  await expect(stageAvatar.locator('.avatar img')).toBeVisible();
+  await expect(stageAvatar).toHaveClass(/call-speaking/);
+  await speech('remote.value = 0');
+  await expect(stageAvatar).not.toHaveClass(/call-speaking/);
+
+  // The same while only a screen is shared.
+  await page.evaluate(() => {
+    const call = (window as any).__testCall;
+    call.session = { ...call.session, cameraMuted: true };
+    call.localScreenStream = (window as any).__speech.camera();
+  });
+  await expect(page.getByTestId('call-screen-media')).toBeVisible();
+  await expect(page.locator('.call-panel__local')).toHaveCount(0);
+  await expect(stageAvatar).toBeVisible();
+  await speech('remote.value = 0.5');
+  await expect(stageAvatar).toHaveClass(/call-speaking/);
+  await page.screenshot({ path: 'test-results/call-direct-sharing-speaking.png' });
+
+  // The presentation window follows the ring without rebuilding its mirror.
+  const popupPromise = page.waitForEvent('popup');
+  await page.getByTestId('call-open-window').click();
+  const popup = await popupPromise;
+  const mirrored = popup.locator('main > [data-testid="call-stage"]');
+  const popupAvatar = popup.getByTestId('call-remote-avatar');
+  await expect(popupAvatar).toHaveClass(/call-speaking/);
+  await mirrored.evaluate((node) => ((node as any).__mirror = true));
+  await speech('remote.value = 0');
+  await expect(popupAvatar).not.toHaveClass(/call-speaking/);
+  await speech('remote.value = 0.5');
+  await expect(popupAvatar).toHaveClass(/call-speaking/);
+  expect(await mirrored.evaluate((node) => (node as any).__mirror)).toBe(true);
+
+  // Remote video replaces the stage avatar and carries the ring; the window mirrors it in place.
+  await page.evaluate(async () => {
+    const { registerCallStream } = await import('/src/services/callStreamRegistry.ts');
+    const call = (window as any).__testCall;
+    call.remoteVideoUrl = registerCallStream((window as any).__speech.camera()).url;
+  });
+  const remoteFrame = page.locator('.call-panel__remote', {
+    has: page.getByTestId('call-remote-media'),
+  });
+  await expect(stageAvatar).toHaveCount(0);
+  await expect(remoteFrame).toHaveClass(/call-speaking/);
+  await expect(popupAvatar).toHaveCount(0);
+  await expect(popup.locator('.call-panel__remote.call-speaking canvas')).toBeVisible();
+  expect(await mirrored.evaluate((node) => (node as any).__mirror)).toBe(true);
+  await speech('remote.value = 0');
+  await expect(remoteFrame).not.toHaveClass(/call-speaking/);
+  await expect(popup.locator('.call-panel__remote.call-speaking')).toHaveCount(0);
+  await page.getByTestId('call-return-presentation').click();
+  await expect.poll(() => popup.isClosed()).toBe(true);
+  await page.evaluate(() => {
+    const call = (window as any).__testCall;
+    call.localScreenStream = null;
+    call.remoteVideoUrl = '';
+  });
+  await expect(avatar).toBeVisible();
+  await speech('remote.value = 0.5');
+  await expect(avatar).toHaveClass(/call-speaking/);
+
   await page.evaluate(() => {
     const call = (window as any).__testCall;
     call.session = { ...call.session, remoteMicrophoneMuted: true };
