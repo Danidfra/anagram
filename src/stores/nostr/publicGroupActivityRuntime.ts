@@ -1,7 +1,16 @@
 import type NostrClient from '#src/lib/nostr/client.ts';
 import type { NostrEvent, NostrSubscription } from '#src/lib/nostr/client.ts';
 import type { PublicGroupData, SavedPublicRoom } from '#src/services/publicGroupData.ts';
-import { roomPolicy, validRoomMessage } from './publicGroups.ts';
+import { textMentionsPublicKey } from '#src/utils/nostrMentions.ts';
+import { actionTargets, editRoot, editTarget, validPublicAction } from './publicMessageActions.ts';
+import { roomPolicy, validRoomMessage, type PublicRoom } from './publicGroups.ts';
+
+// Untrusted posts display profile mentions as "[profile removed]"; only count visible mentions.
+function mentionsAccount(room: PublicRoom, event: NostrEvent, account: string): boolean {
+  return (
+    roomPolicy(room, event.pubkey) === 'trusted' && textMentionsPublicKey(event.content, account)
+  );
+}
 
 /** Small live inbox summaries for joined rooms, independent of the displayed history window. */
 export function createPublicGroupActivityRuntime(deps: {
@@ -31,6 +40,35 @@ export function createPublicGroupActivityRuntime(deps: {
       token = generation;
     const row = rows.get(address);
     if (
+      db &&
+      account &&
+      row?.joined &&
+      !row.blocked &&
+      (event.kind === 5 || (event.kind === 9 && editTarget(event))) &&
+      validPublicAction(event, address)
+    ) {
+      const updated = await db.updateMention(
+        address,
+        event.kind === 5
+          ? { kind: 'delete', targets: actionTargets(event), author: event.pubkey }
+          : {
+              kind: 'edit',
+              root: editRoot(event)!,
+              target: editTarget(event)!,
+              id: event.id!,
+              author: event.pubkey,
+              mentionsMe: mentionsAccount(row.room, event, account),
+            },
+      );
+      const current =
+        generation === token && deps.account() === account && deps.database() === db;
+      if (updated && current) {
+        rows.set(address, updated);
+        deps.changed(updated);
+      }
+      return;
+    }
+    if (
       !db ||
       !account ||
       !row?.joined ||
@@ -48,7 +86,12 @@ export function createPublicGroupActivityRuntime(deps: {
     if (!cached) await db.put(address, event);
     if (!active()) return;
     const reading = visible === address && focused();
-    const result = await db.recordActivity(address, event, reading);
+    const result = await db.recordActivity(
+      address,
+      event,
+      reading,
+      !reading && mentionsAccount(row.room, event, account),
+    );
     if (!active() || !result.row || !result.fresh) return;
     rows.set(address, result.row);
     deps.changed(result.row);
@@ -109,6 +152,13 @@ export function createPublicGroupActivityRuntime(deps: {
             {
               kinds: [9],
               '#a': [row.address],
+              since: Math.max(saved.activitySince ?? 0, (saved.lastActivityAt ?? 0) - 1),
+              limit: 50,
+            },
+            // Deletions can retract an unread mention.
+            {
+              kinds: [5],
+              '#h': [row.address],
               since: Math.max(saved.activitySince ?? 0, (saved.lastActivityAt ?? 0) - 1),
               limit: 50,
             },

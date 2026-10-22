@@ -47,6 +47,12 @@ import {
 } from '#src/utils/messageReactions.ts';
 import { resolveMessageWindowMerge } from '#src/utils/messageWindowRange.ts';
 import { buildMentionMetadata } from '#src/utils/nostrMentions.ts';
+import {
+  UNREAD_MENTION_AT_META_KEY,
+  laterMentionAt,
+  readChatSeenBoundaryAt,
+  resolveUnreadMentionAt,
+} from '#src/utils/unreadMentions.ts';
 
 type MessageRow = Awaited<ReturnType<typeof chatDataService.listMessages>>[number];
 const MESSAGE_PAGE_SIZE = 50;
@@ -1043,6 +1049,46 @@ export const useMessageStore = createStore('messageStore', () => {
 
     chatStore.setUnseenReactionCount(normalizedChatId, nextUnseenReactionCount);
     return nextUnseenReactionCount;
+  }
+
+  // Edits and deletions can add or remove the latest unread mention; rescan only unread rows.
+  async function syncChatUnreadMention(chatId: string): Promise<void> {
+    const normalizedChatId = normalizeChatIdentifier(chatId);
+    if (!normalizedChatId) {
+      return;
+    }
+
+    await chatDataService.init();
+    const chatRow = await chatDataService.getChatByPublicKey(normalizedChatId);
+    if (!chatRow || chatRow.type !== 'group') {
+      return;
+    }
+
+    const loggedInPublicKey = getLoggedInPublicKey();
+    let nextMentionAt = '';
+    for await (const batch of chatDataService.messageBatches(
+      normalizedChatId,
+      250,
+      readChatSeenBoundaryAt(chatRow.meta),
+    )) {
+      nextMentionAt = laterMentionAt(
+        nextMentionAt,
+        resolveUnreadMentionAt(chatRow.meta, batch, loggedInPublicKey),
+      );
+    }
+
+    const currentMentionAt = chatRow.meta[UNREAD_MENTION_AT_META_KEY] ?? '';
+    if (currentMentionAt !== nextMentionAt) {
+      const nextMeta = { ...chatRow.meta };
+      if (nextMentionAt) {
+        nextMeta[UNREAD_MENTION_AT_META_KEY] = nextMentionAt;
+      } else {
+        delete nextMeta[UNREAD_MENTION_AT_META_KEY];
+      }
+      await chatDataService.updateChatMeta(normalizedChatId, nextMeta);
+    }
+
+    chatStore.setUnreadMentionAt(normalizedChatId, nextMentionAt);
   }
 
   async function syncChatUnseenReactionCount(chatId: string): Promise<number> {
@@ -2955,6 +3001,7 @@ export const useMessageStore = createStore('messageStore', () => {
     markMessageReactionsViewed,
     markMessagesReactionsViewed,
     syncChatsReadStateFromSeenBoundary,
+    syncChatUnreadMention,
     syncChatUnseenReactionCount,
     removeChatMessages,
     upsertPersistedMessage,
