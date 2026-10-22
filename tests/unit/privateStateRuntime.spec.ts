@@ -1,5 +1,6 @@
 import { type ClientEvent, NostrKind } from '#src/lib/nostr/client.ts';
 import {
+  CONTACT_CURSOR_LIVE_LOOKBACK_SECONDS,
   CONTACT_CURSOR_PUBLISH_DELAY_MS,
   CONTACT_CURSOR_PUBLISH_JITTER_MS,
   CONTACT_CURSOR_SYNC_TIMEOUT_MS,
@@ -122,6 +123,7 @@ const serviceMocks = vi.hoisted(() => ({
 
 const messageStoreMock = vi.hoisted(() => ({
   reloadLoadedMessages: vi.fn(async () => {}),
+  upsertPersistedMessage: vi.fn(async () => {}),
   syncChatsReadStateFromSeenBoundary: vi.fn(async () => ({
     chatCount: 0,
     boundaryAdvancedCount: 0,
@@ -212,6 +214,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     bumpContactListVersion: vi.fn(),
     chatStore: {
       reload: vi.fn().mockResolvedValue(undefined),
+      refreshChat: vi.fn().mockResolvedValue(undefined),
     },
     chunkValues: vi.fn(<T>(values: T[], chunkSize: number) => {
       const chunks: T[][] = [];
@@ -1616,7 +1619,7 @@ describe('privateStateRuntime', () => {
       });
     }
 
-    function publishedCursors(): Array<{ content: string; created_at: number }> {
+    function publishedCursors(): Array<{ content: string; created_at: number; tags: string[][] }> {
       return ndkMocks.publishReplaceable.mock.calls.map(([event]) => event);
     }
 
@@ -1656,7 +1659,11 @@ describe('privateStateRuntime', () => {
 
       subscriptions[0].onEvent(makeCursorEvent('2026-01-03T00:00:00.000Z'));
 
-      await vi.waitFor(() => expect(deps.chatStore.reload).toHaveBeenCalledTimes(1));
+      // Only the affected chat is re-read; the inbox and loaded threads are not reloaded.
+      await vi.waitFor(() =>
+        expect(deps.chatStore.refreshChat).toHaveBeenCalledExactlyOnceWith(contactPublicKey),
+      );
+      expect(deps.chatStore.reload).not.toHaveBeenCalled();
       expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
         metaBase: {},
         meta: {
@@ -1668,7 +1675,7 @@ describe('privateStateRuntime', () => {
         contactPublicKey,
         0,
       );
-      expect(messageStoreMock.reloadLoadedMessages).toHaveBeenCalledTimes(1);
+      expect(messageStoreMock.reloadLoadedMessages).not.toHaveBeenCalled();
     });
 
     it('ignores preferences, group secrets, foreign authors and unknown d-tags', async () => {
@@ -1689,6 +1696,190 @@ describe('privateStateRuntime', () => {
       expect(deps.decryptContactCursorContent).not.toHaveBeenCalled();
       expect(serviceMocks.contactsService.updateContact).not.toHaveBeenCalled();
       expect(deps.chatStore.reload).not.toHaveBeenCalled();
+    });
+
+    async function settleLiveEvents(): Promise<void> {
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flushPromises();
+    }
+
+    it('handles the echo of its own publish without decrypting or rescanning the chat', async () => {
+      // Publishing and resolving derive the same d-tag, as in the app.
+      const { deps, runtime, subscriptions } = createLiveRuntime({
+        deriveContactCursorDTag: vi.fn(async (publicKey: string) => `sha256:secret${publicKey}`),
+      });
+      ndkMocks.publishReplaceable.mockImplementationOnce(async (event) => {
+        event.id = 'own-event';
+      });
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+      await runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-05T00:00:00.000Z',
+        eventId: 'own',
+      });
+      const [own] = publishedCursors();
+
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-05T00:00:00.000Z', {
+          id: 'own-event',
+          created_at: own.created_at,
+          content: own.content,
+          tags: own.tags,
+        }),
+      );
+      await settleLiveEvents();
+
+      expect(deps.decryptContactCursorContent).not.toHaveBeenCalled();
+      expect(serviceMocks.chatDataService.findLatestMessageByAuthor).not.toHaveBeenCalled();
+      expect(serviceMocks.chatDataService.reactionMessageBatches).not.toHaveBeenCalled();
+      expect(serviceMocks.contactsService.updateContact).not.toHaveBeenCalled();
+      expect(deps.chatStore.refreshChat).not.toHaveBeenCalled();
+      expect(deps.chatStore.reload).not.toHaveBeenCalled();
+      expect(publishedCursors()).toHaveLength(1);
+    });
+
+    it('skips decryption and chat scans for replays and cursors it already applied', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
+        public_key: contactPublicKey,
+        unread_count: 1,
+        meta: {},
+      });
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+      const event = makeCursorEvent('2026-01-03T00:00:00.000Z', { id: 'other-device' });
+      subscriptions[0].onEvent(event);
+      await vi.waitFor(() => expect(deps.chatStore.refreshChat).toHaveBeenCalledTimes(1));
+      const scans = serviceMocks.chatDataService.findLatestMessageByAuthor.mock.calls.length;
+      expect(scans).toBe(1);
+
+      // Every relay drops, then the recovered subscription replays the same stored event.
+      subscriptions[0].onClose();
+      await runtime.recoverContactCursorSubscription();
+      await flushPromises();
+      subscriptions[1].onEvent(event);
+      // The same cursor under another event id, e.g. already restored at startup.
+      subscriptions[1].onEvent(
+        makeCursorEvent('2026-01-03T00:00:00.000Z', { id: 'same-cursor-other-event' }),
+      );
+      await settleLiveEvents();
+
+      expect(deps.decryptContactCursorContent).toHaveBeenCalledTimes(2);
+      expect(serviceMocks.chatDataService.findLatestMessageByAuthor).toHaveBeenCalledTimes(scans);
+      expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledTimes(1);
+      expect(deps.chatStore.refreshChat).toHaveBeenCalledTimes(1);
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+    });
+
+    it('retries a cursor whose apply failed when relays replay it', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      serviceMocks.contactsService.updateContact.mockRejectedValueOnce(new Error('disk full'));
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+      const event = makeCursorEvent('2026-01-03T00:00:00.000Z', { id: 'other-device' });
+
+      subscriptions[0].onEvent(event);
+      await settleLiveEvents();
+      expect(deps.chatStore.refreshChat).not.toHaveBeenCalled();
+
+      subscriptions[0].onClose();
+      await runtime.recoverContactCursorSubscription();
+      await flushPromises();
+      subscriptions[1].onEvent(event);
+      await vi.waitFor(() => expect(deps.chatStore.refreshChat).toHaveBeenCalledTimes(1));
+      expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledTimes(2);
+    });
+
+    it('updates only the reactions it marked seen, not every loaded thread', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      const ownMessage = {
+        id: 5,
+        author_public_key: account,
+        created_at: '2026-01-01T00:00:00.000Z',
+        meta: {
+          reactions: [
+            {
+              emoji: '👍',
+              name: 'Alice',
+              reactorPublicKey: contactPublicKey,
+              createdAt: '2026-01-02T00:00:00.000Z',
+            },
+          ],
+        },
+      };
+      serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
+        public_key: contactPublicKey,
+        unread_count: 0,
+        meta: {},
+      });
+      serviceMocks.chatDataService.listMessages.mockResolvedValue([ownMessage]);
+      const updatedRow = { ...ownMessage, meta: { reactions: [] } };
+      serviceMocks.chatDataService.updateMessageMeta.mockResolvedValue(updatedRow);
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      subscriptions[0].onEvent(makeCursorEvent('2026-01-03T00:00:00.000Z'));
+
+      await vi.waitFor(() =>
+        expect(messageStoreMock.upsertPersistedMessage).toHaveBeenCalledExactlyOnceWith(updatedRow),
+      );
+      expect(serviceMocks.chatDataService.updateMessageMeta).toHaveBeenCalledWith(
+        5,
+        expect.objectContaining({
+          reactions: [expect.objectContaining({ viewedByAuthorAt: '2026-01-03T00:00:00.000Z' })],
+        }),
+      );
+      expect(messageStoreMock.reloadLoadedMessages).not.toHaveBeenCalled();
+      expect(deps.chatStore.reload).not.toHaveBeenCalled();
+    });
+
+    it('hashes each contact once while resolving unknown d-tags', async () => {
+      const otherContact = { ...makeContact(), id: 8, public_key: 'c'.repeat(64) };
+      serviceMocks.contactsService.listContacts.mockResolvedValue([makeContact(), otherContact]);
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      // Other apps also store kind 30078 events under this account.
+      for (const dTag of ['other-app-1', 'other-app-2', 'other-app-3']) {
+        subscriptions[0].onEvent(
+          makeCursorEvent('2026-01-03T00:00:00.000Z', { tags: [['d', dTag]] }),
+        );
+      }
+      await settleLiveEvents();
+      expect(deps.deriveContactCursorDTag).toHaveBeenCalledTimes(2);
+      expect(deps.decryptContactCursorContent).not.toHaveBeenCalled();
+
+      // A contact added later is still resolved.
+      const newContact = { ...makeContact(), id: 9, public_key: 'd'.repeat(64) };
+      serviceMocks.contactsService.listContacts.mockResolvedValue([
+        makeContact(),
+        otherContact,
+        newContact,
+      ]);
+      serviceMocks.contactsService.getContactByPublicKey.mockResolvedValue(newContact);
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-03T00:00:00.000Z', { tags: [['d', `dtag-${'d'.repeat(64)}`]] }),
+      );
+      await vi.waitFor(() =>
+        expect(deps.chatStore.refreshChat).toHaveBeenCalledExactlyOnceWith('d'.repeat(64)),
+      );
+      expect(deps.deriveContactCursorDTag).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps the full replay window when a subscription closes before catching up', async () => {
+      const { runtime, subscriptions } = createLiveRuntime({}, { sendEose: false });
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      subscriptions[0].onClose();
+      await runtime.recoverContactCursorSubscription();
+      await flushPromises();
+
+      expect(subscriptions).toHaveLength(2);
+      expect(subscriptions[1].filters).toEqual(subscriptions[0].filters);
     });
 
     it('never publishes a cursor at or behind the newest known cursor', async () => {
@@ -1725,7 +1916,7 @@ describe('privateStateRuntime', () => {
       await flushPromises();
 
       subscriptions[0].onEvent(makeCursorEvent('2026-01-05T00:00:00.000Z'));
-      await vi.waitFor(() => expect(deps.chatStore.reload).toHaveBeenCalled());
+      await vi.waitFor(() => expect(deps.chatStore.refreshChat).toHaveBeenCalled());
 
       await runtime.publishContactCursor(contactPublicKey, {
         at: '2026-01-04T00:00:00.000Z',
@@ -1852,13 +2043,20 @@ describe('privateStateRuntime', () => {
         ]);
         await flushPromises();
         expect(subscriptions).toHaveLength(1 + cycle);
-        // The same filter replays everything published while the relays were away.
-        expect(subscriptions.at(-1)?.filters).toEqual(subscriptions[0].filters);
+        // A caught-up subscription resumes from its close, minus the clock-skew lookback,
+        // instead of replaying everything since startup again.
+        const resumedSince = (subscriptions.at(-1)?.filters as { since: number }).since;
+        expect(resumedSince).toBeGreaterThanOrEqual(
+          Math.floor(Date.now() / 1000) - CONTACT_CURSOR_LIVE_LOOKBACK_SECONDS - 1,
+        );
+        expect(resumedSince).toBeLessThanOrEqual(
+          Math.floor(Date.now() / 1000) - CONTACT_CURSOR_LIVE_LOOKBACK_SECONDS,
+        );
       }
       expect(deps.resolveLoggedInReadRelayUrls).toHaveBeenLastCalledWith(['wss://seed.example']);
 
       subscriptions.at(-1)?.onEvent(makeCursorEvent('2026-01-06T00:00:00.000Z'));
-      await vi.waitFor(() => expect(deps.chatStore.reload).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(deps.chatStore.refreshChat).toHaveBeenCalledTimes(1));
       expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
         metaBase: {},
         meta: {
@@ -2001,7 +2199,7 @@ describe('privateStateRuntime', () => {
       subscriptions[0].onEvent(
         makeCursorEvent('2026-01-05T00:00:00.000Z', { created_at: 1_800_000_000 }),
       );
-      await vi.waitFor(() => expect(deps.chatStore.reload).toHaveBeenCalled());
+      await vi.waitFor(() => expect(deps.chatStore.refreshChat).toHaveBeenCalled());
 
       // Hold queued publishes behind a startup restore that is still running.
       let finishRestore!: () => void;
