@@ -85,6 +85,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     stale: false,
     more: true,
   });
+  // Mentions that were unread when the open room was marked read, kept in memory only so
+  // the room can still step through them after opening it cleared the indicator.
+  const mentionSnapshot = writable<{ address: string; ids: string[] } | null>(null);
   // Message hydration must not invalidate the entire application's chat list.
   const sidebar: Readable<{ rooms: SavedPublicRoom[]; address: string }> = {
     subscribe(run) {
@@ -110,6 +113,9 @@ export function createPublicGroupRuntime(deps: Dependencies) {
         : current),
     })),
     failed: () => state.update((s) => ({ ...s, error: 'Public group updates paused. Refresh to retry.' })),
+    mentioned: (address, ids) => {
+      if (get(state).room?.address === address) mentionSnapshot.set({ address, ids });
+    },
   });
   let windowRevision = 0;
   // Raw edit versions can outnumber displayed rows. Retain only the last scan
@@ -185,6 +191,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
       throw new Error('Account changed. Reopen the public group.');
   }
   function stopView() {
+    mentionSnapshot.set(null);
     view++;
     windowRevision++;
     stopLive();
@@ -1979,5 +1986,7 @@ export function createPublicGroupRuntime(deps: Dependencies) {
     ingestActivity,
     markRead: activity.markRead,
     setVisible: activity.setVisible,
+    mentionSnapshot: { subscribe: mentionSnapshot.subscribe },
+    clearMentionSnapshot: () => mentionSnapshot.set(null),
   };
 }

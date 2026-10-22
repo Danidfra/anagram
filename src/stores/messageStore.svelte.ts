@@ -49,6 +49,7 @@ import { resolveMessageWindowMerge } from '#src/utils/messageWindowRange.ts';
 import { buildMentionMetadata } from '#src/utils/nostrMentions.ts';
 import {
   UNREAD_MENTION_AT_META_KEY,
+  UNREAD_MENTION_NAVIGATION_LIMIT,
   isAfterChatSeenBoundary,
   isIncomingMentionRow,
   laterMentionAt,
@@ -1081,6 +1082,46 @@ export const useMessageStore = createStore('messageStore', () => {
       cursor = { id: oldest.id, created_at: oldest.created_at };
     }
     return '';
+  }
+
+  // Ids of the mentions after a seen boundary, oldest first. Walks back from the newest
+  // message to the boundary, the navigation limit or the scan limit, whichever comes first.
+  async function listUnreadMentionIds(chatId: string, since: string): Promise<string[]> {
+    const normalizedChatId = normalizeChatIdentifier(chatId);
+    if (!normalizedChatId) {
+      return [];
+    }
+
+    await chatDataService.init();
+    const loggedInPublicKey = getLoggedInPublicKey();
+    const boundaryMeta = { last_seen_received_activity_at: since };
+    const ids: string[] = [];
+    let batch = await chatDataService.listLatestMessages(normalizedChatId, MESSAGE_PAGE_SIZE);
+    let scanned = 0;
+    for (;;) {
+      for (let index = batch.rows.length - 1; index >= 0; index -= 1) {
+        const row = batch.rows[index]!;
+        if (
+          !isAfterChatSeenBoundary(boundaryMeta, row.created_at) ||
+          ids.length >= UNREAD_MENTION_NAVIGATION_LIMIT
+        ) {
+          return ids.reverse();
+        }
+        if (isIncomingMentionRow(row, loggedInPublicKey)) {
+          ids.push(String(row.id));
+        }
+      }
+      scanned += batch.rows.length;
+      const oldest = batch.rows[0];
+      if (!batch.has_more || !oldest || scanned >= UNREAD_MENTION_SCAN_LIMIT) {
+        return ids.reverse();
+      }
+      batch = await chatDataService.listMessagesBefore(
+        normalizedChatId,
+        { id: oldest.id, created_at: oldest.created_at },
+        MESSAGE_PAGE_SIZE,
+      );
+    }
   }
 
   // An edit or deletion can only move the indicator when it adds a mention or removes the
@@ -3045,6 +3086,7 @@ export const useMessageStore = createStore('messageStore', () => {
     markMessagesReactionsViewed,
     syncChatsReadStateFromSeenBoundary,
     syncUnreadMentionForMessage,
+    listUnreadMentionIds,
     syncChatUnseenReactionCount,
     removeChatMessages,
     upsertPersistedMessage,

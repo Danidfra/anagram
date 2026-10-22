@@ -1241,6 +1241,26 @@ input[type='range'] {
   color: var(--nc-reaction-accent-text);
   z-index: 5;
 }
+/* Stacked above jump-to-latest (84px + 40px), so it never meets the reactions pill. */
+.mention-nav {
+  position: absolute;
+  bottom: 132px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  border-radius: 20px;
+  background: var(--nc-panel-header-bg);
+  border: 1px solid var(--nc-border);
+  box-shadow: var(--nc-shadow-sm);
+  z-index: 5;
+}
+.mention-nav-position {
+  padding: 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
 .contact-panel {
   flex: 1;

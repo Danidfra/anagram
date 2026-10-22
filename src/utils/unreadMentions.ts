@@ -1,6 +1,10 @@
 import { isIncomingUnreadMessageActivity } from '#src/utils/messageActivity.ts';
 
 export const UNREAD_MENTION_AT_META_KEY = 'unread_mention_at';
+// Opening a group keeps at most this many of its newest unread mentions for navigation.
+export const UNREAD_MENTION_NAVIGATION_LIMIT = 99;
+// A mention reached through the navigator is outlined this long; reply and search jumps stay.
+export const MENTION_NAVIGATION_HIGHLIGHT_MS = 2000;
 
 // Any of these marks everything up to it as read; see chatDataService chat_activity.
 const SEEN_BOUNDARY_META_KEYS = [

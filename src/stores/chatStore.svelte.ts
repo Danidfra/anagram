@@ -12,6 +12,7 @@ import { buildAvatarText } from '#src/utils/avatarText.ts';
 import { isIncomingUnreadMessageActivity } from '#src/utils/messageActivity.ts';
 import { buildImageAttachmentPreviewText } from '#src/utils/messageAttachments.ts';
 import { formatGroupMentionsForDisplay } from '#src/utils/nostrMentions.ts';
+import { hasUnreadChatMention, readChatSeenBoundaryAt } from '#src/utils/unreadMentions.ts';
 
 interface ChatContactContext {
   picture: string;
@@ -799,6 +800,9 @@ export const useChatStore = createStore('chatStore', () => {
   let visibleChatId = $state<string | null>(null);
   let searchQuery = $state('');
   let composerDraftsByChatId = $state<Record<string, string>>({});
+  // Seen boundary of a group whose unread mentions were cleared by opening it. Memory only,
+  // so the open thread can still step through those mentions after the read.
+  let unreadMentionSnapshots = $state<Record<string, { account: string; since: string }>>({});
   let isLoaded = $state(false);
   let initPromise: Promise<void> | null = null;
 
@@ -1205,6 +1209,22 @@ export const useChatStore = createStore('chatStore', () => {
     }
   }
 
+  /** The seen boundary to list a chat's previously unread mentions from, if captured. */
+  function getUnreadMentionSnapshot(chatId: string): string | null {
+    const snapshot = unreadMentionSnapshots[normalizeChatIdentifier(chatId) ?? ''];
+    return snapshot && snapshot.account === getLoggedInPublicKey() ? snapshot.since : null;
+  }
+
+  function clearUnreadMentionSnapshot(chatId: string): void {
+    const normalizedChatId = normalizeChatIdentifier(chatId);
+    if (!normalizedChatId || !(normalizedChatId in unreadMentionSnapshots)) {
+      return;
+    }
+
+    const { [normalizedChatId]: _cleared, ...rest } = unreadMentionSnapshots;
+    unreadMentionSnapshots = rest;
+  }
+
   async function markAsRead(chatId: string): Promise<ChatReadCursor | null> {
     const normalizedChatId = normalizeChatIdentifier(chatId);
     if (!normalizedChatId) {
@@ -1212,6 +1232,29 @@ export const useChatStore = createStore('chatStore', () => {
     }
 
     const existingChat = chats.find((chat) => chat.id === normalizedChatId) ?? null;
+    // Capture before the first write. Only the opened chat counts, not "mark as read" in the list.
+    const account = getLoggedInPublicKey();
+    if (
+      existingChat &&
+      account &&
+      (normalizedChatId === selectedChatId || normalizedChatId === visibleChatId) &&
+      hasUnreadChatMention(existingChat)
+    ) {
+      // A later read while the thread stays open keeps the earlier, wider boundary.
+      const previous = unreadMentionSnapshots[normalizedChatId];
+      const since = readChatSeenBoundaryAt(existingChat.meta);
+      unreadMentionSnapshots = {
+        ...unreadMentionSnapshots,
+        [normalizedChatId]: {
+          account,
+          since:
+            previous?.account === account &&
+            (Date.parse(previous.since) || 0) < (Date.parse(since) || 0)
+              ? previous.since
+              : since,
+        },
+      };
+    }
     let persistedMeta: Record<string, unknown> = {};
     if (!existingChat) {
       await chatDataService.init();
@@ -1997,6 +2040,8 @@ export const useChatStore = createStore('chatStore', () => {
     setLastSeenReceivedActivityAt,
     setUnreadCount,
     setUnreadMentionAt,
+    getUnreadMentionSnapshot,
+    clearUnreadMentionSnapshot,
     setUnseenReactionCount,
     applyIncomingMessage,
     addContact,

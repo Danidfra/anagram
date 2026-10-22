@@ -17,6 +17,8 @@
   import PinnedMessagePreview from '../PinnedMessagePreview.svelte';
   import ThreadSearch from '../ThreadSearch.svelte';
   import ThreadTimeline from '../ThreadTimeline.svelte';
+  import MentionNavigator from '../MentionNavigator.svelte';
+  import { MENTION_NAVIGATION_HIGHLIGHT_MS } from '#src/utils/unreadMentions.ts';
   import MessageRow from '../MessageRow.svelte';
   import { scrollThreadToLatest } from '#src/lib/actions/threadPosition.ts';
   import MessageComposer from '../MessageComposer.svelte';
@@ -25,7 +27,7 @@
   import { chatDate } from '#src/utils/chatDate.ts';
   import { locale, translate } from '#src/i18n.ts';
   export let messageLayout: string = 'bubbles';
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { useNostrStore } from '#src/stores/nostrStore.svelte.ts';
   import {
@@ -285,6 +287,27 @@
   $: room = $state.room;
   $: visibleAddress = room?.address ?? '';
   $: runtime.setVisible(visibleAddress);
+  // Mentions that were unread when this room was opened, kept until the room is left.
+  const mentionSnapshot = runtime.mentionSnapshot;
+  $: mentionIds =
+    $mentionSnapshot && $mentionSnapshot.address === visibleAddress ? $mentionSnapshot.ids : [];
+  let mentionHighlightTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(mentionHighlightTimer));
+  async function jumpToMention(id: string): Promise<boolean> {
+    highlightedMessage = '';
+    try {
+      await jump(id, new AbortController().signal);
+    } catch {
+      return false;
+    }
+    const reached = highlightedMessage;
+    if (!reached) return false;
+    clearTimeout(mentionHighlightTimer);
+    mentionHighlightTimer = setTimeout(() => {
+      if (highlightedMessage === reached) highlightedMessage = '';
+    }, MENTION_NAVIGATION_HIGHLIGHT_MS);
+    return true;
+  }
   $: own = nostr.getLoggedInPublicKeyHex() || '';
   $: mentionKeySignature = JSON.stringify(
     room
@@ -577,6 +600,11 @@
         </p>
       </div>{/each}
   </ThreadTimeline>
+  {#if mentionIds.length}{#key visibleAddress}<MentionNavigator
+        ids={mentionIds}
+        onjump={jumpToMention}
+        ondismiss={() => runtime.clearMentionSnapshot()}
+      />{/key}{/if}
   <div class="thread-feedback">
     <div class="thread-feedback-content">
       {#if error}<p class="status error" role="alert">

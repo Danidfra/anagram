@@ -197,3 +197,35 @@ it('never overwrites a read cursor written by markAsRead during a mention search
     hasUnreadChatMention({ type: next.type, unreadCount: next.unread_count, meta: next.meta }),
   ).toBe(false);
 });
+
+it('lists mentions after a captured boundary oldest first, skipping own, deleted and read ones', async () => {
+  const rows = await seed(6, [2, 4, 5, 6]);
+  await chatDataService.updateMessageMeta(rows[4]!.id, deleted(rows[4]!).meta);
+  await chatDataService.createMessage({
+    ...incoming(at(7), '7'.repeat(64), true),
+    author_public_key: OWN,
+  });
+  const store = useMessageStore();
+
+  expect(await store.listUnreadMentionIds(GROUP, at(2))).toEqual(
+    [rows[3]!.id, rows[5]!.id].map(String),
+  );
+  expect(await store.listUnreadMentionIds(GROUP, at(6))).toEqual([]);
+});
+
+it('bounds the mention list scan on a large history without a read boundary', async () => {
+  const rows = await seed(620, [1, 200, 619]);
+  const latest = vi.spyOn(chatDataService, 'listLatestMessages');
+  const before = vi.spyOn(chatDataService, 'listMessagesBefore');
+  const after = vi.spyOn(chatDataService, 'listMessagesAfter');
+
+  const ids = await useMessageStore().listUnreadMentionIds(GROUP, '');
+
+  // The mention in the first message lies beyond the newest 500 and is not read.
+  expect(ids).toEqual([rows[199]!.id, rows[618]!.id].map(String));
+  const batches = await Promise.all(
+    [...latest.mock.results, ...before.mock.results].map((result) => result.value),
+  );
+  expect(batches.reduce((total, batch) => total + batch.rows.length, 0)).toBe(500);
+  expect(after).not.toHaveBeenCalled();
+});

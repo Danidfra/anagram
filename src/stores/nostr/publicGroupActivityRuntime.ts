@@ -19,6 +19,8 @@ export function createPublicGroupActivityRuntime(deps: {
   database: () => PublicGroupData | undefined;
   relays: (hints: string[]) => Promise<string[]>;
   changed: (row: SavedPublicRoom) => void;
+  // Unread mentions cleared by opening a visible room, oldest first.
+  mentioned?: (address: string, ids: string[]) => void;
   notify?: (row: SavedPublicRoom, event: NostrEvent) => void;
   failed: () => void;
 }) {
@@ -195,14 +197,15 @@ export function createPublicGroupActivityRuntime(deps: {
       });
     }
   }
-  async function markRead(address: string) {
+  async function markRead(address: string, viewing = false) {
     const db = deps.database(),
       token = generation;
     if (!db) return;
-    const row = await db.markRead(address);
+    const { row, mentions } = await db.markRead(address);
     if (generation === token && db === deps.database() && row) {
       rows.set(address, row);
       deps.changed(row);
+      if (viewing && mentions.length) deps.mentioned?.(address, mentions);
     }
   }
   return {
@@ -215,7 +218,7 @@ export function createPublicGroupActivityRuntime(deps: {
     },
     setVisible(address: string) {
       visible = address;
-      if (address && focused()) void markRead(address).catch(deps.failed);
+      if (address && focused()) void markRead(address, true).catch(deps.failed);
     },
     stop() {
       generation++;

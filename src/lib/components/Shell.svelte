@@ -22,6 +22,8 @@
   import { buildMessageReplyPreviewContent } from '#src/utils/messageAttachments.ts';
   import ForwardMessagePicker from './ForwardMessagePicker.svelte';
   import ThreadTimeline from './ThreadTimeline.svelte';
+  import MentionNavigator from './MentionNavigator.svelte';
+  import { MENTION_NAVIGATION_HIGHLIGHT_MS } from '#src/utils/unreadMentions.ts';
   import MessageRow from './MessageRow.svelte';
   import { scrollThreadToLatest } from '#src/lib/actions/threadPosition.ts';
   import MessageComposer from './MessageComposer.svelte';
@@ -184,6 +186,9 @@
           nostr.groupHistoryState.chat === chats.selectedChatId ? nostr.groupHistoryState : null,
       },
       unread: chats.unreadChatCount,
+      mentionSince: chats.selectedChatId
+        ? chats.getUnreadMentionSnapshot(chats.selectedChatId)
+        : null,
       loaded: chats.isLoaded,
       relayEntries: relays.relayEntries,
       relayVersion: nostr.relayStatusVersion,
@@ -889,6 +894,41 @@
     if ($state.selected?.id !== chatId || signal?.aborted) return;
     highlightedMessage = target.id;
     document.getElementById(`message-${target.id}`)?.scrollIntoView({ block: 'center' });
+  }
+  // Mentions that were unread when this group was opened; leaving the group drops them.
+  let mentionIds: string[] = [];
+  let mentionChatId = '';
+  let mentionLoad = 0;
+  let mentionHighlightTimer: ReturnType<typeof setTimeout> | undefined;
+  $: mentionChat = $state.selected?.type === 'group' ? $state.selected.id : '';
+  $: mentionSince = $state.mentionSince;
+  $: void loadMentionIds(mentionChat, mentionSince);
+  onDestroy(() => clearTimeout(mentionHighlightTimer));
+  async function loadMentionIds(chatId: string, since: string | null) {
+    const revision = ++mentionLoad;
+    if (chatId !== mentionChatId) {
+      if (mentionChatId) chats.clearUnreadMentionSnapshot(mentionChatId);
+      mentionChatId = chatId;
+    }
+    mentionIds = [];
+    if (!chatId || since === null) return;
+    try {
+      const ids = await messages.listUnreadMentionIds(chatId, since);
+      if (revision === mentionLoad) mentionIds = ids;
+    } catch {
+      /* Mention navigation is optional; badges and highlights still show. */
+    }
+  }
+  async function jumpToMention(id: string): Promise<boolean> {
+    highlightedMessage = '';
+    await jump(id);
+    const reached = highlightedMessage;
+    if (!reached) return false;
+    clearTimeout(mentionHighlightTimer);
+    mentionHighlightTimer = setTimeout(() => {
+      if (highlightedMessage === reached) highlightedMessage = '';
+    }, MENTION_NAVIGATION_HIGHLIGHT_MS);
+    return true;
   }
   async function openReplyTarget(message: Message) {
     const preview = message.meta.reply;
@@ -1788,6 +1828,11 @@
               0,
             )}</button
           >{/if}
+        {#if mentionIds.length}{#key mentionChat}<MentionNavigator
+              ids={mentionIds}
+              onjump={jumpToMention}
+              ondismiss={() => chats.clearUnreadMentionSnapshot(mentionChat)}
+            />{/key}{/if}
         {#if chats.isRequestChat($state.selected.id)}<div class="request-banner">
             Message request <button
               class="primary"
