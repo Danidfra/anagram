@@ -1,4 +1,5 @@
 import { type ClientEvent, NostrKind } from '#src/lib/nostr/client.ts';
+import { PRIVATE_PREFERENCES_KIND } from '#src/stores/nostr/constants.ts';
 import { createPrivateStateRuntime } from '#src/stores/nostr/privateStateRuntime.ts';
 import type { MessageRelayStatus } from '#src/types/chat.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -398,9 +399,7 @@ describe('privateStateRuntime', () => {
       eventId: 'first-event',
     });
 
-    await flushPromises();
-
-    expect(ndkMocks.publishReplaceable).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(ndkMocks.publishReplaceable).toHaveBeenCalledTimes(1));
     expect(deps.pendingContactCursorPublishStates.get(contactPublicKey)).toEqual({
       at: '2026-01-01T00:00:00.000Z',
       eventId: 'first-event',
@@ -1535,5 +1534,275 @@ describe('privateStateRuntime', () => {
     expect(deps.chatStore.reload).toHaveBeenCalledTimes(1);
     expect(messageStoreMock.reloadLoadedMessages).toHaveBeenCalledTimes(1);
     expect(deps.completeStartupStep).toHaveBeenCalledWith('contact-cursor-data');
+  });
+
+  describe('live contact cursor sync', () => {
+    const account = 'f'.repeat(64);
+    const contactPublicKey = 'a'.repeat(64);
+
+    function makeContact(meta: Record<string, unknown> = {}) {
+      return {
+        id: 7,
+        public_key: contactPublicKey,
+        type: 'user',
+        name: 'Alice',
+        given_name: null,
+        meta,
+        relays: [],
+        sendMessagesToAppRelays: false,
+      };
+    }
+
+    function makeCursorEvent(at: string, overrides: Record<string, unknown> = {}): ClientEvent {
+      return new ndkMocks.MockNDKEvent(undefined, {
+        kind: PRIVATE_PREFERENCES_KIND,
+        pubkey: account,
+        created_at: 1_800_000_000,
+        content: JSON.stringify({
+          version: '0.1',
+          last_seen_incoming_activity_at: at,
+          last_seen_incoming_activity_event_id: `event-${at}`,
+        }),
+        tags: [['d', `dtag-${contactPublicKey}`]],
+        ...overrides,
+      } as Partial<ClientEvent>) as unknown as ClientEvent;
+    }
+
+    function createLiveRuntime(overrides: Record<string, unknown> = {}) {
+      const subscriptions: Array<{
+        filters: unknown;
+        onEvent: (event: ClientEvent) => void;
+        stop: ReturnType<typeof vi.fn>;
+      }> = [];
+      const deps = createDeps({
+        readPrivatePreferencesFromStorage: vi.fn(() => ({ contactSecret: 'secret' })),
+        decryptContactCursorContent: vi.fn(async (content: string) => JSON.parse(content)),
+        encryptContactCursorContent: vi.fn(async (cursor) => `cursor:${cursor.at}`),
+        getFilterSince: vi.fn(() => 1_700_000_000),
+        subscribeWithReqLogging: vi.fn((_label, _request, filters, options) => {
+          const subscription = { filters, onEvent: options.onEvent, stop: vi.fn() };
+          subscriptions.push(subscription);
+          return subscription;
+        }),
+        ...overrides,
+      });
+      return { deps, runtime: createPrivateStateRuntime(deps), subscriptions };
+    }
+
+    function publishedCursors(): Array<{ content: string; created_at: number }> {
+      return ndkMocks.publishReplaceable.mock.calls.map(([event]) => event);
+    }
+
+    beforeEach(() => {
+      serviceMocks.contactsService.listContacts.mockResolvedValue([makeContact()]);
+      serviceMocks.contactsService.getContactByPublicKey.mockResolvedValue(makeContact());
+    });
+
+    it('subscribes by account and kind only, then applies a newer cursor from another device', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      serviceMocks.chatDataService.getChatByPublicKey.mockResolvedValue({
+        id: contactPublicKey,
+        public_key: contactPublicKey,
+        type: 'user',
+        name: 'Alice',
+        last_message: 'Hi',
+        last_message_at: '2026-01-02T00:00:00.000Z',
+        unread_count: 2,
+        meta: {},
+      });
+      serviceMocks.chatDataService.listMessages.mockResolvedValue([
+        { id: 1, author_public_key: contactPublicKey, created_at: '2026-01-02T00:00:00.000Z' },
+      ]);
+
+      await runtime.subscribeContactCursorUpdates(['wss://seed.example']);
+      await flushPromises();
+
+      expect(subscriptions).toHaveLength(1);
+      // Resumed sessions catch up from the stored boundary, not just from "now".
+      expect(subscriptions[0].filters).toEqual({
+        kinds: [PRIVATE_PREFERENCES_KIND],
+        authors: [account],
+        since: 1_700_000_000,
+      });
+      expect(JSON.stringify(subscriptions[0].filters)).not.toContain(contactPublicKey);
+      expect(JSON.stringify(subscriptions[0].filters)).not.toContain('dtag');
+
+      subscriptions[0].onEvent(makeCursorEvent('2026-01-03T00:00:00.000Z'));
+
+      await vi.waitFor(() => expect(deps.chatStore.reload).toHaveBeenCalledTimes(1));
+      expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
+        metaBase: {},
+        meta: {
+          last_seen_incoming_activity_at: '2026-01-03T00:00:00.000Z',
+          last_seen_incoming_activity_event_id: 'event-2026-01-03T00:00:00.000Z',
+        },
+      });
+      expect(serviceMocks.chatDataService.updateChatUnreadCount).toHaveBeenCalledWith(
+        contactPublicKey,
+        0,
+      );
+      expect(messageStoreMock.reloadLoadedMessages).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores preferences, group secrets, foreign authors and unknown d-tags', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      const at = '2026-01-03T00:00:00.000Z';
+      subscriptions[0].onEvent(makeCursorEvent(at, { tags: [['d', '1']] }));
+      subscriptions[0].onEvent(
+        makeCursorEvent(at, { tags: [['d', 'b'.repeat(64)], ['t', 'group']] }),
+      );
+      subscriptions[0].onEvent(makeCursorEvent(at, { pubkey: 'e'.repeat(64) }));
+      subscriptions[0].onEvent(makeCursorEvent(at, { tags: [['d', 'unknown']] }));
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(deps.decryptContactCursorContent).not.toHaveBeenCalled();
+      expect(serviceMocks.contactsService.updateContact).not.toHaveBeenCalled();
+      expect(deps.chatStore.reload).not.toHaveBeenCalled();
+    });
+
+    it('never publishes a cursor at or behind the newest known cursor', async () => {
+      const { runtime } = createLiveRuntime();
+      serviceMocks.contactsService.getContactByPublicKey.mockResolvedValue(
+        makeContact({
+          last_seen_incoming_activity_at: '2026-01-03T00:00:00.000Z',
+          last_seen_incoming_activity_event_id: 'known',
+        }),
+      );
+
+      await runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-02T00:00:00.000Z',
+        eventId: 'older',
+      });
+      await runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-03T00:00:00.000Z',
+        eventId: 'known',
+      });
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+
+      await runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-04T00:00:00.000Z',
+        eventId: 'newer',
+      });
+      expect(publishedCursors().map((event) => event.content)).toEqual([
+        'cursor:2026-01-04T00:00:00.000Z',
+      ]);
+    });
+
+    it('stops an older device from publishing after a newer cursor arrives live', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      subscriptions[0].onEvent(makeCursorEvent('2026-01-05T00:00:00.000Z'));
+      await vi.waitFor(() => expect(deps.chatStore.reload).toHaveBeenCalled());
+
+      await runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-04T00:00:00.000Z',
+        eventId: 'stale-device',
+      });
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+    });
+
+    it('serializes publishes so cursor order and created_at order agree', async () => {
+      const { runtime } = createLiveRuntime();
+      const older = { at: '2026-01-02T00:00:00.000Z', eventId: 'older' };
+      const newer = { at: '2026-01-03T00:00:00.000Z', eventId: 'newer' };
+
+      await Promise.all([
+        runtime.publishContactCursor(contactPublicKey, newer),
+        runtime.publishContactCursor(contactPublicKey, older),
+      ]);
+      expect(publishedCursors().map((event) => event.content)).toEqual([
+        'cursor:2026-01-03T00:00:00.000Z',
+      ]);
+
+      const third = { at: '2026-01-04T00:00:00.000Z', eventId: 'third' };
+      const fourth = { at: '2026-01-05T00:00:00.000Z', eventId: 'fourth' };
+      await Promise.all([
+        runtime.publishContactCursor(contactPublicKey, third),
+        runtime.publishContactCursor(contactPublicKey, fourth),
+      ]);
+      const events = publishedCursors();
+      expect(events.map((event) => event.content)).toEqual([
+        'cursor:2026-01-03T00:00:00.000Z',
+        'cursor:2026-01-04T00:00:00.000Z',
+        'cursor:2026-01-05T00:00:00.000Z',
+      ]);
+      expect(events[2].created_at).toBeGreaterThan(events[1].created_at);
+    });
+
+    it('republishes its newer cursor when another device buries it on relays', async () => {
+      const { runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+      await runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-05T00:00:00.000Z',
+        eventId: 'own',
+      });
+      const [ownEvent] = publishedCursors();
+
+      // The echo of this device's own event changes nothing.
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-05T00:00:00.000Z', {
+          created_at: ownEvent.created_at,
+          content: JSON.stringify({
+            version: '0.1',
+            last_seen_incoming_activity_at: '2026-01-05T00:00:00.000Z',
+            last_seen_incoming_activity_event_id: 'own',
+          }),
+        }),
+      );
+      // A delayed event older than this device's publish is history, not a conflict.
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-01T00:00:00.000Z', { created_at: ownEvent.created_at - 30 }),
+      );
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(publishedCursors()).toHaveLength(1);
+
+      // A skewed clock elsewhere stamps an older cursor later than ours.
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-04T00:00:00.000Z', { created_at: ownEvent.created_at + 120 }),
+      );
+      await vi.waitFor(() => expect(publishedCursors()).toHaveLength(2));
+      const republished = publishedCursors()[1];
+      expect(republished.content).toBe('cursor:2026-01-05T00:00:00.000Z');
+      expect(republished.created_at).toBeGreaterThan(ownEvent.created_at + 120);
+    });
+
+    it('drops subscriptions, pending applies and in-flight publishes on account reset', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+      expect(subscriptions).toHaveLength(1);
+
+      let releaseRelays!: () => void;
+      deps.ensureRelayConnections.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseRelays = resolve;
+          }),
+      );
+      const publishing = runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-04T00:00:00.000Z',
+        eventId: 'previous-account',
+      });
+      await vi.waitFor(() => expect(deps.ensureRelayConnections).toHaveBeenCalledTimes(2));
+
+      runtime.resetContactCursorSyncState();
+      deps.getLoggedInPublicKeyHex.mockReturnValue('e'.repeat(64));
+      releaseRelays();
+      await publishing;
+      subscriptions[0].onEvent(makeCursorEvent('2026-01-05T00:00:00.000Z'));
+      await flushPromises();
+
+      expect(subscriptions[0].stop).toHaveBeenCalled();
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+      expect(deps.decryptContactCursorContent).not.toHaveBeenCalled();
+    });
   });
 });

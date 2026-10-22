@@ -970,21 +970,25 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     setVisibleChatId: (chatId) => {
       const previous = chatStore.visibleChatId;
       chatStore.setVisibleChatId(chatId);
-      if (chatId && chatId !== previous) {
-        void chatStore
-          .markAsRead(chatId)
-          .then((cursor) => {
-            if (cursor) scheduleContactCursorPublish(chatId, cursor);
-          })
-          .catch(() => {
-            /* A later focus or incoming message retries the read cursor. */
-          });
-      }
+      if (chatId && chatId !== previous) markVisibleChatRead(chatId);
     },
   });
   resetAppLifecycleRuntimeStateRuntime = resetAppLifecycleRuntimeStateImpl;
   setAppLifecycleRouteChatIdRuntime = setAppLifecycleRouteChatIdImpl;
   startAppLifecycleRuntimeRuntime = startAppLifecycleRuntimeImpl;
+
+  function markVisibleChatRead(chatId: string): void {
+    const account = getLoggedInPublicKeyHex();
+    void chatStore
+      .markAsRead(chatId)
+      .then((cursor) => {
+        if (cursor && account === getLoggedInPublicKeyHex())
+          scheduleContactCursorPublish(chatId, cursor);
+      })
+      .catch(() => {
+        /* A later focus or incoming message retries the read cursor. */
+      });
+  }
 
   const {
     buildInboundTraceDetails,
@@ -1451,6 +1455,7 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     logInboundEvent,
     logInvalidIncomingEpochNumber,
     logSubscription,
+    markVisibleChatRead,
     normalizeEventId,
     normalizeThrottleMs,
     normalizeTimestamp,
@@ -1927,7 +1932,9 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     restoreGroupIdentitySecrets,
     restoreGroupMembershipRoster,
     restorePrivatePreferences,
+    resetContactCursorSyncState,
     scheduleContactCursorPublish,
+    subscribeContactCursorUpdates,
   } = createPrivateStateRuntime({
     createRecoverableGroup: groupRecovery.create,
     beginStartupStep,
@@ -1982,6 +1989,7 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     scheduleChatChecks,
     sha256Hex,
     shouldApplyPrivateContactListEvent,
+    subscribeWithReqLogging,
     toComparableTimestamp,
     toIsoTimestampFromUnix,
     updateStoredEventSinceFromCreatedAt,
@@ -2093,6 +2101,7 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     setSyncRecentChatContactsPromise: (promise) => {
       syncRecentChatContactsPromise = promise;
     },
+    subscribeContactCursorUpdates,
     subscribeContactProfileUpdates,
     subscribeContactRelayListUpdates,
     subscribeGroupMembershipRosterUpdates: (seedRelayUrls) =>
@@ -2212,6 +2221,7 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
     set relayStatusVersion(value) {
       relayStatusVersion = value;
     },
+    resetContactCursorSyncState,
     resetContactSubscriptionsRuntimeState,
     resetEventSinceForFreshLogin,
     resetCalls: () => {
@@ -2390,6 +2400,7 @@ export const useNostrStore = createStore('nostrStore', (onDispose) => {
         subscribePrivateContactListUpdates(relayUrls),
         subscribeGroupMembershipRosterUpdatesRuntime(relayUrls),
         subscribeContactProfileUpdates(relayUrls),
+        subscribeContactCursorUpdates(relayUrls),
       ]);
     },
     setIsReconnectHealing: (value) => {

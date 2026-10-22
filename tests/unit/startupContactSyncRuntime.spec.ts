@@ -110,6 +110,7 @@ function createSessionInitializationRuntime(
     setSyncRecentChatContactsPromise: (promise) => {
       syncRecentChatContactsPromise = promise;
     },
+    subscribeContactCursorUpdates: task(),
     subscribeContactProfileUpdates: task(),
     subscribeContactRelayListUpdates: task(),
     subscribeGroupMembershipRosterUpdates: task(),
@@ -205,6 +206,7 @@ describe('startup contact sync runtime', () => {
       setSyncRecentChatContactsPromise: (promise) => {
         syncRecentChatContactsPromise = promise;
       },
+      subscribeContactCursorUpdates: task('contact-cursor-subscribe'),
       subscribeContactProfileUpdates: task('contact-profile-subscribe'),
       subscribeContactRelayListUpdates: task('contact-relay-list-subscribe'),
       subscribeGroupMembershipRosterUpdates: task('group-rosters-subscribe'),
@@ -224,6 +226,7 @@ describe('startup contact sync runtime', () => {
       'group-identity-secrets',
       'mute-list',
       'contact-cursor-state',
+      'contact-cursor-subscribe',
       'private-contact-list-subscribe',
       'contact-profile-subscribe',
       'contact-relay-list-subscribe',
@@ -299,6 +302,7 @@ describe('startup contact sync runtime', () => {
       setSyncRecentChatContactsPromise: (promise) => {
         syncRecentChatContactsPromise = promise;
       },
+      subscribeContactCursorUpdates: task('contact-cursor-subscribe'),
       subscribeContactProfileUpdates: task('contact-profile-subscribe'),
       subscribeContactRelayListUpdates: task('contact-relay-list-subscribe'),
       subscribeGroupMembershipRosterUpdates: task('group-rosters-subscribe'),

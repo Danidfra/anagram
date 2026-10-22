@@ -38,6 +38,8 @@ export const INVITATION_PROOF_TAG = 'invitation_proof';
 export const CONTACT_CURSOR_VERSION = '0.1';
 export const CONTACT_CURSOR_PUBLISH_DELAY_MS = 5000;
 export const CONTACT_CURSOR_FETCH_BATCH_SIZE = 100;
+// Live cursor sync overlaps the startup fetch and tolerates modest device clock skew.
+export const CONTACT_CURSOR_LIVE_LOOKBACK_SECONDS = 600;
 export const LAST_SEEN_RECEIVED_ACTIVITY_AT_META_KEY = 'last_seen_received_activity_at';
 export const PRIVATE_MESSAGES_STARTUP_RESTORE_THROTTLE_MS = 2000;
 export const PRIVATE_MESSAGES_STARTUP_LIVE_LOOKBACK_SECONDS = 2 * 24 * 60 * 60;

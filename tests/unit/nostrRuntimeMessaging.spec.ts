@@ -239,6 +239,7 @@ function createAuthSessionHarness() {
     set relayStatusVersion(value) {
       refs.relayStatusVersion = value;
     },
+    resetContactCursorSyncState: vi.fn(),
     resetContactSubscriptionsRuntimeState: vi.fn(),
     resetCalls: vi.fn(),
     resetEventSinceForFreshLogin: vi.fn(),
@@ -767,6 +768,7 @@ describe('nostr runtime messaging logic', () => {
 
     runtime.clearPrivateKey();
     expect(deps.resetCalls).toHaveBeenCalled();
+    expect(deps.resetContactCursorSyncState).toHaveBeenCalled();
     expect(localStorage.store.get(AUTH_METHOD_STORAGE_KEY)).toBeUndefined();
     expect(localStorage.store.get(NIP46_SIGNER_PAYLOAD_STORAGE_KEY)).toBeUndefined();
     expect(localStorage.store.get(PRIVATE_KEY_STORAGE_KEY)).toBeUndefined();

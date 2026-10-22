@@ -133,6 +133,7 @@ interface StartupContactSyncRuntimeDeps {
   setRestoreStartupStatePromise: (promise: Promise<void> | null) => void;
   setSyncLoggedInContactProfilePromise: (promise: Promise<void> | null) => void;
   setSyncRecentChatContactsPromise: (promise: Promise<void> | null) => void;
+  subscribeContactCursorUpdates: (seedRelayUrls?: string[]) => Promise<void>;
   subscribeContactProfileUpdates: (seedRelayUrls?: string[], force?: boolean) => Promise<void>;
   subscribeContactRelayListUpdates: (
     seedRelayUrls?: string[],
@@ -192,6 +193,7 @@ export function createStartupContactSyncRuntime(state: StartupContactSyncRuntime
     startPrivateMessagesHistoryRestore,
     setRestoreStartupStatePromise,
     setSyncLoggedInContactProfilePromise,
+    subscribeContactCursorUpdates,
     subscribeContactProfileUpdates,
     subscribeContactRelayListUpdates,
     subscribeGroupMembershipRosterUpdates,
@@ -380,6 +382,7 @@ export function createStartupContactSyncRuntime(state: StartupContactSyncRuntime
       case 'contact-cursor-state':
         await restoreMuteList(seedRelayUrls);
         await restoreContactCursorState(seedRelayUrls);
+        await subscribeContactCursorUpdates(seedRelayUrls);
         return;
       case 'logged-in-contact-profile':
         await syncLoggedInContactProfile(seedRelayUrls);
