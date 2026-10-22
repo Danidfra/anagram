@@ -82,6 +82,21 @@ describe('speaking indicator', () => {
     expect(track(levels, 'peer', 300).size).toBe(0);
     expect([...track(levels, 'peer', 400)]).toEqual(['peer']);
   });
+  it('clears a speaker whose metering stops at once, and does not restore them', () => {
+    const track = createSpeakingTracker();
+    const levels = new Map([['remote', 0.2]]);
+    track(levels, 'remote', 0);
+    expect([...track(levels, 'remote', 100)]).toEqual(['remote']);
+    // Metering stops mid-speech, well inside the hold: no later sample is needed.
+    levels.delete('remote');
+    expect(track(levels, 'remote', 150).size).toBe(0);
+    // Resumed metering starts from silence, and one loud sample is not speech.
+    levels.set('remote', 0);
+    expect(track(levels, 'remote', 200).size).toBe(0);
+    levels.set('remote', 0.2);
+    expect(track(levels, 'remote', 300).size).toBe(0);
+    expect([...track(levels, 'remote', 400)]).toEqual(['remote']);
+  });
   it('holds speech for exactly the silence window', () => {
     const track = createSpeakingTracker();
     const levels = new Map([['peer', 0.2]]);

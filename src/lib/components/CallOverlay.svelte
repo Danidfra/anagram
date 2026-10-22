@@ -91,7 +91,8 @@
     activityEnabled = false;
   let previousId = '';
   const ringtone = createCallRingtone();
-  const levels = new Map<string, number>();
+  const levels = new Map<string, number>(),
+    metered = new Map<string, number>();
   let selector = createActiveSpeakerSelector(),
     activeSpeaker = 'local';
   let speakingTracker = createSpeakingTracker(),
@@ -188,6 +189,8 @@
   $: metering = active && !minimized;
   $: watchActivity($state.local, room && metering && !$state.muted);
   $: remoteSpeaking = !room && speaking.has('remote') && !$state.session?.remoteMicrophoneMuted;
+  // Max fill keeps the media alone on stage, as without a remote avatar.
+  $: stageAvatar = !room && !videoUrl && !maxFill && (hasVideo || screens.length > 0);
   // The own profile is already hydrated with the account; retain everyone else shown.
   $: retainProfiles(
     room ? $state.participants.map((peer) => peer.pubkey) : peerKey ? [peerKey] : [],
@@ -215,23 +218,31 @@
     invite = false;
     editNames = false;
     levels.clear();
+    metered.clear();
     selector = createActiveSpeakerSelector();
     activeSpeaker = 'local';
     speakingTracker = createSpeakingTracker();
     speaking = new Set();
   }
-  function updateLevel(id: string, level: number) {
-    levels.set(id, level);
+  // A null level means the input stopped being metered. The selector reads it as
+  // silent, as before; the tracker forgets it, so its speaking state clears now
+  // and cannot return when metering resumes.
+  function updateLevel(id: string, level: number | null) {
+    levels.set(id, level ?? 0);
+    if (level === null) metered.delete(id);
+    else metered.set(id, level);
     for (const key of levels.keys())
       if (
         key !== 'local' &&
         key !== 'remote' &&
         !$state.participants.some((peer) => peer.pubkey === key)
-      )
+      ) {
         levels.delete(key);
+        metered.delete(key);
+      }
     const at = performance.now();
     activeSpeaker = selector(levels, at);
-    const next = speakingTracker(levels, id, at);
+    const next = speakingTracker(metered, id, at);
     if (next !== speaking) speaking = next;
   }
   function watchActivity(stream: MediaStream | null, enabled: boolean) {
@@ -240,7 +251,7 @@
     activityEnabled = enabled;
     stopActivity?.();
     stopActivity = undefined;
-    updateLevel('local', 0);
+    updateLevel('local', null);
     if (stream && enabled)
       stopActivity = observeCallActivity(stream, (level) => updateLevel('local', level));
   }
@@ -696,16 +707,19 @@
               </div>
             </div>{/each}
         </div>
-      {:else if hasVideo || screens.length}<div class="call-panel__media">
+      {:else if hasVideo || stageAvatar}<div class="call-panel__media">
           <!-- The header avatar is hidden beside video or a screen; without remote
                video the peer keeps an avatar here, which carries the speaking ring. -->
-          {#if !videoUrl}<div
+          {#if stageAvatar}<div
               class="call-panel__remote call-person"
               class:call-speaking={remoteSpeaking}
               data-testid="call-remote-avatar"
             >
               <Avatar name={peerName} publicKey={peerKey} eager />
-            </div>{:else}<div class="call-panel__remote" class:call-speaking={remoteSpeaking}>
+            </div>{:else if videoUrl}<div
+              class="call-panel__remote"
+              class:call-speaking={remoteSpeaking}
+            >
               <CallVideo
                 bind:this={remoteVideo}
                 url={videoUrl}
