@@ -156,7 +156,9 @@ function audioNode(mode: 'capture' | 'playback', generation: number, listener: L
 export function createPacketAudioReceiver(onError: () => void): CallMediaReceiver {
   let closed = false,
     pending = false;
-  let latest: Uint8Array | undefined;
+  // Native IPC delivers bursts of four 20 ms packets. Preserve that burst while
+  // bounding both queued work and latency if the decoder stalls.
+  const queued: { packet: Uint8Array; at: number }[] = [];
   const post = (packet: Uint8Array) => {
     pending = true;
     state.current.worker.postMessage({ id: state.id, type: 'packet', packet });
@@ -167,11 +169,9 @@ export function createPacketAudioReceiver(onError: () => void): CallMediaReceive
     if (message.type === 'received') {
       diagnostics.set(state.id, message.stats);
       pending = false;
-      if (latest) {
-        const packet = latest;
-        latest = undefined;
-        post(packet);
-      }
+      while (queued.length && performance.now() - queued[0].at > 100) queued.shift();
+      const next = queued.shift();
+      if (next) post(next.packet);
     }
   });
   const destination = state.current.context.createMediaStreamDestination();
@@ -181,12 +181,14 @@ export function createPacketAudioReceiver(onError: () => void): CallMediaReceive
     url: handle.url,
     append(packet) {
       if (closed) return;
-      if (pending) latest = packet;
-      else post(packet);
+      if (pending) {
+        if (queued.length === 5) queued.shift();
+        queued.push({ packet, at: performance.now() });
+      } else post(packet);
     },
     close() {
       closed = true;
-      latest = undefined;
+      queued.length = 0;
       state.close();
       destination.disconnect();
       handle.close();
