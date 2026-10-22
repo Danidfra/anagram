@@ -298,14 +298,15 @@ export function recordPacketVideo(
       lastFrame = -Infinity;
     let currentBitrate = bitrate,
       congestedAt = 0;
+    const dimensions = (width: number, height: number) => {
+      const scale = Math.min(1, maxWidth / width, maxHeight / height);
+      return [
+        Math.max(2, Math.floor((width * scale) / 2) * 2),
+        Math.max(2, Math.floor((height * scale) / 2) * 2),
+      ];
+    };
     const settings = track.getSettings();
-    const scale = Math.min(
-      1,
-      maxWidth / (settings.width || 640),
-      maxHeight / (settings.height || 360),
-    );
-    const width = Math.max(2, Math.floor(((settings.width || 640) * scale) / 2) * 2),
-      height = Math.max(2, Math.floor(((settings.height || 360) * scale) / 2) * 2);
+    let [width, height] = dimensions(settings.width || 640, settings.height || 360);
     const config = () => ({
       codec: 'vp8',
       width,
@@ -433,11 +434,19 @@ export function recordPacketVideo(
               currentBitrate = Math.min(bitrate, Math.floor(currentBitrate * 1.1));
               congestedAt = now;
             }
-            if (currentBitrate !== configuredBitrate) {
+            // Startup track settings can be missing or stale; cameras and
+            // shared screens can also change shape while capture stays live.
+            // Encoding every frame at the initial size stretches its pixels.
+            const [nextWidth, nextHeight] = dimensions(frame.displayWidth, frame.displayHeight);
+            const resized = nextWidth !== width || nextHeight !== height;
+            if (resized || currentBitrate !== configuredBitrate) {
+              width = nextWidth;
+              height = nextHeight;
               encoder.configure(config());
               configuredBitrate = currentBitrate;
             }
             const keyFrame =
+              resized ||
               now - lastKey >= 1000 ||
               (now - lastKey >= 500 && [...consumers].some((c) => c.needsKey && !c.busy));
             if (keyFrame) lastKey = now;
