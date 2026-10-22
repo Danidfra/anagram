@@ -2,6 +2,7 @@ import {
   callCaptureErrorKey,
   callMediaSupported,
   createCallMediaReceiver,
+  getCallCamera,
   getCallMedia,
   getCallMicrophone,
   recordCallMedia,
@@ -112,6 +113,65 @@ describe('call devices and playback', () => {
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     expect(getUserMedia.mock.calls[1]?.[0].audio.deviceId).toBeUndefined();
   });
+  it.each(['width', 'height', 'frameRate', 'facingMode'])(
+    'keeps the selected camera when its preferred %s is unsupported',
+    async (constraint) => {
+      const stream = {};
+      const getUserMedia = vi
+        .fn()
+        .mockRejectedValueOnce({
+          name: 'OverconstrainedError',
+          constraint,
+        })
+        .mockResolvedValue(stream);
+      vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+      await expect(getCallCamera('colour-camera')).resolves.toBe(stream);
+      expect(getUserMedia).toHaveBeenCalledTimes(2);
+      expect(getUserMedia.mock.calls[1]?.[0]).toEqual({
+        audio: false,
+        video: { deviceId: { exact: 'colour-camera' } },
+      });
+    },
+  );
+  it('keeps microphone processing and selection when starting video with native camera modes', async () => {
+    const getUserMedia = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new DOMException('Unsupported size', 'OverconstrainedError'), {
+          constraint: 'width',
+        }),
+      )
+      .mockResolvedValue({});
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    await getCallMedia('video', 'mic-2');
+    expect(getUserMedia.mock.calls[1]?.[0]).toEqual({
+      audio: getUserMedia.mock.calls[0]?.[0].audio,
+      video: true,
+    });
+    expect(getUserMedia.mock.calls[1]?.[0].audio.deviceId).toEqual({ exact: 'mic-2' });
+  });
+  it.each(['deviceId', 'echoCancellation', ''])(
+    'does not hide rejected %s constraints',
+    async (constraint) => {
+      const error = Object.assign(new DOMException('Rejected', 'OverconstrainedError'), {
+        constraint,
+      });
+      const getUserMedia = vi.fn().mockRejectedValue(error);
+      vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+      await expect(getCallCamera('missing-camera')).rejects.toBe(error);
+      expect(getUserMedia).toHaveBeenCalledOnce();
+    },
+  );
+  it.each(['NotAllowedError', 'NotReadableError', 'NotFoundError'])(
+    'does not retry a camera %s',
+    async (name) => {
+      const error = new DOMException('Capture failed', name);
+      const getUserMedia = vi.fn().mockRejectedValue(error);
+      vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+      await expect(getCallCamera('camera')).rejects.toBe(error);
+      expect(getUserMedia).toHaveBeenCalledOnce();
+    },
+  );
   it('primes the persistent audio element without treating autoplay denial as input denial', async () => {
     const element = {
       src: '',

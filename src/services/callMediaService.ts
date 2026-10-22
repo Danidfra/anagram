@@ -66,13 +66,40 @@ const videoConstraints: MediaTrackConstraints = {
   frameRate: { ideal: 24, max: 24 },
   facingMode: 'user',
 };
+async function captureCallMedia(
+  audio: boolean | MediaTrackConstraints,
+  video: false | MediaTrackConstraints,
+): Promise<MediaStream> {
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio, video });
+  } catch (cause) {
+    // WebKitGTK can reject preferred dimensions for a camera with discrete
+    // capture modes (e.g. 640x480 instead of 640x360). Retry its native mode,
+    // preserving the selected devices and all microphone constraints.
+    if (
+      video &&
+      cause &&
+      typeof cause === 'object' &&
+      'name' in cause &&
+      cause.name === 'OverconstrainedError' &&
+      'constraint' in cause &&
+      ['width', 'height', 'frameRate', 'facingMode'].includes(String(cause.constraint))
+    ) {
+      return navigator.mediaDevices.getUserMedia({
+        audio,
+        video: video.deviceId ? { deviceId: video.deviceId } : true,
+      });
+    }
+    throw cause;
+  }
+}
 export function getCallMicrophone(deviceId?: string): Promise<MediaStream> {
   return navigator.mediaDevices.getUserMedia({ audio: audioConstraints(deviceId), video: false });
 }
 export function getCallCamera(deviceId?: string): Promise<MediaStream> {
-  return navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { ...videoConstraints, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
+  return captureCallMedia(false, {
+    ...videoConstraints,
+    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
   });
 }
 export function canShareCallScreen(): boolean {
@@ -92,10 +119,10 @@ export function getCallScreen(): Promise<MediaStream> {
 }
 export async function getCallMedia(mode: CallMode, deviceId?: string): Promise<MediaStream> {
   try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: audioConstraints(deviceId),
-      video: mode === 'video' ? videoConstraints : false,
-    });
+    return await captureCallMedia(
+      audioConstraints(deviceId),
+      mode === 'video' ? videoConstraints : false,
+    );
   } catch (cause) {
     // A disconnected preference must not prevent starting the next call.
     if (

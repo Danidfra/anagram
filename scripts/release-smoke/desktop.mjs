@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { startRelay } from './relay.mjs';
-import { probeCallMedia } from './call-media.mjs';
+import { probeCallCamera, probeCallMedia } from './call-media.mjs';
 import { DEFAULT_RELAYS } from '../../src/constants/relays.ts';
 
 const binary = resolve(process.argv[2] || '');
@@ -284,6 +284,28 @@ try {
   );
   await execute('delete window.__callMediaSmoke');
   console.log('Passed: packaged call audio/video recording and streaming decode');
+  if (process.env.ANAGRAM_CAMERA_TEST === '1') {
+    await execute(`
+      window.__callCameraSmoke = null;
+      (${probeCallCamera.toString()})().then(result => window.__callCameraSmoke = result,
+        error => window.__callCameraSmoke = {error: String(error)});
+    `);
+    let camera;
+    await until(
+      async () => {
+        camera = await execute('return window.__callCameraSmoke');
+        return !!camera;
+      },
+      'physical camera capture',
+      30000,
+    );
+    await writeFile(`${output}/call-camera.json`, JSON.stringify(camera, null, 2));
+    assert.equal(camera.error, '', `camera capture: ${camera.error}`);
+    assert.ok(camera.frames >= 2, 'physical camera must present live preview frames');
+    assert.ok(camera.recordedBytes > 0, 'physical camera must produce outgoing video bytes');
+    await execute('delete window.__callCameraSmoke');
+    console.log('Passed: physical camera preview and recording');
+  }
   await click(testid('auth-open-key-button'));
   await fill(testid('auth-private-key-input'), relay.nsec);
   await click(testid('auth-login-button'));

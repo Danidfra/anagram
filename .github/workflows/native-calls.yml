@@ -49,7 +49,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb xdotool dbus-x11 pulseaudio \
-            build-essential ninja-build pkg-config bison flex python3-venv \
+            build-essential ninja-build pkg-config bison flex python3-venv patch \
             libopus-dev libvpx-dev libogg-dev libvorbis-dev libpulse-dev libasound2-dev \
             libavcodec-dev libavformat-dev libavfilter-dev libswresample-dev libswscale-dev \
             libjpeg-dev libpng-dev libtheora-dev libgudev-1.0-dev liborc-0.4-dev
@@ -57,7 +57,7 @@ jobs:
         id: media-cache
         with:
           path: ${{ runner.temp }}/anagram-gstreamer
-          key: gstreamer-native-ubuntu24-${{ hashFiles('scripts/appimage/build-gstreamer.sh', 'scripts/appimage/gstreamer.sha256') }}
+          key: gstreamer-native-ubuntu24-${{ hashFiles('scripts/appimage/build-gstreamer.sh', 'scripts/appimage/gstreamer.sha256', 'scripts/appimage/*.patch') }}
       - name: Build the call-capable media runtime
         if: steps.media-cache.outputs.cache-hit != 'true'
         run: bash scripts/appimage/build-gstreamer.sh "$RUNNER_TEMP/anagram-gstreamer" "$RUNNER_TEMP/anagram-gstreamer-build"
