@@ -5,6 +5,7 @@ import NostrClient, { type NostrSubscriptionOptions } from '#src/lib/nostr/clien
 import { PublicGroupData, type SavedPublicRoom } from '#src/services/publicGroupData.ts';
 import { parsePublicRoom } from '#src/stores/nostr/publicGroups.ts';
 import { createPublicGroupActivityRuntime } from '#src/stores/nostr/publicGroupActivityRuntime.ts';
+import { UNREAD_MENTION_NAVIGATION_LIMIT } from '#src/utils/unreadMentions.ts';
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -53,7 +54,8 @@ async function setup() {
     };
   });
   const notify = vi.fn(),
-    failed = vi.fn();
+    failed = vi.fn(),
+    mentioned = vi.fn();
   const runtime = createPublicGroupActivityRuntime({
     client: { subscribe } as unknown as NostrClient,
     account: () => account,
@@ -64,6 +66,7 @@ async function setup() {
     },
     notify,
     failed,
+    mentioned,
   });
   runtime.sync([saved]);
   await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
@@ -85,6 +88,7 @@ async function setup() {
     message,
     notify,
     failed,
+    mentioned,
     subscriptions,
     subscribe,
     preferences,
@@ -320,6 +324,48 @@ it('applies edits and author deletions to an unread mention in either arrival or
   await s.runtime.markRead(s.room.address);
   await s.runtime.ingest(s.room.address, s.edit(plain.id, plain.id, `${s.mention} late`));
   expect(s.saved().unreadMentionCount).toBe(0);
+});
+
+it('hands an opened room the unread mentions it clears, oldest first', async () => {
+  const s = await trustedMentionSetup();
+  const late = s.message(`${s.mention} late`, s.now + 3);
+  const early = s.message(`${s.mention} early`, s.now);
+  const deleted = s.message(`${s.mention} deleted`, s.now + 1);
+  const editedAway = s.message(`${s.mention} edited`, s.now + 2);
+  for (const event of [late, early, deleted, editedAway, s.message('plain', s.now + 1)])
+    await s.runtime.ingest(s.room.address, event);
+  await s.runtime.ingest(s.room.address, s.remove([deleted.id]));
+  await s.runtime.ingest(s.room.address, s.edit(editedAway.id, editedAway.id, 'no mention'));
+  expect(s.saved()).toMatchObject({ unreadCount: 5, unreadMentionCount: 2 });
+
+  vi.stubGlobal('document', { visibilityState: 'visible', hasFocus: () => true });
+  s.runtime.setVisible(s.room.address);
+  await vi.waitFor(() => expect(s.mentioned).toHaveBeenCalledOnce());
+  expect(s.mentioned).toHaveBeenCalledWith(s.room.address, [early.id, late.id]);
+  expect(s.saved()).toMatchObject({ unreadCount: 0, unreadMentionCount: 0 });
+
+  // "Mark as read" from the chat list clears mentions without keeping them.
+  s.runtime.setVisible('');
+  await s.runtime.ingest(s.room.address, s.message(`${s.mention} later`, s.now + 4));
+  await s.runtime.markRead(s.room.address);
+  expect(s.saved()).toMatchObject({ unreadCount: 0, unreadMentionCount: 0 });
+  expect(s.mentioned).toHaveBeenCalledOnce();
+});
+
+it('keeps only the newest unread mentions for navigation', async () => {
+  const s = await trustedMentionSetup();
+  // Rooms reject posts more than a minute ahead, so several mentions share a second.
+  const events = Array.from({ length: UNREAD_MENTION_NAVIGATION_LIMIT + 2 }, (_, index) =>
+    s.message(`${s.mention} ${index}`, s.now + Math.floor(index / 4)),
+  );
+  for (const event of events) await s.runtime.ingest(s.room.address, event);
+  expect(s.saved().unreadMentionCount).toBe(events.length);
+
+  const { mentions } = await s.db.markRead(s.room.address);
+  const ordered = [...events].sort(
+    (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+  );
+  expect(mentions).toEqual(ordered.slice(2).map((event) => event.id));
 });
 
 it('drops mention updates after an account switch', async () => {

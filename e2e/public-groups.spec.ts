@@ -2461,3 +2461,101 @@ test('trusted public mentions show an @ indicator until read and deletions retra
   await expect(mentionBadge).toHaveCount(0);
   await expect(row.locator('.badge')).toHaveCount(0);
 });
+
+for (const width of [1280, 390]) {
+  test(`the mention navigator steps through unread public mentions at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width < 768 ? 844 : 800 });
+    const owner = await login(page);
+    const room = await create(page, 'Mention navigator room');
+    const member = generateSecretKey();
+    const now = Math.floor(Date.now() / 1000);
+    await publish(
+      finalizeEvent(
+        {
+          kind: 34550,
+          created_at: now + 1,
+          tags: [
+            ['d', room.slug],
+            ['name', 'Mention navigator room'],
+            ['anagram-room', '1'],
+            ['relay', relay],
+            ['trusted', getPublicKey(member)],
+          ],
+          content: '',
+        },
+        owner.key,
+      ),
+    );
+    const mention = `nostr:${nip19.npubEncode(owner.pubkey)}`;
+    const post = (content: string, second: number) =>
+      finalizeEvent(
+        { kind: 9, created_at: now + second, tags: [['a', room.address]], content },
+        member,
+      );
+    const stranger = getPublicKey(generateSecretKey());
+    await publish(post(`trust check nostr:${nip19.npubEncode(stranger)}`, 1));
+    await expect(
+      page
+        .getByTestId('public-message')
+        .filter({ hasText: 'trust check' })
+        .getByTestId('message-mention-link'),
+    ).toBeVisible();
+
+    await navigateInApp(page, width < 768 ? '/chats' : `/chats/${owner.pubkey}`);
+    const row = page.getByTestId('public-chat-item').filter({ hasText: 'Mention navigator room' });
+    // Mentions arrive in a different order than they were written, with filler between.
+    const mentionSeconds = [3, 17, 31];
+    for (let second = 2; second <= 40; second += 1)
+      if (!mentionSeconds.includes(second)) await publish(post(`public filler ${second}`, second));
+    const label = (second: number) => `navigate-${'abc'[mentionSeconds.indexOf(second)]}`;
+    for (const second of [...mentionSeconds].reverse())
+      await publish(post(`${label(second)} ${mention}`, second));
+    await expect(row.getByTestId('chat-unread-mention-badge')).toHaveText('@');
+
+    await row.click();
+    await expect(page).toHaveURL(/\/public\/naddr/);
+    const navigator = page.getByTestId('mention-navigator');
+    const position = navigator.getByTestId('mention-navigator-position');
+    const next = navigator.getByTestId('mention-navigator-next');
+    await expect(position).toHaveText('@ 3');
+    for (const [index, second] of mentionSeconds.entries()) {
+      await next.click();
+      await expect(position).toHaveText(`@ ${index + 1}/3`);
+      const message = page.getByTestId('public-message').filter({ hasText: label(second) });
+      await expect(message).toHaveClass(/highlighted/);
+      await expect(message).toBeInViewport();
+      await expect(message).toHaveAttribute('data-mentions-me', 'true');
+    }
+    await expect(next).toBeDisabled();
+
+    // Clear of jump-to-latest and the composer, and inside the screen on mobile.
+    const jumpLatest = page.getByRole('button', { name: 'Jump to latest messages' });
+    await page.getByTestId('mention-navigator-previous').click();
+    await page.getByTestId('mention-navigator-previous').click();
+    await expect(position).toHaveText('@ 1/3');
+    await expect(jumpLatest).toBeVisible();
+    const boxes = await Promise.all([
+      navigator.boundingBox(),
+      jumpLatest.boundingBox(),
+      page.getByTestId('message-composer-input').boundingBox(),
+    ]);
+    const [navigatorBox, ...others] = boxes.map((box) => box!);
+    for (const other of others)
+      expect(
+        navigatorBox.x < other.x + other.width &&
+          other.x < navigatorBox.x + navigatorBox.width &&
+          navigatorBox.y < other.y + other.height &&
+          other.y < navigatorBox.y + navigatorBox.height,
+      ).toBe(false);
+    expect(navigatorBox.x + navigatorBox.width).toBeLessThanOrEqual(width);
+    for (const control of ['previous', 'next', 'dismiss'])
+      expect(
+        (await navigator.getByTestId(`mention-navigator-${control}`).boundingBox())!.height,
+      ).toBeGreaterThanOrEqual(40);
+
+    await navigator.getByTestId('mention-navigator-dismiss').click();
+    await expect(navigator).toHaveCount(0);
+  });
+}

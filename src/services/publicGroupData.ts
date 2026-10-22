@@ -3,6 +3,7 @@ import type { NostrEvent } from '#src/lib/nostr/client.ts';
 import type { MessageRelayStatus } from '#src/types/chat.ts';
 import { mergeMessageRelayStatuses } from '#src/utils/messageRelayStatus.ts';
 import { newerRoom, type PublicRoom } from '#src/stores/nostr/publicGroups.ts';
+import { UNREAD_MENTION_NAVIGATION_LIMIT } from '#src/utils/unreadMentions.ts';
 export type PublicGroupMessage = NostrEvent & {
   relay_statuses?: MessageRelayStatus[];
   activity?: PublicGroupMessage[];
@@ -372,14 +373,29 @@ export class PublicGroupData {
       }
     });
   }
-  async markRead(address: string): Promise<SavedPublicRoom | undefined> {
+  /**
+   * Marks every receipt read. The mentions it clears are returned oldest first, so the
+   * open room can still step through them; the walk is the one marking already does.
+   */
+  async markRead(
+    address: string,
+  ): Promise<{ row: SavedPublicRoom | undefined; mentions: string[] }> {
     const db = await this.db;
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['rooms', 'receipts'], 'readwrite');
+      const tx = db.transaction(['rooms', 'receipts', 'messages'], 'readwrite');
       let row: SavedPublicRoom | undefined;
-      tx.oncomplete = () => resolve(row);
+      const mentions: { id: string; created_at: number }[] = [];
+      tx.oncomplete = () =>
+        resolve({
+          row,
+          mentions: mentions
+            .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+            .slice(-UNREAD_MENTION_NAVIGATION_LIMIT)
+            .map((mention) => mention.id),
+        });
       tx.onerror = tx.onabort = () => reject(tx.error);
       const rooms = tx.objectStore('rooms');
+      const messages = tx.objectStore('messages');
       const request = rooms.get(address);
       request.onsuccess = () => {
         if (!request.result) return;
@@ -391,6 +407,13 @@ export class PublicGroupData {
       unread.onsuccess = () => {
         const cursor = unread.result;
         if (!cursor) return;
+        if (cursor.value.mention === 1) {
+          const id = String(cursor.value.id);
+          const message = messages.get([address, id]);
+          message.onsuccess = () => {
+            if (message.result) mentions.push({ id, created_at: message.result.created_at });
+          };
+        }
         cursor.update({ ...cursor.value, unread: 0 });
         cursor.continue();
       };
