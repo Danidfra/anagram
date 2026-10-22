@@ -375,4 +375,119 @@ describe('startup contact sync runtime', () => {
     expect(warnSpy).toHaveBeenCalledWith('Failed to restore My Relays on startup', queryError);
     expect(errorSpy).not.toHaveBeenCalled();
   });
+
+  describe('contact cursor step isolation', () => {
+    function createCursorStepRuntime(overrides: Record<string, unknown> = {}) {
+      const noop = vi.fn(async () => {});
+      const deps = {
+        applyContactCursorStateToContact: vi.fn(async () => false),
+        beginStartupStep: vi.fn(),
+        bumpContactListVersion: vi.fn(),
+        completeStartupStep: vi.fn(),
+        createStartupBatchTracker: vi.fn(() => ({
+          beginItem: vi.fn(),
+          finishItem: vi.fn(),
+          seal: vi.fn(),
+        })),
+        deriveContactCursorDTag: vi.fn(async () => null),
+        ensureRelayConnections: noop,
+        ensureStoredEventSince: vi.fn(),
+        fetchContactCursorEvents: vi.fn(async () => new Map()),
+        failStartupStep: vi.fn(),
+        flushPendingEventSinceUpdate: vi.fn(),
+        getConfiguredRelayUrls: vi.fn(() => ['wss://relay.one/']),
+        getLoggedInPublicKeyHex: vi.fn(() => PUBKEY),
+        getRestoreStartupStatePromise: () => null,
+        getSyncLoggedInContactProfilePromise: () => null,
+        getSyncRecentChatContactsPromise: () => null,
+        isRestoringStartupState: false,
+        readPrivatePreferencesFromStorage: vi.fn(() => null),
+        reloadChats: noop,
+        refreshContactByPublicKey: noop,
+        refreshGroupRelayListsOnStartup: noop,
+        resetStartupStep: vi.fn(),
+        resetStartupStepTracking: vi.fn(),
+        restoreContactCursorState: vi.fn(async () => {}),
+        restoreGroupIdentitySecrets: noop,
+        restoreMyRelayList: noop,
+        restoreMuteList: vi.fn(async () => {}),
+        restorePrivateContactList: noop,
+        restorePrivatePreferences: noop,
+        runLightweightSessionResume: noop,
+        startOutboundMessageReplay: noop,
+        startPrivateMessagesHistoryRestore: noop,
+        setRestoreStartupStatePromise: vi.fn(),
+        setSyncLoggedInContactProfilePromise: vi.fn(),
+        setSyncRecentChatContactsPromise: vi.fn(),
+        subscribeContactCursorUpdates: vi.fn(async () => {}),
+        subscribeContactProfileUpdates: noop,
+        subscribeContactRelayListUpdates: noop,
+        subscribeGroupMembershipRosterUpdates: noop,
+        subscribeMyRelayListUpdates: noop,
+        subscribePrivateContactListUpdates: noop,
+        subscribePrivateMessagesForLoggedInUser: noop,
+        ...overrides,
+      };
+      return {
+        deps,
+        runtime: createStartupContactSyncRuntime(
+          deps as unknown as Parameters<typeof createStartupContactSyncRuntime>[0],
+        ),
+      };
+    }
+
+    it.each([
+      ['cursor restore', 'restoreContactCursorState'],
+      ['mute list restore', 'restoreMuteList'],
+    ])('starts live cursor sync when the %s fails', async (_label, failingDep) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const restoreError = new Error('relay timed out');
+      const { deps, runtime } = createCursorStepRuntime({
+        [failingDep]: vi.fn(async () => {
+          throw restoreError;
+        }),
+      });
+
+      await expect(
+        runtime.rerunStartupStep('contact-cursor-state', ['wss://relay.one/']),
+      ).rejects.toThrow(restoreError);
+
+      expect(deps.subscribeContactCursorUpdates).toHaveBeenCalledWith(['wss://relay.one/']);
+      expect(deps.failStartupStep).toHaveBeenCalledWith('contact-cursor-state', restoreError);
+    });
+
+    it('keeps a successful restore complete when the live subscription cannot start', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const subscribeError = new Error('relays unreachable');
+      const { deps, runtime } = createCursorStepRuntime({
+        subscribeContactCursorUpdates: vi.fn(async () => {
+          throw subscribeError;
+        }),
+      });
+
+      await runtime.rerunStartupStep('contact-cursor-state', ['wss://relay.one/']);
+      await Promise.resolve();
+
+      expect(deps.completeStartupStep).toHaveBeenCalledWith('contact-cursor-state');
+      expect(deps.failStartupStep).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        'Failed to subscribe to contact cursor updates on startup',
+        subscribeError,
+      );
+    });
+
+    it('does not start the previous account subscription after an account switch', async () => {
+      const getLoggedInPublicKeyHex = vi.fn(() => PUBKEY);
+      const { deps, runtime } = createCursorStepRuntime({
+        getLoggedInPublicKeyHex,
+        restoreContactCursorState: vi.fn(async () => {
+          getLoggedInPublicKeyHex.mockReturnValue('b'.repeat(64));
+        }),
+      });
+
+      await runtime.rerunStartupStep('contact-cursor-state', ['wss://relay.one/']);
+
+      expect(deps.subscribeContactCursorUpdates).not.toHaveBeenCalled();
+    });
+  });
 });

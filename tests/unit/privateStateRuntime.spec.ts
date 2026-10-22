@@ -1,5 +1,10 @@
 import { type ClientEvent, NostrKind } from '#src/lib/nostr/client.ts';
-import { PRIVATE_PREFERENCES_KIND } from '#src/stores/nostr/constants.ts';
+import {
+  CONTACT_CURSOR_PUBLISH_DELAY_MS,
+  CONTACT_CURSOR_PUBLISH_JITTER_MS,
+  CONTACT_CURSOR_SYNC_TIMEOUT_MS,
+  PRIVATE_PREFERENCES_KIND,
+} from '#src/stores/nostr/constants.ts';
 import { createPrivateStateRuntime } from '#src/stores/nostr/privateStateRuntime.ts';
 import type { MessageRelayStatus } from '#src/types/chat.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1568,10 +1573,16 @@ describe('privateStateRuntime', () => {
       } as Partial<ClientEvent>) as unknown as ClientEvent;
     }
 
-    function createLiveRuntime(overrides: Record<string, unknown> = {}) {
+    function createLiveRuntime(
+      overrides: Record<string, unknown> = {},
+      options: { sendEose?: boolean } = {},
+    ) {
       const subscriptions: Array<{
         filters: unknown;
         onEvent: (event: ClientEvent) => void;
+        onEose: () => void;
+        // Called by the client once every relay of the subscription has closed.
+        onClose: () => void;
         stop: ReturnType<typeof vi.fn>;
       }> = [];
       const deps = createDeps({
@@ -1579,14 +1590,30 @@ describe('privateStateRuntime', () => {
         decryptContactCursorContent: vi.fn(async (content: string) => JSON.parse(content)),
         encryptContactCursorContent: vi.fn(async (cursor) => `cursor:${cursor.at}`),
         getFilterSince: vi.fn(() => 1_700_000_000),
-        subscribeWithReqLogging: vi.fn((_label, _request, filters, options) => {
-          const subscription = { filters, onEvent: options.onEvent, stop: vi.fn() };
+        subscribeWithReqLogging: vi.fn((_label, _request, filters, subscriptionOptions) => {
+          const subscription = {
+            filters,
+            onEvent: subscriptionOptions.onEvent,
+            onEose: subscriptionOptions.onEose,
+            onClose: subscriptionOptions.onClose,
+            stop: vi.fn(),
+          };
           subscriptions.push(subscription);
+          // Relays finish their replay at once unless a test holds EOSE back.
+          if (options.sendEose !== false) queueMicrotask(() => subscription.onEose?.());
           return subscription;
         }),
         ...overrides,
       });
       return { deps, runtime: createPrivateStateRuntime(deps), subscriptions };
+    }
+
+    function cursorContent(at: string, eventId = `event-${at}`): string {
+      return JSON.stringify({
+        version: '0.1',
+        last_seen_incoming_activity_at: at,
+        last_seen_incoming_activity_event_id: eventId,
+      });
     }
 
     function publishedCursors(): Array<{ content: string; created_at: number }> {
@@ -1804,5 +1831,354 @@ describe('privateStateRuntime', () => {
       expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
       expect(deps.decryptContactCursorContent).not.toHaveBeenCalled();
     });
+
+    it('recovers the subscription after every relay disconnects, across repeated cycles', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates(['wss://seed.example']);
+      await flushPromises();
+      expect(subscriptions).toHaveLength(1);
+
+      // A healthy subscription is left alone, so healing passes stay quiet.
+      await runtime.recoverContactCursorSubscription();
+      expect(subscriptions).toHaveLength(1);
+
+      for (let cycle = 1; cycle <= 3; cycle += 1) {
+        subscriptions.at(-1)?.onClose();
+        // Several relays reconnecting together, plus a healing pass, recover once.
+        await Promise.all([
+          runtime.recoverContactCursorSubscription(),
+          runtime.recoverContactCursorSubscription(),
+          runtime.recoverContactCursorSubscription(),
+        ]);
+        await flushPromises();
+        expect(subscriptions).toHaveLength(1 + cycle);
+        // The same filter replays everything published while the relays were away.
+        expect(subscriptions.at(-1)?.filters).toEqual(subscriptions[0].filters);
+      }
+      expect(deps.resolveLoggedInReadRelayUrls).toHaveBeenLastCalledWith(['wss://seed.example']);
+
+      subscriptions.at(-1)?.onEvent(makeCursorEvent('2026-01-06T00:00:00.000Z'));
+      await vi.waitFor(() => expect(deps.chatStore.reload).toHaveBeenCalledTimes(1));
+      expect(serviceMocks.contactsService.updateContact).toHaveBeenCalledWith(7, {
+        metaBase: {},
+        meta: {
+          last_seen_incoming_activity_at: '2026-01-06T00:00:00.000Z',
+          last_seen_incoming_activity_event_id: 'event-2026-01-06T00:00:00.000Z',
+        },
+      });
+    });
+
+    it('does not recover the previous account subscription after logout or a switch', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      // Logout while a recovery is resolving relays.
+      subscriptions[0].onClose();
+      let releaseRelays!: (urls: string[]) => void;
+      deps.resolveLoggedInReadRelayUrls.mockImplementationOnce(
+        () =>
+          new Promise<string[]>((resolve) => {
+            releaseRelays = resolve;
+          }),
+      );
+      const recovering = runtime.recoverContactCursorSubscription();
+      await vi.waitFor(() => expect(releaseRelays).toBeTypeOf('function'));
+      runtime.resetContactCursorSyncState();
+      deps.getLoggedInPublicKeyHex.mockReturnValue('e'.repeat(64));
+      releaseRelays(['wss://relay.example/']);
+      await recovering;
+
+      // The next account's relay reconnects do not revive the old subscription either.
+      await runtime.recoverContactCursorSubscription();
+      await flushPromises();
+      expect(subscriptions).toHaveLength(1);
+    });
+
+    it('waits for the live replay before publishing, so a stale device cannot overwrite', async () => {
+      const { runtime, subscriptions } = createLiveRuntime({}, { sendEose: false });
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      const publishing = runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-04T00:00:00.000Z',
+        eventId: 'stale-device',
+      });
+      await flushPromises();
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+
+      // The replay carries a newer cursor from another device, then the relay sends EOSE.
+      subscriptions[0].onEvent(makeCursorEvent('2026-01-05T00:00:00.000Z'));
+      subscriptions[0].onEose();
+      await publishing;
+
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+    });
+
+    it('publishes after a bounded wait when relays never send EOSE', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const { runtime } = createLiveRuntime({}, { sendEose: false });
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      const publishing = runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-04T00:00:00.000Z',
+        eventId: 'own',
+      });
+      await vi.advanceTimersByTimeAsync(CONTACT_CURSOR_SYNC_TIMEOUT_MS - 1);
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await publishing;
+      expect(publishedCursors().map((event) => event.content)).toEqual([
+        'cursor:2026-01-04T00:00:00.000Z',
+      ]);
+    });
+
+    it('heals relays serving an older cursor than one restored on this device', async () => {
+      serviceMocks.contactsService.getContactByPublicKey.mockResolvedValue(
+        makeContact({
+          last_seen_incoming_activity_at: '2026-01-05T00:00:00.000Z',
+          last_seen_incoming_activity_event_id: 'restored',
+        }),
+      );
+      const { runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      // A delayed event is history: relays already serve something newer than it.
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-05T00:00:00.000Z', {
+          created_at: 1_800_000_100,
+          content: cursorContent('2026-01-05T00:00:00.000Z', 'restored'),
+        }),
+      );
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-03T00:00:00.000Z', { created_at: 1_800_000_050 }),
+      );
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+
+      // A stale device then replaces it on relays with an older cursor.
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-04T00:00:00.000Z', { created_at: 1_800_000_200 }),
+      );
+      await vi.waitFor(() => expect(publishedCursors()).toHaveLength(1));
+      expect(publishedCursors()[0].content).toBe('cursor:2026-01-05T00:00:00.000Z');
+      expect(publishedCursors()[0].created_at).toBeGreaterThan(1_800_000_200);
+    });
+
+    it('treats equal timestamps as possibly buried and heals once', async () => {
+      const { runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+
+      // Relays keep the lower id on a created_at tie, which may be the older cursor.
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-05T00:00:00.000Z', { created_at: 1_800_000_000 }),
+      );
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-04T00:00:00.000Z', { created_at: 1_800_000_000 }),
+      );
+      await vi.waitFor(() => expect(publishedCursors()).toHaveLength(1));
+      const [healed] = publishedCursors();
+      expect(healed.content).toBe('cursor:2026-01-05T00:00:00.000Z');
+
+      // The echo of the heal is now newest and matches, so nothing else is sent.
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-05T00:00:00.000Z', { created_at: healed.created_at }),
+      );
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(publishedCursors()).toHaveLength(1);
+    });
+
+    it('skips a queued heal once another device has already healed the relays', async () => {
+      const { deps, runtime, subscriptions } = createLiveRuntime();
+      await runtime.subscribeContactCursorUpdates();
+      await flushPromises();
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-05T00:00:00.000Z', { created_at: 1_800_000_000 }),
+      );
+      await vi.waitFor(() => expect(deps.chatStore.reload).toHaveBeenCalled());
+
+      // Hold queued publishes behind a startup restore that is still running.
+      let finishRestore!: () => void;
+      deps.restoreState.restoreContactCursorStatePromise = new Promise<void>((resolve) => {
+        finishRestore = resolve;
+      }) as never;
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-04T00:00:00.000Z', { created_at: 1_800_000_100 }),
+      );
+      subscriptions[0].onEvent(
+        makeCursorEvent('2026-01-05T00:00:00.000Z', { created_at: 1_800_000_101 }),
+      );
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      finishRestore();
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+    });
+
+    it('converges two devices on the newest cursor without a republish loop', async () => {
+      // An in-memory relay with replaceable semantics that echoes to every device.
+      let stored: { content: string; created_at: number; id: string } | null = null;
+      const devices: Array<{
+        online: boolean;
+        inbox: ClientEvent[];
+        deliver: (event: ClientEvent) => void;
+      }> = [];
+      let sequence = 0;
+      ndkMocks.publishReplaceable.mockImplementation(async (event) => {
+        // Later publishes get lower ids, so a same-second tie favours the later event.
+        event.id = String(1000 - (sequence += 1));
+        if (
+          !stored ||
+          event.created_at > stored.created_at ||
+          (event.created_at === stored.created_at && event.id < stored.id)
+        ) {
+          stored = event;
+        }
+        for (const device of devices) device.inbox.push(event);
+      });
+      const shared = {
+        deriveContactCursorDTag: vi.fn(async (publicKey: string) => `sha256:secret${publicKey}`),
+        encryptContactCursorContent: vi.fn(async (cursor) =>
+          cursorContent(cursor.at, cursor.eventId),
+        ),
+      };
+      async function connectDevice() {
+        const device = createLiveRuntime(shared);
+        await device.runtime.subscribeContactCursorUpdates();
+        await flushPromises();
+        const entry = {
+          online: true,
+          inbox: [] as ClientEvent[],
+          deliver: (event: ClientEvent) => device.subscriptions.at(-1)?.onEvent(event),
+        };
+        devices.push(entry);
+        return { ...device, entry };
+      }
+      async function settle(): Promise<void> {
+        for (let round = 0; round < 20; round += 1) {
+          for (const device of devices) {
+            if (!device.online) continue;
+            for (const event of device.inbox.splice(0)) device.deliver(event);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          await flushPromises();
+        }
+      }
+
+      const laptop = await connectDevice();
+      const phone = await connectDevice();
+      // The phone is offline, so it has not seen the laptop read further.
+      phone.entry.online = false;
+      await laptop.runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-05T00:00:00.000Z',
+        eventId: 'laptop',
+      });
+      await phone.runtime.publishContactCursor(contactPublicKey, {
+        at: '2026-01-04T00:00:00.000Z',
+        eventId: 'phone',
+      });
+      expect(JSON.parse(stored!.content).last_seen_incoming_activity_at).toBe(
+        '2026-01-04T00:00:00.000Z',
+      );
+
+      phone.entry.online = true;
+      await settle();
+      expect(JSON.parse(stored!.content).last_seen_incoming_activity_at).toBe(
+        '2026-01-05T00:00:00.000Z',
+      );
+      const publishCount = ndkMocks.publishReplaceable.mock.calls.length;
+      expect(publishCount).toBeLessThanOrEqual(4);
+
+      // Relays replaying their stored event after a reconnect start nothing new.
+      for (const device of devices) device.inbox.push(stored as unknown as ClientEvent);
+      await settle();
+      expect(ndkMocks.publishReplaceable.mock.calls.length).toBe(publishCount);
+    });
+  });
+
+  describe('automatic read publishing', () => {
+    const contactPublicKey = 'a'.repeat(64);
+
+    function createScheduledRuntime() {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const deps = createDeps({
+        encryptContactCursorContent: vi.fn(async (cursor) => `cursor:${cursor.at}`),
+      });
+      serviceMocks.contactsService.getContactByPublicKey.mockResolvedValue(null);
+      return { deps, runtime: createPrivateStateRuntime(deps) };
+    }
+
+    function cursorAt(second: number) {
+      return {
+        at: `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`,
+        eventId: `message-${second}`,
+      };
+    }
+
+    it('coalesces rapid messages in a focused chat into one jittered publish', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      const { deps, runtime } = createScheduledRuntime();
+      const jitterMs = Math.floor(0.5 * CONTACT_CURSOR_PUBLISH_JITTER_MS);
+
+      for (let second = 1; second <= 20; second += 1) {
+        runtime.scheduleContactCursorPublish(contactPublicKey, cursorAt(second), {
+          deferred: true,
+        });
+      }
+      expect(deps.pendingContactCursorPublishTimers.size).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(CONTACT_CURSOR_PUBLISH_DELAY_MS + jitterMs - 1);
+      expect(ndkMocks.publishReplaceable).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(ndkMocks.publishReplaceable).toHaveBeenCalledTimes(1));
+      expect(publishedContents()).toEqual(['cursor:2026-01-01T00:00:20.000Z']);
+      expect(deps.pendingContactCursorPublishTimers.size).toBe(0);
+    });
+
+    it('keeps the jitter within its bound', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+      const { runtime } = createScheduledRuntime();
+
+      runtime.scheduleContactCursorPublish(contactPublicKey, cursorAt(1), { deferred: true });
+      await vi.advanceTimersByTimeAsync(
+        CONTACT_CURSOR_PUBLISH_DELAY_MS + CONTACT_CURSOR_PUBLISH_JITTER_MS,
+      );
+
+      await vi.waitFor(() => expect(ndkMocks.publishReplaceable).toHaveBeenCalledTimes(1));
+    });
+
+    it('lets a manual read publish at once while an automatic read waits', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      const { deps, runtime } = createScheduledRuntime();
+
+      runtime.scheduleContactCursorPublish(contactPublicKey, cursorAt(2), { deferred: true });
+      runtime.scheduleContactCursorPublish(contactPublicKey, cursorAt(1));
+      await vi.waitFor(() => expect(ndkMocks.publishReplaceable).toHaveBeenCalledTimes(1));
+      // The manual read carries the newer automatic cursor rather than going backwards.
+      expect(publishedContents()).toEqual(['cursor:2026-01-01T00:00:02.000Z']);
+      expect(deps.pendingContactCursorPublishTimers.size).toBe(1);
+
+      // Further automatic reads join the manual read's coalescing window.
+      runtime.scheduleContactCursorPublish(contactPublicKey, cursorAt(3), { deferred: true });
+      await vi.advanceTimersByTimeAsync(CONTACT_CURSOR_PUBLISH_DELAY_MS);
+      await vi.waitFor(() => expect(ndkMocks.publishReplaceable).toHaveBeenCalledTimes(2));
+      expect(publishedContents()).toEqual([
+        'cursor:2026-01-01T00:00:02.000Z',
+        'cursor:2026-01-01T00:00:03.000Z',
+      ]);
+    });
+
+    function publishedContents(): string[] {
+      return ndkMocks.publishReplaceable.mock.calls.map(([event]) => event.content);
+    }
   });
 });

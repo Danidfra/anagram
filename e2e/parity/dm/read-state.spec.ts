@@ -1,7 +1,8 @@
 // Behavioral scenarios ported from original Anagram; Svelte helpers, unlimited hydration.
-import { expect, test } from '@playwright/test';
+import { expect, test, type WebSocketRoute } from '@playwright/test';
 import {
   bootstrapUser,
+  E2E_RELAY_URL,
   disposeUsers,
   establishAcceptedDirectChat,
   expectNoUnexpectedBrowserErrors,
@@ -194,8 +195,140 @@ test('reading on one device clears the unread badge on another without restartin
           },
           { chatId: alice.session.publicKey, text: focusedMessage },
         ),
+        // Automatic reads publish after the coalescing delay and its jitter.
+        { timeout: 30_000 },
       )
       .toBe(0);
+    await waitForNoUnreadChatTotalBadge(bobPhone.page);
+
+    await expectNoUnexpectedBrowserErrors([alice, bob, bobPhone]);
+  } finally {
+    await disposeUsers(...[alice, bob, bobPhone].filter((user) => user !== undefined));
+  }
+});
+
+function isE2ERelayUrl(url: URL): boolean {
+  return url.href.replace(/\/$/, '') === E2E_RELAY_URL.replace(/\/$/, '');
+}
+
+// The live cursor subscription filter: account and kind only, never a d-tag.
+function isLiveCursorRequest(message: string | Buffer, author: string): boolean {
+  try {
+    const [verb, , ...filters] = JSON.parse(message.toString());
+    return (
+      verb === 'REQ' &&
+      filters.some(
+        (filter: Record<string, unknown>) =>
+          Array.isArray(filter.kinds) &&
+          filter.kinds.includes(30078) &&
+          Array.isArray(filter.authors) &&
+          filter.authors.includes(author) &&
+          Object.keys(filter).every((key) => !key.startsWith('#')),
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+test('read cursors keep syncing after a device loses every relay connection', async ({
+  browser,
+}) => {
+  test.slow();
+  const alice = await bootstrapUser(browser, TEST_ACCOUNTS.crossDeviceReconnectAlice);
+  const bob = await bootstrapUser(browser, TEST_ACCOUNTS.crossDeviceReconnectBob);
+  let bobPhone: Awaited<ReturnType<typeof bootstrapUser>> | undefined;
+  // The second device reaches its single relay through a route the test can cut or hold down.
+  const phoneSockets = new Map<WebSocketRoute, WebSocketRoute>();
+  let relayDown = false;
+  let liveCursorRequests = 0;
+  async function dropPhoneRelays(): Promise<void> {
+    const sockets = [...phoneSockets];
+    phoneSockets.clear();
+    await Promise.all(
+      sockets.map(async ([page, server]) => {
+        await page.close();
+        await server.close();
+      }),
+    );
+  }
+
+  try {
+    await establishAcceptedDirectChat(alice, bob);
+    bobPhone = await bootstrapUser(browser, TEST_ACCOUNTS.crossDeviceReconnectBob, {
+      passiveRestore: true,
+      prepareContext: (context) =>
+        context.routeWebSocket(isE2ERelayUrl, (page) => {
+          if (relayDown) {
+            void page.close();
+            return;
+          }
+          const server = page.connectToServer();
+          phoneSockets.set(page, server);
+          page.onMessage((message) => {
+            if (isLiveCursorRequest(message, bob.session.publicKey)) liveCursorRequests += 1;
+            server.send(message);
+          });
+          server.onMessage((message) => page.send(message));
+          page.onClose(() => {
+            phoneSockets.delete(page);
+            void server.close();
+          });
+          server.onClose(() => {
+            phoneSockets.delete(page);
+            void page.close();
+          });
+        }),
+    });
+    await navigateInApp(bob.page, '/settings/profile');
+    await navigateInApp(bobPhone.page, '/settings/profile');
+    await expect.poll(() => liveCursorRequests).toBeGreaterThan(0);
+
+    // Read boundaries have one-second resolution; send after the setup's last second.
+    const setupSecond = Math.floor(Date.now() / 1000);
+    await alice.page.waitForFunction((second) => Math.floor(Date.now() / 1000) > second, setupSecond);
+    await sendMessage(alice.page, `reconnect-unread-${Date.now()}`, {
+      chatId: bob.session.publicKey,
+    });
+    await waitForUnreadChatTotalBadge(bob.page, 1);
+    await waitForUnreadChatTotalBadge(bobPhone.page, 1);
+
+    // Cycle 1: every relay drops and stays down while the other device reads.
+    relayDown = true;
+    await dropPhoneRelays();
+    await navigateToChat(bob.page, alice.session.publicKey);
+    await setAppVisibility(bob.page, { visibilityState: 'visible', hasFocus: true });
+    await waitForNoUnreadChatTotalBadge(bob.page);
+    await bob.page.waitForTimeout(3000);
+    await waitForUnreadChatTotalBadge(bobPhone.page, 1);
+    const requestsBeforeRecovery = liveCursorRequests;
+    relayDown = false;
+    // The relay reconnect restores the subscription, whose replay carries the missed cursor.
+    await expect(
+      bobPhone.page.getByRole('navigation', { name: 'Main navigation' }).locator('.badge'),
+    ).toHaveCount(0, { timeout: 90_000 });
+    expect(liveCursorRequests).toBe(requestsBeforeRecovery + 1);
+
+    // Cycle 2: a plain drop and reconnect recovers once more, without duplicate listeners.
+    await navigateInApp(bob.page, '/settings/profile');
+    const requestsBeforeDrop = liveCursorRequests;
+    await dropPhoneRelays();
+    await expect
+      .poll(() => liveCursorRequests, { timeout: 90_000 })
+      .toBe(requestsBeforeDrop + 1);
+    await bobPhone.page.waitForTimeout(3000);
+    expect(liveCursorRequests).toBe(requestsBeforeDrop + 1);
+
+    const readSecond = Math.floor(Date.now() / 1000);
+    await alice.page.waitForFunction((second) => Math.floor(Date.now() / 1000) > second, readSecond);
+    await sendMessage(alice.page, `reconnect-again-${Date.now()}`, {
+      chatId: bob.session.publicKey,
+    });
+    await waitForUnreadChatTotalBadge(bob.page, 1);
+    await waitForUnreadChatTotalBadge(bobPhone.page, 1);
+    await navigateToChat(bob.page, alice.session.publicKey);
+    await setAppVisibility(bob.page, { visibilityState: 'visible', hasFocus: true });
+    await waitForNoUnreadChatTotalBadge(bob.page);
     await waitForNoUnreadChatTotalBadge(bobPhone.page);
 
     await expectNoUnexpectedBrowserErrors([alice, bob, bobPhone]);

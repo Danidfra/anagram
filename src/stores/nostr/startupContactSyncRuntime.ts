@@ -379,11 +379,22 @@ export function createStartupContactSyncRuntime(state: StartupContactSyncRuntime
       case 'group-relay-lists-refresh':
         await refreshGroupRelayListsOnStartup(seedRelayUrls);
         return;
-      case 'contact-cursor-state':
-        await restoreMuteList(seedRelayUrls);
-        await restoreContactCursorState(seedRelayUrls);
-        await subscribeContactCursorUpdates(seedRelayUrls);
+      case 'contact-cursor-state': {
+        const loggedInPubkeyHex = getLoggedInPublicKeyHex();
+        try {
+          await restoreMuteList(seedRelayUrls);
+          await restoreContactCursorState(seedRelayUrls);
+        } finally {
+          // Live sync neither depends on the startup fetch nor fails it. Relay reconnects and
+          // healing retry a subscription that could not start.
+          if (loggedInPubkeyHex && loggedInPubkeyHex === getLoggedInPublicKeyHex()) {
+            void subscribeContactCursorUpdates(seedRelayUrls).catch((error) => {
+              console.warn('Failed to subscribe to contact cursor updates on startup', error);
+            });
+          }
+        }
         return;
+      }
       case 'logged-in-contact-profile':
         await syncLoggedInContactProfile(seedRelayUrls);
         return;
