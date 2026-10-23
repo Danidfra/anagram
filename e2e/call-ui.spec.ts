@@ -1363,3 +1363,173 @@ test('speaking meters release their own captures and never divert playback', asy
   await expect(page.getByTestId('call-panel')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+test('speaking meters follow the recording window and document visibility', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await setup(page);
+  await page.evaluate(() => (window as any).__testCall.dismiss());
+  const first = 'e'.repeat(64),
+    second = 'f'.repeat(64);
+  await page.evaluate(
+    async ({ first, second }) => {
+      const { useCallRoomStore } = await import('/src/stores/callRoomStore.ts');
+      const { useNostrStore } = await import('/src/stores/nostrStore.svelte.ts');
+      const { registerCallStream } = await import('/src/services/callStreamRegistry.ts');
+      // Only the speaking meters read streams through Web Audio here: count their live sources.
+      const sources = new Set<AudioNode>();
+      const create = AudioContext.prototype.createMediaStreamSource;
+      AudioContext.prototype.createMediaStreamSource = function (stream) {
+        const node = create.call(this, stream);
+        sources.add(node);
+        const disconnect = node.disconnect.bind(node) as () => void;
+        (node as any).disconnect = () => {
+          sources.delete(node);
+          disconnect();
+        };
+        return node;
+      };
+      // The test decides whether this document is hidden.
+      let hidden = false;
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => (hidden ? 'hidden' : 'visible'),
+      });
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      const audio = new AudioContext();
+      const tone = () => {
+        const gain = audio.createGain();
+        gain.gain.value = 0;
+        const oscillator = audio.createOscillator();
+        const output = audio.createMediaStreamDestination();
+        oscillator.connect(gain).connect(output);
+        oscillator.start();
+        return { gain, stream: output.stream };
+      };
+      const local = tone(),
+        one = tone(),
+        two = tone();
+      const nostr = useNostrStore();
+      const own = {
+        pubkey: nostr.getLoggedInPublicKeyHex()!,
+        sessionId: 'local-meters',
+        name: 'Host',
+        relays: [],
+      };
+      const member = (pubkey: string, name: string) => ({
+        pubkey,
+        sessionId: `${name}-session`,
+        name,
+        relays: [],
+      });
+      const tile = (pubkey: string, name: string, stream: MediaStream) => ({
+        ...member(pubkey, name),
+        phase: 'active',
+        microphoneMuted: false,
+        audioUrl: registerCallStream(stream).url,
+        videoUrl: '',
+        screenUrl: '',
+      });
+      const rooms = useCallRoomStore();
+      // UI fixture only: no call transport or signalling is replaced in production.
+      Object.defineProperty(rooms, 'participants', {
+        configurable: true,
+        writable: true,
+        value: [tile(first, 'First', one.stream), tile(second, 'Second', two.stream)],
+      });
+      rooms.localStream = new MediaStream(local.stream.getAudioTracks());
+      rooms.cameraMuted = true;
+      rooms.microphoneMuted = false;
+      rooms.session = {
+        own,
+        members: [own, member(first, 'First'), member(second, 'Second')],
+        phase: 'active',
+        revision: 1,
+        link: {
+          id: 'meter-lifecycle',
+          host: own.pubkey,
+          secret: '',
+          relays: [],
+          expiresAt: new Date(Date.now() + 60000).toISOString(),
+        },
+      };
+      (window as any).__lifecycle = {
+        sources,
+        rooms,
+        first: one.gain.gain,
+        second: two.gain.gain,
+        hide(value: boolean) {
+          hidden = value;
+          document.dispatchEvent(new Event('visibilitychange'));
+        },
+      };
+    },
+    { first, second },
+  );
+  const run = (expression: string) => page.evaluate(`window.__lifecycle.${expression}`);
+  const live = () => page.evaluate(() => (window as any).__lifecycle.sources.size);
+  const firstTile = page.getByTestId(`room-peer-${first}`);
+  // The local microphone and both peers are metered while the call is on screen.
+  await expect.poll(live).toBe(3);
+
+  // Hidden with no recording window: every meter stops, and speech is not shown.
+  await run('hide(true)');
+  await expect.poll(live).toBe(0);
+  await run('first.value = 0.5');
+  await page.waitForTimeout(300);
+  await expect(firstTile).not.toHaveClass(/room-tile--speaking/);
+  // Back in the foreground the meters restart once each and pick up the speech.
+  await run('hide(false)');
+  await expect.poll(live).toBe(3);
+  await expect(firstTile).toHaveClass(/room-tile--speaking/);
+  await run('first.value = 0');
+  await expect(firstTile).not.toHaveClass(/room-tile--speaking/);
+  // Repeated transitions never accumulate meters.
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await run('hide(true)');
+    await expect.poll(live).toBe(0);
+    await run('hide(false)');
+    await expect.poll(live).toBe(3);
+  }
+
+  // Recording window open, overlay minimized and this document hidden: the window
+  // still shows who speaks, and speaker view still switches.
+  await page.getByTestId('room-view-toggle').click();
+  const popupPromise = page.waitForEvent('popup');
+  await page.getByTestId('room-open-window').click();
+  const popup = await popupPromise;
+  await page.getByTestId('room-minimize').click();
+  await expect(page.getByTestId('room-compact')).toBeVisible();
+  await run('hide(true)');
+  await page.waitForTimeout(250);
+  expect(await live()).toBe(3);
+  const mirroredFirst = popup.getByTestId(`room-peer-${first}`);
+  const mirroredSecond = popup.getByTestId(`room-peer-${second}`);
+  await run('first.value = 0.5');
+  await expect(mirroredFirst).toHaveClass(/room-tile--speaking/);
+  await expect(mirroredFirst).toHaveClass(/room-tile--speaker/);
+  await run('first.value = 0');
+  await run('second.value = 0.5');
+  await expect(mirroredSecond).toHaveClass(/room-tile--speaking/);
+  await expect(mirroredSecond).toHaveClass(/room-tile--speaker/);
+  await expect(mirroredFirst).not.toHaveClass(/room-tile--speaker/);
+  await run('second.value = 0');
+  await expect(mirroredSecond).not.toHaveClass(/room-tile--speaking/);
+  await run('hide(false)');
+  expect(await live()).toBe(3);
+
+  // Closing the window while minimized stops every meter; restoring restarts them.
+  await popup.close();
+  await expect.poll(live).toBe(0);
+  await page.getByTestId('room-restore').click();
+  await expect.poll(live).toBe(3);
+  await run('first.value = 0.5');
+  await expect(firstTile).toHaveClass(/room-tile--speaking/);
+  await run('first.value = 0');
+
+  // Leaving the call releases every meter.
+  await run('rooms.session = null');
+  await expect(page.getByTestId('room-panel')).toHaveCount(0);
+  await expect.poll(live).toBe(0);
+  expect(errors).toEqual([]);
+});

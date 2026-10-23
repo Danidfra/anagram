@@ -76,7 +76,9 @@
   let remoteVideo: CallVideo;
   let minimized = false,
     maxFill = false,
-    speakerView = false;
+    speakerView = false,
+    stageWindowOpen = false,
+    documentVisible = true;
   let speakerMuted = false,
     speaker = '',
     outputError = '',
@@ -186,7 +188,9 @@
   $: if (!$state.busy) invite = false;
   $: if ($state.local) void refreshDevices();
   // Meter only while tiles or the peer are on screen; muted inputs are not metered.
-  $: metering = active && !minimized;
+  // The presentation window is a separate window whose visibility this document
+  // cannot see, so it keeps meters running while minimized or hidden.
+  $: metering = active && (stageWindowOpen || (!minimized && documentVisible));
   $: watchActivity($state.local, room && metering && !$state.muted);
   $: remoteSpeaking = !room && speaking.has('remote') && !$state.session?.remoteMicrophoneMuted;
   // Max fill keeps the media alone on stage, as without a remote avatar.
@@ -334,10 +338,14 @@
   onMount(() => {
     const timer = setInterval(() => (now = Date.now()), 1000);
     const changed = () => void refreshDevices(true);
+    const visibility = () => (documentVisible = document.visibilityState === 'visible');
+    visibility();
     navigator.mediaDevices?.addEventListener('devicechange', changed);
+    document.addEventListener('visibilitychange', visibility);
     return () => {
       clearInterval(timer);
       navigator.mediaDevices?.removeEventListener('devicechange', changed);
+      document.removeEventListener('visibilitychange', visibility);
     };
   });
   onDestroy(() => {
@@ -618,6 +626,7 @@
       </div>{/if}
     <CallStage
       bind:this={stage}
+      bind:windowOpen={stageWindowOpen}
       active={!ended}
       {screens}
       {maxFill}
