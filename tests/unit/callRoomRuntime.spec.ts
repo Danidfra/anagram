@@ -734,6 +734,28 @@ describe('room controls while a peer link is down', () => {
     expect(room.lastSends().findLast(([kind]) => kind === 5)).toEqual([5, 0]);
   });
 
+  it('turns off a camera clone that a link was restarting for a new video quality', async () => {
+    const room = await activeRoom();
+    const screen = new Track('video');
+    room.h.deps.media.getScreen.mockResolvedValue(
+      new MediaStream([screen] as unknown as MediaStreamTrack[]),
+    );
+    const cameras = () =>
+      room.recorded('video').filter((track) => callCaptureTrack(track as never) !== screen);
+    // Sharing a screen lowers the camera bitrate, so the link restarts its camera.
+    const release = room.holdCameraStart();
+    const sharing = room.h.runtime.startScreenSharing();
+    await vi.waitFor(() => expect(room.lastSends().filter(([kind]) => kind === 5)).toHaveLength(2));
+    await room.h.runtime.toggleCamera();
+    expect(room.h.runtime.cameraMuted).toBe(true);
+    release();
+    await sharing;
+    await vi.waitFor(() =>
+      expect(cameras().every((track) => track.readyState === 'ended')).toBe(true),
+    );
+    expect(room.lastSends().findLast(([kind]) => kind === 5)).toEqual([5, 0]);
+  });
+
   it('switches the microphone of a link that was busy turning its camera on', async () => {
     const room = await reactivatingWithCamera();
     const previous = room.recorded('audio').at(-1)!;

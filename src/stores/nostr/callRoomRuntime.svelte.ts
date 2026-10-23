@@ -251,6 +251,10 @@ export function createCallRoomRuntime(deps: Deps) {
         acquireAudioRoute: undefined,
         videoProfile: () =>
           roomVideoProfile(session?.members.length ?? 2, Boolean(localScreenStream)),
+        // A quality refresh, deferred or not, blocks camera changes; reapply any it skipped.
+        onVideoQualityRefreshed: () => {
+          if (current(s) && peers.includes(peer)) void syncPeerMedia(runtime);
+        },
         getOwnPubkey: deps.getOwnPubkey,
         resolvePeer: async (pubkey) =>
           current(s) &&
@@ -301,11 +305,8 @@ export function createCallRoomRuntime(deps: Deps) {
       if (s.own.pubkey < member.pubkey) void runtime.start(member.pubkey, 'audio');
     }
     clearTimeout(qualityTimer);
-    // A quality refresh briefly blocks camera changes; reapply any it skipped.
     qualityTimer = setTimeout(() => {
-      void refreshRoomVideoQuality().then(() => {
-        if (current(s)) return Promise.all(peers.map(({ runtime }) => syncPeerMedia(runtime)));
-      });
+      void refreshRoomVideoQuality();
     }, 150);
     const buffered = pending;
     pending = [];

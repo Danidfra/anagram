@@ -41,6 +41,8 @@ export interface CallRuntimeDeps {
   packetVideoSupported?(): Promise<boolean>;
   preparePacketAudio?(): Promise<(() => void) | undefined>;
   videoProfile?(): CallVideoProfile;
+  /** After a video quality refresh, which skips camera and microphone changes while it runs. */
+  onVideoQualityRefreshed?(): void;
   onEnded?(session: CallSession): Promise<void>;
   sendSignal(peer: string, signal: CallSignal): Promise<void>;
   getOwnPubkey(): string | null;
@@ -624,6 +626,7 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
     }
     const profile = deps.videoProfile?.() ?? DEFAULT_VIDEO_PROFILE;
     const revision = ctx.linkRevision;
+    let failed = false;
     ctx.changingMedia = true;
     try {
       if (ctx.stopVideoRecording && ctx.cameraProfile !== profile.cameraBitrate) {
@@ -642,9 +645,12 @@ export function createCallRuntime(deps: CallRuntimeDeps) {
         await resumeScreenRecording(ctx);
       }
     } catch {
+      failed = true;
       if (ctx.linkRevision === revision) disableCamera(ctx);
     } finally {
       ctx.changingMedia = false;
+      // A failed restart disabled this camera; do not reapply it at once.
+      if (alive(ctx) && !failed) deps.onVideoQualityRefreshed?.();
     }
   }
   function dropLink(ctx: Context) {
